@@ -5,10 +5,18 @@ description = "Self-hosted context infrastructure for AI agents (AGPL-3.0)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
-dependencies = []
+dependencies = [
+    "fastapi>=0.141.1",
+    "pydantic>=2.13.5",
+    "uvicorn[standard]>=0.53.0",
+]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.8", "httpx>=0.28"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+    "httpx>=0.28",
+]
 
 [build-system]
 requires = ["hatchling"]

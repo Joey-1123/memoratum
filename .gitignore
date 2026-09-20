@@ -10,3 +10,6 @@ build/
 data/
 *.db
 *.sqlite*
+
+# local-only working notes (never commit)
+docs/RESEARCH.md
