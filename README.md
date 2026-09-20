@@ -73,6 +73,14 @@ Point `MEMORATUM_LLM_ENDPOINT` / `MEMORATUM_LLM_MODEL` at any OpenAI-compatible 
 
 Python SDK (`memoratum.client`), TypeScript SDK (`clients/ts`, `npm test`), OpenCode V2 plugin (`clients/opencode/memoratum.js`; `MEMORATUM_URL`/`MEMORATUM_API_KEY`/`MEMORATUM_TAG`), MCP server (`python -m memoratum.mcp`, stdio `remember`/`recall`). See [`clients/`](clients/).
 
+## Dashboard
+
+`dashboard/` is a Vite+React console served at `/dashboard` once built (`npm run build`
+inside `dashboard/`; the server mounts `dashboard/dist` when present). Tags, interactive
+2D graph (Sigma) with per-node inspector, 3D presentation mode (Three.js toggle), validity
+time scrubber, command palette (`Ctrl+K`), search, graphify import, and vault export.
+Vite dev proxy forwards `/v3`+`/v4` to `:6767`.
+
 ## Project Structure
 
 ```
@@ -82,6 +90,7 @@ src/memoratum/   → app.py (routes), db.py (SQLite/FTS5/migrations),
                    config.py, eval_longmemeval.py, eval_metrics.py
 tests/           → pytest suite (one file per module, red-first)
 clients/         → ts/ SDK, opencode/ plugin
+dashboard/       → Vite+React console (served at /dashboard)
 docs/            → PARITY.md (build spec), API.md, ARCHITECTURE.md, SECURITY.md
 eval/            → LongMemEval-S reports (generated, committed as evidence)
 ```
