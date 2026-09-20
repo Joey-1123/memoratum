@@ -3,6 +3,7 @@
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import ClassVar
 
 
 def test_hash_embedder_is_deterministic_and_normalized() -> None:
@@ -19,9 +20,12 @@ def test_hash_embedder_is_deterministic_and_normalized() -> None:
 
 
 class _Stub(BaseHTTPRequestHandler):
+    calls: ClassVar[list] = []
+
     def do_POST(self) -> None:
         n = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(n) or b"{}")
+        _Stub.calls.append(len(body["input"]))
         vecs = [[float(len(t))] * 4 for t in body["input"]]
         payload = json.dumps(
             {"data": [{"embedding": v, "index": i} for i, v in enumerate(vecs)]}
@@ -47,5 +51,23 @@ def test_api_embedder_against_local_stub() -> None:
         )
         out = e.embed(["ab", "cdef"])
         assert out == [[2.0] * 4, [4.0] * 4]
+    finally:
+        server.shutdown()
+
+
+def test_api_embedder_batches_large_inputs() -> None:
+    from memoratum.embeddings import ApiEmbedder
+
+    _Stub.calls.clear()
+    server = HTTPServer(("127.0.0.1", 0), _Stub)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        e = ApiEmbedder(
+            endpoint=f"http://127.0.0.1:{server.server_port}/v1", model="m", api_key="k", dims=4
+        )
+        out = e.embed([f"t{i}" for i in range(130)])
+        assert len(out) == 130
+        assert len(_Stub.calls) >= 2
+        assert all(n <= 64 for n in _Stub.calls)
     finally:
         server.shutdown()

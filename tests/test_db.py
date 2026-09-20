@@ -55,6 +55,40 @@ def test_fts_special_chars_do_not_error() -> None:
     db.close()
 
 
+def test_concurrent_writers_with_own_connections() -> None:
+    import threading
+
+    from memoratum import db
+
+    path = os.path.join(tempfile.mkdtemp(), "t.db")
+    db.connect(path).close()
+    errors: list = []
+    barrier = threading.Barrier(5)
+
+    def worker(i: int) -> None:
+        try:
+            barrier.wait(timeout=30)
+            conn = db.connect(path)
+            try:
+                db.create_document(conn, container_tag="u1", content=f"w{i}", custom_id=f"w{i}")
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert not errors
+    conn = db.connect(path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 5
+    finally:
+        conn.close()
+
+
 def test_scoped_keys() -> None:
     from memoratum.db import create_api_key, lookup_key
 

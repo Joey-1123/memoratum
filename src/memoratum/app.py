@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import sqlite3
+import threading
 import time
 from typing import Annotated, Any, Literal
 
@@ -51,6 +53,20 @@ class KeyIn(BaseModel):
     containerTag: str | None = None
 
 
+class FactIn(BaseModel):
+    subject: str = Field(min_length=1)
+    predicate: str = Field(min_length=1)
+    object: str = Field(min_length=1)
+    containerTag: str = "default"
+    metadata: dict[str, Any] | None = None
+    supersede: bool = True
+
+
+class ImportIn(BaseModel):
+    graph_dir: str = Field(min_length=1)
+    tag: str = Field(min_length=1, max_length=128)
+
+
 def _is_admin(authorization: str | None, settings: Settings) -> bool:
     return bool(
         settings.auth_enabled
@@ -75,12 +91,19 @@ def build_embedder(settings: Settings) -> Embedder:
     return HashEmbedder()
 
 
+# Serializes requests: each gets its own connection, but dependency setup and
+# endpoint bodies run on different worker threads, so requests must not overlap
+# on SQLite connections. Single-process ceiling; HA needs a real DB server.
+_DB_LOCK = threading.Lock()
+
+
 def get_conn(request: Request):
-    conn = db.connect(request.app.state.settings.db_path)
-    try:
-        yield conn
-    finally:
-        conn.close()
+    with _DB_LOCK:
+        conn = db.connect(request.app.state.settings.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
 
 
 DbConn = Annotated[sqlite3.Connection, Depends(get_conn)]
@@ -117,6 +140,13 @@ def create_app(settings: Settings | None = None):
         else None
     )
     _ensure_boot_key(settings)
+    dashboard_index = os.path.join(settings.dashboard_dir, "index.html")
+    if os.path.exists(dashboard_index):
+        from starlette.staticfiles import StaticFiles
+
+        app.mount(
+            "/dashboard", StaticFiles(directory=settings.dashboard_dir, html=True), name="dashboard"
+        )
 
     def scope_of(authorization: str | None, conn: sqlite3.Connection) -> str | None | bool:
         """Admin key -> True; known key -> its scope (None = wildcard); else False."""
@@ -279,6 +309,86 @@ def create_app(settings: Settings | None = None):
             if not may_access(authorization, conn, tag):
                 return _error("NOT_FOUND", "tag not found", 404)
         return db.purge_tag(conn, tag)
+
+    @app.post("/v4/facts", status_code=201)
+    def create_fact(body: FactIn, conn: DbConn, authorization: str | None = Header(default=None)):
+        authorize(authorization, conn, body.containerTag)
+        fact = fact_store.add_fact(
+            conn,
+            container_tag=body.containerTag,
+            subject=body.subject,
+            predicate=body.predicate,
+            object=body.object,
+            document_id=None,
+            metadata=body.metadata,
+            supersede=body.supersede,
+        )
+        return {
+            "id": fact["id"],
+            "subject": fact["subject"],
+            "predicate": fact["predicate"],
+            "object": fact["object"],
+            "containerTag": fact["container_tag"],
+        }
+
+    @app.get("/v4/facts")
+    def list_facts_ep(
+        conn: DbConn,
+        containerTag: str,
+        include_superseded: bool = False,
+        limit: int = 100,
+        authorization: str | None = Header(default=None),
+    ):
+        authorize(authorization, conn, containerTag)
+        facts = list_facts(conn, container_tag=containerTag, include_superseded=include_superseded)[
+            : max(limit, 0)
+        ]
+        return {
+            "facts": [
+                {
+                    "id": f["id"],
+                    "subject": f["subject"],
+                    "predicate": f["predicate"],
+                    "object": f["object"],
+                    "document_id": f["document_id"],
+                    "metadata": f["metadata"],
+                    "valid_from": f["valid_from"],
+                    "valid_to": f["valid_to"],
+                    "superseded_by": f["superseded_by"],
+                }
+                for f in facts
+            ],
+            "total": len(facts),
+        }
+
+    @app.post("/v4/import")
+    def import_graph(
+        body: ImportIn, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        # Server-local path by design (single-host tool). Any authenticated caller
+        # may import, but only into tags they can write.
+        slug = body.tag.removeprefix("graphify:")
+        authorize(authorization, conn, f"graphify:{slug}")
+        graph_path = os.path.join(os.path.abspath(body.graph_dir), "graph.json")
+        if not os.path.isfile(graph_path):
+            return _error("VALIDATION_ERROR", "graph_dir must contain graph.json", 422)
+        try:
+            with open(graph_path) as f:
+                graph = json.load(f)
+        except (ValueError, OSError) as e:
+            return _error("VALIDATION_ERROR", f"unreadable graph.json: {e}", 422)
+        if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list):
+            return _error("VALIDATION_ERROR", "graph.json must have nodes[]", 422)
+        report_path = os.path.join(os.path.dirname(graph_path), "GRAPH_REPORT.md")
+        if os.path.isfile(report_path):
+            try:
+                with open(report_path) as f:
+                    graph["report"] = f.read()
+            except OSError:
+                pass
+        from memoratum.bridge import sync_records
+
+        return sync_records(conn, graph, slug)
 
     @app.get("/health")
     def health() -> dict[str, Any]:

@@ -44,7 +44,9 @@ to the ingested tag. `DELETE` endpoints exist for facts, tags, and keys.
 
 ```
 candidates = chunks (+ facts as "subject predicate object")
-vector leg   = cosine over stored embeddings (brute force; sqlite-vec upgrade path)
+vector leg   = cosine over stored embeddings (brute force; sqlite-vec upgrade path).
+  Chunk vectors embed per search; fact vectors are cached per tag and rebuilt
+  only when the tag's live facts change. Embedding calls are batched (64/call).
 keyword leg  = FTS5 for chunks (sanitized OR-of-tokens) + token overlap for facts
 fusion       = RRF, 0.6 vector / 0.4 keyword, k=60 → threshold → limit
 rerank=true  = re-sort top 3×limit by 0.7·fused + 0.3·recency(1/(1+age_days))
@@ -57,7 +59,9 @@ fusion; fact embeddings are computed per search in one batched call.
 ## Request flow (`app.py`)
 
 Per-request SQLite connections via dependency (thread-safe under uvicorn
-workers). Auth: env admin key, DB scoped/wildcard keys, revocation list;
+workers). Requests are serialized on a process-wide lock because dependency
+setup and endpoint bodies run on different worker threads — single-process
+ceiling; HA needs a real DB server. Auth: env admin key, DB scoped/wildcard keys, revocation list;
 401 for unknown credentials, 403 for out-of-scope writes, uniform 404 for
 missing-or-forbidden reads. Dreaming + ingest run inline in the request path
 (no background queue yet — see ceilings in `SECURITY.md`).

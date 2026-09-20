@@ -22,15 +22,29 @@ def add_fact(
     object: str,
     document_id: str | None,
     metadata: dict[str, Any] | None = None,
+    supersede: bool = True,
 ) -> dict[str, Any]:
+    """Add a fact. Same (s,p,o) re-asserts (reviving a superseded row).
+    Same (s,p) with a different object supersedes live rows only when
+    supersede=True (functional relations); multi-valued relations
+    (calls/contains/imports) pass supersede=False and coexist."""
     now = time.time()
+    same = conn.execute(
+        "SELECT id, valid_to FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND object = ?"
+        " ORDER BY created_at DESC LIMIT 1",
+        (container_tag, subject, predicate, object),
+    ).fetchone()
+    if same is not None:
+        if same["valid_to"] is not None:
+            conn.execute(
+                "UPDATE facts SET valid_to = NULL, superseded_by = NULL WHERE id = ?", (same["id"],)
+            )
+            conn.commit()
+        return get_fact(conn, same["id"])
     current = conn.execute(
         "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL",
         (container_tag, subject, predicate),
     ).fetchall()
-    for row in current:
-        if row["object"] == object:
-            return get_fact(conn, row["id"])
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"
@@ -48,10 +62,11 @@ def add_fact(
         ),
     )
     for row in current:
-        conn.execute(
-            "UPDATE facts SET valid_to = ?, superseded_by = ? WHERE id = ?",
-            (now, fact_id, row["id"]),
-        )
+        if supersede:
+            conn.execute(
+                "UPDATE facts SET valid_to = ?, superseded_by = ? WHERE id = ?",
+                (now, fact_id, row["id"]),
+            )
     conn.commit()
     return get_fact(conn, fact_id)
 

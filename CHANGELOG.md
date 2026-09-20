@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-20
+### Added
+- Dashboard console (Vite+React, served at `/dashboard`): tag cards, Sigma
+  2D graph with Jarvis inspector (AI-view/relations/history/provenance),
+  Three.js 3D presentation mode, time scrubber, command palette, search view,
+  graph import view, Obsidian-style vault export view
+- Server-side graph import endpoint (`POST /v4/import`) and fact
+  write/list endpoints (`POST/GET /v4/facts`)
+- Embedding request batching; per-tag fact vector cache
+
 ## [0.5.0] - 2026-09-20
 ### Added
 - First-boot admin keygen (secure by default, zero-config kept)

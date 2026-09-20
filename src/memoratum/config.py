@@ -24,6 +24,7 @@ class Settings:
     embeddings_dims: int
     llm_endpoint: str
     llm_model: str
+    dashboard_dir: str
 
     @classmethod
     def load(cls) -> Settings:
@@ -40,6 +41,12 @@ class Settings:
             embeddings_dims=dims,
             llm_endpoint=_get("MEMORATUM_LLM_ENDPOINT", ""),
             llm_model=_get("MEMORATUM_LLM_MODEL", ""),
+            dashboard_dir=_get(
+                "MEMORATUM_DASHBOARD_DIR",
+                os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "dashboard", "dist"
+                ),
+            ),
         )
 
     @property
