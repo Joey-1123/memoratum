@@ -39,6 +39,7 @@ class SearchIn(BaseModel):
     threshold: float = Field(default=0.0, ge=0.0)
     searchMode: str = "hybrid"
     filters: dict[str, Any] | None = None
+    rerank: bool = False
 
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
@@ -146,6 +147,7 @@ def create_app(settings: Settings | None = None):
             threshold=query.threshold,
             search_mode=query.searchMode,
             filters=query.filters,
+            rerank=query.rerank,
         )
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
 

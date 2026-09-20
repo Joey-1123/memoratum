@@ -17,6 +17,7 @@ import json
 import math
 import sqlite3
 import struct
+import time
 from typing import Any
 
 from memoratum import db
@@ -60,6 +61,7 @@ def search(
     keyword_limit: int = 50,
     search_mode: str = "hybrid",
     filters: dict[str, Any] | None = None,
+    rerank: bool = False,
 ) -> list[dict[str, Any]]:
     want_chunks = search_mode in ("hybrid", "documents")
     want_facts = search_mode in ("hybrid", "memories")
@@ -69,10 +71,11 @@ def search(
 
     texts: dict[str, str] = {}
     kinds: dict[str, str] = {}
+    stamped: dict[str, float] = {}
     if want_chunks:
         rows = conn.execute(
-            "SELECT c.id, c.text, c.embedding, d.metadata FROM chunks c JOIN documents d ON d.id = c.document_id"
-            " WHERE d.container_tag = ?",
+            "SELECT c.id, c.text, c.embedding, c.created_at, d.metadata FROM chunks c"
+            " JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?",
             (container_tag,),
         ).fetchall()
         for r in rows:
@@ -81,6 +84,7 @@ def search(
             key = f"chunk_{r['id']}"
             texts[key] = r["text"]
             kinds[key] = "chunk"
+            stamped[key] = r["created_at"]
     fact_list: list[dict[str, Any]] = []
     if want_facts:
         fact_list = [f for f in list_facts(conn, container_tag) if _matches(f["metadata"])]
@@ -88,6 +92,7 @@ def search(
             key = f"mem_{f['id']}"
             texts[key] = _fact_text(f)
             kinds[key] = "memory"
+            stamped[key] = f["created_at"]
 
     scores: dict[str, float] = {}
     if texts:
@@ -118,8 +123,18 @@ def search(
         if key in texts:
             scores[key] = scores.get(key, 0.0) + 0.4 / (_RRF_K + rank)
 
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    if rerank:
+        now = time.time()
+        rescored = []
+        for key, score in ranked[: max(limit * 3, limit)]:
+            age_days = max(0.0, now - stamped.get(key, now)) / 86400.0
+            recency = 1.0 / (1.0 + age_days)
+            rescored.append((key, 0.7 * score + 0.3 * recency))
+        ranked = sorted(rescored, key=lambda kv: kv[1], reverse=True)
+
     hits = []
-    for key, score in sorted(scores.items(), key=lambda kv: kv[1], reverse=True):
+    for key, score in ranked:
         if score < threshold:
             continue
         if kinds[key] == "memory":
