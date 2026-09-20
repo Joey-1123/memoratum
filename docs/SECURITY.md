@@ -28,10 +28,27 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
   `DELETE /v4/memories/{id}`, `DELETE /v4/tags/{tag}`, and key revocation via
   `POST /v4/keys/revoke` — use these for secret spills and erasure requests.
 
+## Backups
+
+The entire state is one SQLite file (`memoratum.db` in `MEMORATUM_DATA_DIR`,
+WAL mode). Back it up hot with:
+
+```sh
+sqlite3 "$MEMORATUM_DATA_DIR/memoratum.db" ".backup '$MEMORATUM_DATA_DIR/memoratum-$(date +%F).db'"
+```
+
+Restore by stopping the server, swapping the file back, and restarting. Key
+material (hashes, revocations) lives in the same file — guard backups like the
+live copy. Personal data lives wherever you ingested it; erasure (`DELETE`
+endpoints) does not rewrite backup files you already took.
+
 ## Abuse limits (current ceilings)
 
-- No rate limiting, no request body cap: ingest + dreaming run synchronously in
-  the request path. Do not expose an open instance to untrusted writers.
+- Per-IP rate limiting (120 req/min, `/health` and `/dashboard` exempt, 429
+  envelope); request body caps (`content` ≤ 500k chars, `q` ≤ 2000). Bulk
+  importers should stay under these or run against localhost.
+- No background queue: ingest + dreaming run synchronously in the request
+  path. Do not expose an open instance to untrusted writers.
 - Search is brute-force over a tag's chunks (documented upgrade path:
   sqlite-vec). Embeddingdims changes fail loudly instead of silently corrupting
   ranking — rotate via a fresh database.
