@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-09-20
+### Added
+- Metadata on documents/facts with AND-equality `filters` on search
+- `GET /v4/profile` (fact sample + per-tag stats)
+- `rerank` flag (recency-blended rescoring of top candidates)
+- `POST /v4/keys` scoped key issuance (admin-gated; 401/403 semantics)
+
 ## [0.2.0] - 2026-09-20
 ### Added
 - Dreaming: LLM fact extraction (`instant` per-doc, `dynamic` tag-bundle),
