@@ -280,6 +280,36 @@ def create_app(settings: Settings | None = None):
                 return _error("NOT_FOUND", "tag not found", 404)
         return db.purge_tag(conn, tag)
 
+    @app.get("/v4/facts")
+    def list_facts_ep(
+        conn: DbConn,
+        containerTag: str,
+        include_superseded: bool = False,
+        limit: int = 100,
+        authorization: str | None = Header(default=None),
+    ):
+        authorize(authorization, conn, containerTag)
+        facts = list_facts(conn, container_tag=containerTag, include_superseded=include_superseded)[
+            : max(limit, 0)
+        ]
+        return {
+            "facts": [
+                {
+                    "id": f["id"],
+                    "subject": f["subject"],
+                    "predicate": f["predicate"],
+                    "object": f["object"],
+                    "document_id": f["document_id"],
+                    "metadata": f["metadata"],
+                    "valid_from": f["valid_from"],
+                    "valid_to": f["valid_to"],
+                    "superseded_by": f["superseded_by"],
+                }
+                for f in facts
+            ],
+            "total": len(facts),
+        }
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {"ok": True}
