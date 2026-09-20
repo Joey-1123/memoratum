@@ -30,7 +30,7 @@ def add_fact(
     ).fetchall()
     for row in current:
         if row["object"] == object:
-            return dict(row)
+            return get_fact(conn, row["id"])
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"

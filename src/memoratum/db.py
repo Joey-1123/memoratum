@@ -117,7 +117,8 @@ def create_document(
         ).fetchone()
         if row is not None:
             db.execute(
-                "UPDATE documents SET content = ?, status = 'queued', updated_at = ?, metadata = ? WHERE id = ?",
+                "UPDATE documents SET content = ?, status = 'queued', updated_at = ?, metadata = ?, dreamed_at = NULL"
+                " WHERE id = ?",
                 (content, now, meta, row["id"]),
             )
             db.execute("DELETE FROM chunks WHERE document_id = ?", (row["id"],))

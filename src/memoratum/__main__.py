@@ -15,7 +15,9 @@ from memoratum.config import Settings
 def main() -> None:
     settings = Settings.load()
     if not settings.auth_enabled:
-        print("memoratum: MEMORATUM_API_KEY unset — auth disabled (local dev mode)")
+        print(
+            "WARNING: MEMORATUM_API_KEY unset — server is OPEN (all tags readable/writable). Set it for any shared host."
+        )
     uvicorn.run(create_app(settings), host="127.0.0.1", port=6767)
 
 

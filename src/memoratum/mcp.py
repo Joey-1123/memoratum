@@ -12,8 +12,8 @@ import sys
 from typing import Any
 
 from memoratum import db, ingest
+from memoratum.app import build_embedder
 from memoratum.config import Settings
-from memoratum.embeddings import HashEmbedder
 from memoratum.search import search
 
 TOOLS = [
@@ -54,7 +54,7 @@ def main() -> None:
     settings = Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
     conn = db.connect(settings.db_path)
-    embedder = HashEmbedder()
+    embedder = build_embedder(settings)
     out = sys.stdout
     for line in sys.stdin:
         line = line.strip()
