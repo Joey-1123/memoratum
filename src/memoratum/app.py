@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import os
 import sqlite3
+import threading
 import time
 from typing import Annotated, Any, Literal
 
@@ -83,12 +84,19 @@ def build_embedder(settings: Settings) -> Embedder:
     return HashEmbedder()
 
 
+# Serializes requests: each gets its own connection, but dependency setup and
+# endpoint bodies run on different worker threads, so requests must not overlap
+# on SQLite connections. Single-process ceiling; HA needs a real DB server.
+_DB_LOCK = threading.Lock()
+
+
 def get_conn(request: Request):
-    conn = db.connect(request.app.state.settings.db_path)
-    try:
-        yield conn
-    finally:
-        conn.close()
+    with _DB_LOCK:
+        conn = db.connect(request.app.state.settings.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
 
 
 DbConn = Annotated[sqlite3.Connection, Depends(get_conn)]

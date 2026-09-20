@@ -83,7 +83,9 @@ _MIGRATIONS: tuple[str, ...] = (
 
 
 def connect(path: str) -> sqlite3.Connection:
-    db = sqlite3.connect(path)
+    # check_same_thread=False: FastAPI runs dependency setup and endpoint bodies
+    # on different worker threads; each request still gets its own connection.
+    db = sqlite3.connect(path, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA busy_timeout=5000")
