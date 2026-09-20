@@ -23,7 +23,7 @@ class Client:
         self.api_key = api_key
         self.timeout = timeout
 
-    def _post(self, path: str, body: dict[str, Any]) -> Any:
+    def post(self, path: str, body: dict[str, Any]) -> Any:
         data = json.dumps(body).encode()
         last: Exception | None = None
         for attempt in range(3):
@@ -61,7 +61,7 @@ class Client:
         dreaming: str = "dynamic",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._post(
+        return self.post(
             "/v3/documents",
             {
                 "content": content,
@@ -83,7 +83,7 @@ class Client:
         filters: dict[str, Any] | None = None,
         rerank: bool = False,
     ) -> dict[str, Any]:
-        return self._post(
+        return self.post(
             "/v4/search",
             {
                 "q": q,
@@ -97,10 +97,20 @@ class Client:
         )
 
     def profile(self, *, container_tag: str = "default") -> dict[str, Any]:
+        return self._request("GET", f"/v4/profile?containerTag={container_tag}")
+
+    def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        query = "" if not params else "?" + "&".join(f"{k}={v}" for k, v in params.items())
+        return self._request("GET", path + query)
+
+    def delete(self, path: str) -> Any:
+        return self._request("DELETE", path)
+
+    def _request(self, method: str, path: str) -> Any:
         req = urllib.request.Request(
-            f"{self.base_url}/v4/profile?containerTag={container_tag}",
+            self.base_url + path,
             headers=({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}),
-            method="GET",
+            method=method,
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as res:
