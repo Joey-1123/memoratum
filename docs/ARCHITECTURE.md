@@ -44,7 +44,9 @@ to the ingested tag. `DELETE` endpoints exist for facts, tags, and keys.
 
 ```
 candidates = chunks (+ facts as "subject predicate object")
-vector leg   = cosine over stored embeddings (brute force; sqlite-vec upgrade path)
+vector leg   = cosine over stored embeddings (brute force; sqlite-vec upgrade path).
+  Chunk vectors embed per search; fact vectors are cached per tag and rebuilt
+  only when the tag's live facts change. Embedding calls are batched (64/call).
 keyword leg  = FTS5 for chunks (sanitized OR-of-tokens) + token overlap for facts
 fusion       = RRF, 0.6 vector / 0.4 keyword, k=60 → threshold → limit
 rerank=true  = re-sort top 3×limit by 0.7·fused + 0.3·recency(1/(1+age_days))
