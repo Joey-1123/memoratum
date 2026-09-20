@@ -20,6 +20,7 @@ from memoratum import db, ingest
 from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
+from memoratum.facts import list_facts
 from memoratum.search import search
 
 
@@ -147,6 +148,27 @@ def create_app(settings: Settings | None = None):
             filters=query.filters,
         )
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
+
+    @app.get("/v4/profile")
+    def get_profile(
+        conn: DbConn,
+        containerTag: str = "default",
+        authorization: str | None = Header(default=None),
+    ):
+        authorize(authorization, conn, containerTag)
+        facts = list_facts(conn, container_tag=containerTag)[:20]
+        docs = conn.execute(
+            "SELECT COUNT(*) AS n FROM documents WHERE container_tag = ?", (containerTag,)
+        ).fetchone()["n"]
+        chunks = conn.execute(
+            "SELECT COUNT(*) AS n FROM chunks c JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?",
+            (containerTag,),
+        ).fetchone()["n"]
+        return {
+            "containerTag": containerTag,
+            "facts": [f"{f['subject']} {f['predicate']} {f['object']}" for f in facts],
+            "stats": {"documents": docs, "chunks": chunks, "facts": len(facts)},
+        }
 
     @app.get("/health")
     def health() -> dict[str, Any]:
