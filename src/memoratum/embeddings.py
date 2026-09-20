@@ -41,6 +41,8 @@ class HashEmbedder:
 class ApiEmbedder:
     """OpenAI-compatible embeddings client (works with Ollama, vLLM, proxies)."""
 
+    batch_size = 64
+
     def __init__(
         self, *, endpoint: str, model: str, api_key: str = "", dims: int = 0, timeout: float = 30.0
     ) -> None:
@@ -51,6 +53,12 @@ class ApiEmbedder:
         self.timeout = timeout
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for i in range(0, len(texts), self.batch_size):
+            out.extend(self._embed_batch(texts[i : i + self.batch_size]))
+        return out
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         body = json.dumps({"model": self.model, "input": texts}).encode()
         last: Exception | None = None
         for attempt in range(3):
