@@ -28,6 +28,7 @@ class DocumentIn(BaseModel):
     containerTag: str = "default"
     customId: str | None = None
     dreaming: Literal["dynamic", "instant"] = "dynamic"
+    metadata: dict[str, Any] | None = None
 
 
 class SearchIn(BaseModel):
@@ -36,6 +37,7 @@ class SearchIn(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
     threshold: float = Field(default=0.0, ge=0.0)
     searchMode: str = "hybrid"
+    filters: dict[str, Any] | None = None
 
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
@@ -110,7 +112,11 @@ def create_app(settings: Settings | None = None):
     ):
         authorize(authorization, conn, doc.containerTag)
         created = db.create_document(
-            conn, container_tag=doc.containerTag, content=doc.content, custom_id=doc.customId
+            conn,
+            container_tag=doc.containerTag,
+            content=doc.content,
+            custom_id=doc.customId,
+            metadata=doc.metadata,
         )
         ingest.process_one(conn, app.state.embedder)
         if app.state.llm is not None:
@@ -138,6 +144,7 @@ def create_app(settings: Settings | None = None):
             limit=query.limit,
             threshold=query.threshold,
             search_mode=query.searchMode,
+            filters=query.filters,
         )
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
 

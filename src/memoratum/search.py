@@ -13,6 +13,7 @@ is mandatory.
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 import struct
@@ -58,25 +59,31 @@ def search(
     threshold: float = 0.0,
     keyword_limit: int = 50,
     search_mode: str = "hybrid",
+    filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     want_chunks = search_mode in ("hybrid", "documents")
     want_facts = search_mode in ("hybrid", "memories")
+
+    def _matches(meta: dict[str, Any]) -> bool:
+        return not filters or all(meta.get(k) == v for k, v in filters.items())
 
     texts: dict[str, str] = {}
     kinds: dict[str, str] = {}
     if want_chunks:
         rows = conn.execute(
-            "SELECT c.id, c.text, c.embedding FROM chunks c JOIN documents d ON d.id = c.document_id"
+            "SELECT c.id, c.text, c.embedding, d.metadata FROM chunks c JOIN documents d ON d.id = c.document_id"
             " WHERE d.container_tag = ?",
             (container_tag,),
         ).fetchall()
         for r in rows:
+            if not _matches(json.loads(r["metadata"] or "{}")):
+                continue
             key = f"chunk_{r['id']}"
             texts[key] = r["text"]
             kinds[key] = "chunk"
     fact_list: list[dict[str, Any]] = []
     if want_facts:
-        fact_list = list_facts(conn, container_tag)
+        fact_list = [f for f in list_facts(conn, container_tag) if _matches(f["metadata"])]
         for f in fact_list:
             key = f"mem_{f['id']}"
             texts[key] = _fact_text(f)

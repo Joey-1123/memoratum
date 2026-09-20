@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 import uuid
@@ -20,6 +21,7 @@ def add_fact(
     predicate: str,
     object: str,
     document_id: str | None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = time.time()
     current = conn.execute(
@@ -32,8 +34,18 @@ def add_fact(
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"
-        " superseded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)",
-        (fact_id, container_tag, subject, predicate, object, document_id, now, now),
+        " superseded_by, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+        (
+            fact_id,
+            container_tag,
+            subject,
+            predicate,
+            object,
+            document_id,
+            now,
+            now,
+            json.dumps(metadata or {}),
+        ),
     )
     for row in current:
         conn.execute(
@@ -48,11 +60,23 @@ def get_fact(conn: sqlite3.Connection, fact_id: str) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM facts WHERE id = ?", (fact_id,)).fetchone()
     if row is None:
         raise KeyError(fact_id)
-    return dict(row)
+    fact = dict(row)
+    fact["metadata"] = json.loads(fact.get("metadata") or "{}")
+    return fact
+
+
+def _matches(meta: dict[str, Any], filters: dict[str, Any] | None) -> bool:
+    if not filters:
+        return True
+    return all(meta.get(k) == v for k, v in filters.items())
 
 
 def list_facts(
-    conn: sqlite3.Connection, container_tag: str, *, include_superseded: bool = False
+    conn: sqlite3.Connection,
+    container_tag: str,
+    *,
+    include_superseded: bool = False,
+    filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if include_superseded:
         rows = conn.execute(
@@ -63,4 +87,10 @@ def list_facts(
             "SELECT * FROM facts WHERE container_tag = ? AND valid_to IS NULL ORDER BY created_at",
             (container_tag,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        fact = dict(r)
+        fact["metadata"] = json.loads(fact.get("metadata") or "{}")
+        if _matches(fact["metadata"], filters):
+            out.append(fact)
+    return out

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
 import sqlite3
@@ -68,6 +69,10 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE documents ADD COLUMN dreamed_at REAL;
     """,
+    """
+    ALTER TABLE documents ADD COLUMN metadata TEXT;
+    ALTER TABLE facts ADD COLUMN metadata TEXT;
+    """,
 )
 
 
@@ -96,9 +101,15 @@ def _now() -> float:
 
 
 def create_document(
-    db: sqlite3.Connection, *, container_tag: str, content: str, custom_id: str | None = None
+    db: sqlite3.Connection,
+    *,
+    container_tag: str,
+    content: str,
+    custom_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = _now()
+    meta = json.dumps(metadata or {})
     if custom_id is not None:
         row = db.execute(
             "SELECT id FROM documents WHERE container_tag = ? AND custom_id = ?",
@@ -106,17 +117,17 @@ def create_document(
         ).fetchone()
         if row is not None:
             db.execute(
-                "UPDATE documents SET content = ?, status = 'queued', updated_at = ? WHERE id = ?",
-                (content, now, row["id"]),
+                "UPDATE documents SET content = ?, status = 'queued', updated_at = ?, metadata = ? WHERE id = ?",
+                (content, now, meta, row["id"]),
             )
             db.execute("DELETE FROM chunks WHERE document_id = ?", (row["id"],))
             db.commit()
             return get_document(db, row["id"])
     doc_id = uuid.uuid4().hex
     db.execute(
-        "INSERT INTO documents(id, container_tag, custom_id, content, status, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, 'queued', ?, ?)",
-        (doc_id, container_tag, custom_id, content, now, now),
+        "INSERT INTO documents(id, container_tag, custom_id, content, status, created_at, updated_at, metadata)"
+        " VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)",
+        (doc_id, container_tag, custom_id, content, now, now, meta),
     )
     db.commit()
     return get_document(db, doc_id)
@@ -126,7 +137,9 @@ def get_document(db: sqlite3.Connection, doc_id: str) -> dict[str, Any]:
     row = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if row is None:
         raise KeyError(doc_id)
-    return dict(row)
+    doc = dict(row)
+    doc["metadata"] = json.loads(doc.get("metadata") or "{}")
+    return doc
 
 
 def set_status(db: sqlite3.Connection, doc_id: str, status: str) -> None:
