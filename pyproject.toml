@@ -1,0 +1,24 @@
+[project]
+name = "memoratum"
+version = "0.0.0"
+description = "Self-hosted context infrastructure for AI agents (AGPL-3.0)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8", "httpx>=0.28"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memoratum"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
