@@ -26,6 +26,29 @@ from memoratum.facts import list_facts
 
 _RRF_K = 60
 
+# Per-tag fact embedding cache: (count, max created_at, embedder key) -> (ids, vectors).
+# Single-process ceiling: rebuilds when the tag's live facts change. Invalidated
+# implicitly because the key includes row count + newest timestamp.
+_FACT_EMB_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _fact_corpus(
+    conn: sqlite3.Connection, embedder: Embedder, container_tag: str
+) -> tuple[list[str], list[list[float]]]:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(created_at) AS m FROM facts WHERE container_tag = ? AND valid_to IS NULL",
+        (container_tag,),
+    ).fetchone()
+    key = f"{container_tag}|{row['n']}|{row['m']}|{type(embedder).__name__}|{embedder.dims}"
+    entry = _FACT_EMB_CACHE.get(container_tag)
+    if entry is None or entry["key"] != key:
+        current = list_facts(conn, container_tag)
+        texts = [_fact_text(f) for f in current]
+        embs = embedder.embed(texts) if texts else []
+        entry = {"key": key, "ids": [f["id"] for f in current], "embs": embs}
+        _FACT_EMB_CACHE[container_tag] = entry
+    return entry["ids"], entry["embs"]
+
 
 def _unpack(blob: bytes) -> list[float]:
     return list(struct.unpack(f"{len(blob) // 4}f", blob))
@@ -95,11 +118,21 @@ def search(
             stamped[key] = f["created_at"]
 
     scores: dict[str, float] = {}
+    vec_items: list[tuple[str, list[float]]] = []
+    chunk_keys = [k for k in texts if kinds[k] == "chunk"]
+    if chunk_keys:
+        chunk_embs = embedder.embed([texts[k] for k in chunk_keys])
+        vec_items.extend(zip(chunk_keys, chunk_embs, strict=True))
+    if want_facts and fact_list:
+        cached_ids, cached_embs = _fact_corpus(conn, embedder, container_tag)
+        by_id = dict(zip(cached_ids, cached_embs, strict=True))
+        for f in fact_list:
+            if f["id"] in by_id:
+                vec_items.append((f"mem_{f['id']}", by_id[f["id"]]))
     if texts:
         qvec = embedder.embed([query])[0]
-        embs = embedder.embed(list(texts.values()))
         vec_ranked = sorted(
-            ((key, _cosine(qvec, emb)) for key, emb in zip(texts, embs, strict=True)),
+            ((key, _cosine(qvec, emb)) for key, emb in vec_items),
             key=lambda t: t[1],
             reverse=True,
         )
