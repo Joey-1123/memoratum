@@ -65,6 +65,9 @@ _MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_facts_tag ON facts(container_tag);
     CREATE INDEX IF NOT EXISTS idx_facts_spo ON facts(container_tag, subject, predicate);
     """,
+    """
+    ALTER TABLE documents ADD COLUMN dreamed_at REAL;
+    """,
 )
 
 
