@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { GraphFact } from "../types";
+import { useTimeScrub } from "../components/TimeScrub";
 import { GraphView } from "./GraphView";
 
 export interface Selection {
@@ -107,6 +108,8 @@ export function GraphPanel({ tag }: { tag: string }) {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [tag]);
 
+  const { visible, scrubber } = useTimeScrub(facts);
+
   if (error)
     return (
       <p className="error" role="alert">
@@ -114,11 +117,13 @@ export function GraphPanel({ tag }: { tag: string }) {
       </p>
     );
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "1rem" }}>
-      <GraphView
-        facts={facts}
-        onSelect={(node, nodeFacts) => setSelection({ node, facts: nodeFacts })}
-      />
+    <div>
+      {scrubber}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "1rem" }}>
+        <GraphView
+          facts={visible}
+          onSelect={(node, nodeFacts) => setSelection({ node, facts: nodeFacts })}
+        />
       {selection ? (
         <Inspector tag={tag} selection={selection} onClose={() => setSelection(null)} />
       ) : (
@@ -127,6 +132,7 @@ export function GraphPanel({ tag }: { tag: string }) {
           <p className="muted">Click a node to inspect it — including exactly what the AI would receive.</p>
         </div>
       )}
+      </div>
     </div>
   );
 }

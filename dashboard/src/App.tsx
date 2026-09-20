@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CommandPalette } from "./components/CommandPalette";
 import { KeyField } from "./components/KeyField";
 import { GraphPanel } from "./views/Inspector";
 import { SearchView } from "./views/SearchView";
@@ -29,6 +30,13 @@ export function App() {
         <span className="spacer" />
         <KeyField onChange={() => setKeyEpoch((n) => n + 1)} />
       </header>
+      <CommandPalette
+        actions={[
+          { id: "tags", label: "Go to Tags", run: () => setView("tags") },
+          { id: "graph", label: "Go to Graph", run: () => setView("graph") },
+          { id: "search", label: "Go to Search", run: () => setView("search") },
+        ]}
+      />
       <main key={keyEpoch}>
         {view === "tags" && (
           <TagsView
