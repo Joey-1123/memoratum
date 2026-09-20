@@ -13,3 +13,6 @@ data/
 
 # local-only working notes (never commit)
 docs/RESEARCH.md
+
+node_modules/
+dist/
