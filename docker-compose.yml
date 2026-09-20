@@ -1,0 +1,16 @@
+services:
+  memoratum:
+    build: .
+    ports:
+      - "6767:6767"
+    environment:
+      MEMORATUM_DATA_DIR: /data
+      MEMORATUM_API_KEY: ${MEMORATUM_API_KEY:-}
+      MEMORATUM_EMBEDDINGS_PROVIDER: ${MEMORATUM_EMBEDDINGS_PROVIDER:-hash}
+      MEMORATUM_EMBEDDINGS_ENDPOINT: ${MEMORATUM_EMBEDDINGS_ENDPOINT:-}
+      MEMORATUM_EMBEDDINGS_MODEL: ${MEMORATUM_EMBEDDINGS_MODEL:-}
+    volumes:
+      - memoratum-data:/data
+
+volumes:
+  memoratum-data:

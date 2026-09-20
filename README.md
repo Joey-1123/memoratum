@@ -6,7 +6,22 @@ Memoratum ingests documents, chat turns, and code, then serves them back as sear
 
 ## Status
 
-Scaffold. The build follows `docs/PARITY.md` phase by phase. Nothing runs yet.
+Phase 1 core works: ingest → hybrid search behind a Supermemory-compatible API.
+
+```sh
+uv sync --group dev
+uv run pytest
+MEMORATUM_DATA_DIR=./data uv run python -m memoratum  # :6767
+
+curl -X POST localhost:6767/v3/documents \
+  -H 'Content-Type: application/json' \
+  -d '{"content": "The user loves Paris.", "containerTag": "user_123"}'
+curl -X POST localhost:6767/v4/search \
+  -H 'Content-Type: application/json' \
+  -d '{"q": "where does the user want to travel?", "containerTag": "user_123"}'
+```
+
+Set `MEMORATUM_API_KEY` to require Bearer auth. Build follows `docs/PARITY.md`.
 
 ## License
 
