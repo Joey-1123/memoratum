@@ -10,7 +10,7 @@ import hmac
 import os
 import sqlite3
 import time
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from memoratum import db, ingest
 from memoratum.config import Settings
+from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.search import search
 
@@ -26,6 +27,7 @@ class DocumentIn(BaseModel):
     content: str = Field(min_length=1)
     containerTag: str = "default"
     customId: str | None = None
+    dreaming: Literal["dynamic", "instant"] = "dynamic"
 
 
 class SearchIn(BaseModel):
@@ -72,6 +74,15 @@ def create_app(settings: Settings | None = None):
     app = FastAPI(title="Memoratum")
     app.state.settings = settings
     app.state.embedder = build_embedder(settings)
+    app.state.llm = (
+        ChatLLM(
+            endpoint=settings.llm_endpoint,
+            model=settings.llm_model,
+            api_key=os.environ.get("MEMORATUM_LLM_KEY", ""),
+        )
+        if settings.llm_endpoint and settings.llm_model
+        else None
+    )
 
     def authorize(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> None:
         if not settings.auth_enabled:
@@ -102,6 +113,8 @@ def create_app(settings: Settings | None = None):
             conn, container_tag=doc.containerTag, content=doc.content, custom_id=doc.customId
         )
         ingest.process_one(conn, app.state.embedder)
+        if app.state.llm is not None:
+            dream_pending(conn, app.state.llm, mode=doc.dreaming)
         return {"id": created["id"], "status": db.get_document(conn, created["id"])["status"]}
 
     @app.get("/v3/documents/{doc_id}")
@@ -124,6 +137,7 @@ def create_app(settings: Settings | None = None):
             container_tag=query.containerTag,
             limit=query.limit,
             threshold=query.threshold,
+            search_mode=query.searchMode,
         )
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
 

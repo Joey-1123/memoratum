@@ -49,6 +49,25 @@ _MIGRATIONS: tuple[str, ...] = (
       created_at REAL NOT NULL
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS facts(
+      id TEXT PRIMARY KEY,
+      container_tag TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      predicate TEXT NOT NULL,
+      object TEXT NOT NULL,
+      document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+      valid_from REAL NOT NULL,
+      valid_to REAL,
+      superseded_by TEXT REFERENCES facts(id),
+      created_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_facts_tag ON facts(container_tag);
+    CREATE INDEX IF NOT EXISTS idx_facts_spo ON facts(container_tag, subject, predicate);
+    """,
+    """
+    ALTER TABLE documents ADD COLUMN dreamed_at REAL;
+    """,
 )
 
 
