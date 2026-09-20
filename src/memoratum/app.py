@@ -85,6 +85,21 @@ def get_conn(request: Request):
 DbConn = Annotated[sqlite3.Connection, Depends(get_conn)]
 
 
+def _ensure_boot_key(settings: Settings) -> None:
+    """First boot with no auth configured: mint a wildcard admin key and print it once."""
+    if settings.auth_enabled:
+        return
+    conn = db.connect(settings.db_path)
+    try:
+        existing = conn.execute("SELECT COUNT(*) AS n FROM api_keys").fetchone()["n"]
+        if existing:
+            return
+        raw = db.create_api_key(conn, container_tag=None)
+        print(f"memoratum: generated admin key (shown once, store it): {raw}")
+    finally:
+        conn.close()
+
+
 def create_app(settings: Settings | None = None):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
@@ -100,6 +115,7 @@ def create_app(settings: Settings | None = None):
         if settings.llm_endpoint and settings.llm_model
         else None
     )
+    _ensure_boot_key(settings)
 
     def scope_of(authorization: str | None, conn: sqlite3.Connection) -> str | None | bool:
         """Admin key -> True; known key -> its scope (None = wildcard); else False."""
