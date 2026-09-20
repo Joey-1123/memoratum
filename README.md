@@ -25,7 +25,8 @@ Set `MEMORATUM_API_KEY` to require Bearer auth. For fact extraction
 ("dreaming"), point `MEMORATUM_LLM_ENDPOINT`/`MEMORATUM_LLM_MODEL` at any
 OpenAI-compatible chat endpoint (`MEMORATUM_LLM_KEY` optional); documents
 accept `"dreaming": "instant"|"dynamic"`, and search accepts
-`"searchMode": "memories"|"documents"|"hybrid"`. Build follows `docs/PARITY.md`.
+`"searchMode": "memories"|"documents"|"hybrid"`. Clients (Python SDK, TS SDK,
+OpenCode plugin, MCP server) live in [`clients/`](clients/). Build follows `docs/PARITY.md`.
 
 ## License
 
