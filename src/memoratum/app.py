@@ -28,7 +28,7 @@ from memoratum.search import search
 
 
 class DocumentIn(BaseModel):
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=500_000)
     containerTag: str = "default"
     customId: str | None = None
     dreaming: Literal["dynamic", "instant"] = "dynamic"
@@ -36,7 +36,7 @@ class DocumentIn(BaseModel):
 
 
 class SearchIn(BaseModel):
-    q: str = Field(min_length=1)
+    q: str = Field(min_length=1, max_length=2000)
     containerTag: str = "default"
     limit: int = Field(default=10, ge=1, le=100)
     threshold: float = Field(default=0.0, ge=0.0)
@@ -124,10 +124,27 @@ def _ensure_boot_key(settings: Settings) -> None:
         conn.close()
 
 
-def create_app(settings: Settings | None = None):
+def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int | None = 120):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
     app = FastAPI(title="Memoratum")
+    app.state.settings = settings
+    if rate_limit_per_minute:
+        buckets: dict[str, list[float]] = {}
+
+        @app.middleware("http")
+        async def _rate_limit(request: Request, call_next):
+            if request.url.path == "/health" or request.url.path.startswith("/dashboard"):
+                return await call_next(request)
+            now = time.time()
+            window = 60.0
+            ip = request.client.host if request.client else "unknown"
+            hits = [t for t in buckets.get(ip, []) if now - t < window]
+            if len(hits) >= rate_limit_per_minute:
+                return _error("RATE_LIMITED", "rate limit exceeded", 429)
+            hits.append(now)
+            buckets[ip] = hits
+            return await call_next(request)
     app.state.settings = settings
     app.state.embedder = build_embedder(settings)
     app.state.llm = (
