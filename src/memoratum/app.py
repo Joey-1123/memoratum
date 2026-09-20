@@ -101,17 +101,35 @@ def create_app(settings: Settings | None = None):
         else None
     )
 
+    def credential_ok(authorization: str | None, conn: sqlite3.Connection) -> bool:
+        if not authorization or not authorization.startswith("Bearer "):
+            return False
+        raw = authorization[len("Bearer ") :]
+        return hmac.compare_digest(raw, settings.api_key) or db.resolve_key(conn, raw) is not None
+
+    def may_access(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> bool:
+        if not authorization or not authorization.startswith("Bearer "):
+            return False
+        raw = authorization[len("Bearer ") :]
+        if hmac.compare_digest(raw, settings.api_key):
+            return True
+        return db.resolve_key(conn, raw) == container_tag
+
     def authorize(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> None:
         if not settings.auth_enabled:
             return
-        if not authorization or not authorization.startswith("Bearer "):
+        if not credential_ok(authorization, conn):
             raise HTTPException(status_code=401, detail="UNAUTHORIZED")
-        raw = authorization[len("Bearer ") :]
-        if hmac.compare_digest(raw, settings.api_key):
-            return
-        scope = db.resolve_key(conn, raw)
-        if scope is None or scope != container_tag:
-            raise HTTPException(status_code=401 if scope is None else 403, detail="FORBIDDEN")
+        if not may_access(authorization, conn, container_tag):
+            raise HTTPException(status_code=403, detail="FORBIDDEN")
+
+    def _authorized(authorization: str | None, conn: sqlite3.Connection) -> bool:
+        return credential_ok(authorization, conn)
+
+    def _may_access(
+        authorization: str | None, conn: sqlite3.Connection, container_tag: str
+    ) -> bool:
+        return may_access(authorization, conn, container_tag)
 
     @app.exception_handler(HTTPException)
     async def _http_errors(_req: Request, exc: HTTPException):
@@ -140,11 +158,14 @@ def create_app(settings: Settings | None = None):
 
     @app.get("/v3/documents/{doc_id}")
     def get_document(doc_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        if settings.auth_enabled and not _authorized(authorization, conn):
+            return _error("UNAUTHORIZED", "authentication required", 401)
         try:
             doc = db.get_document(conn, doc_id)
         except KeyError:
             return _error("NOT_FOUND", "document not found", 404)
-        authorize(authorization, conn, doc["container_tag"])
+        if settings.auth_enabled and not _may_access(authorization, conn, doc["container_tag"]):
+            return _error("NOT_FOUND", "document not found", 404)
         return {"id": doc["id"], "containerTag": doc["container_tag"], "status": doc["status"]}
 
     @app.post("/v4/search")
