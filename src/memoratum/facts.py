@@ -36,7 +36,9 @@ def add_fact(
     ).fetchone()
     if same is not None:
         if same["valid_to"] is not None:
-            conn.execute("UPDATE facts SET valid_to = NULL, superseded_by = NULL WHERE id = ?", (same["id"],))
+            conn.execute(
+                "UPDATE facts SET valid_to = NULL, superseded_by = NULL WHERE id = ?", (same["id"],)
+            )
             conn.commit()
         return get_fact(conn, same["id"])
     current = conn.execute(
