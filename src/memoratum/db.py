@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import sqlite3
 import time
@@ -132,21 +133,32 @@ def add_chunks(
     return ids
 
 
+def fts_query(query: str) -> str | None:
+    """Sanitize free text into an FTS5 MATCH expression (OR of quoted tokens)."""
+    tokens = re.findall(r"[A-Za-z0-9_]+", query)
+    if not tokens:
+        return None
+    return " OR ".join(f'"{t}"' for t in tokens)
+
+
 def keyword_search(
     db: sqlite3.Connection, query: str, *, container_tag: str | None = None, limit: int = 10
 ) -> list[dict[str, Any]]:
+    match = fts_query(query)
+    if match is None:
+        return []
     if container_tag is None:
         rows = db.execute(
             "SELECT c.id, c.document_id, c.text, rank FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid"
             " WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?",
-            (query, limit),
+            (match, limit),
         ).fetchall()
     else:
         rows = db.execute(
             "SELECT c.id, c.document_id, c.text, rank FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid"
             " JOIN documents d ON d.id = c.document_id WHERE chunks_fts MATCH ? AND d.container_tag = ?"
             " ORDER BY rank LIMIT ?",
-            (query, container_tag, limit),
+            (match, container_tag, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 

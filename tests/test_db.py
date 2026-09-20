@@ -45,6 +45,16 @@ def test_chunks_and_fts_roundtrip() -> None:
     db.close()
 
 
+def test_fts_special_chars_do_not_error() -> None:
+    from memoratum.db import add_chunks, create_document, keyword_search
+
+    db = _open()
+    doc = create_document(db, container_tag="u1", content="x")
+    add_chunks(db, doc["id"], ["where does the user want to travel"])
+    assert keyword_search(db, "where does the user want to travel?", limit=5)
+    db.close()
+
+
 def test_scoped_keys() -> None:
     from memoratum.db import create_api_key, resolve_key
 
