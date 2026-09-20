@@ -129,6 +129,10 @@ def _ensure_boot_key(settings: Settings) -> None:
         conn.close()
 
 
+def _is_loopback(ip: str) -> bool:
+    return ip == "localhost" or ip.startswith("127.") or ip in ("::1", "::ffff:127.0.0.1")
+
+
 def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int | None = 120):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
@@ -144,6 +148,8 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             now = time.time()
             window = 60.0
             ip = request.client.host if request.client else "unknown"
+            if _is_loopback(ip):
+                return await call_next(request)
             hits = [t for t in buckets.get(ip, []) if now - t < window]
             if len(hits) >= rate_limit_per_minute:
                 retry_after = max(1, math.ceil(hits[0] + window - now))
