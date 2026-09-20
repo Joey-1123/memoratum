@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.0] - 2026-09-20
+### Added
+- First-boot admin keygen (secure by default, zero-config kept)
+- Forget API: fact delete, tag purge, key revocation
+- Working wildcard keys (lookup refactor)
+### Fixed
+- Dreaming scoped per tag, re-dream on content upsert, windowed oversized docs
+- Full-row fact returns, uniform 404, env/dims guards
+
 ## [0.4.0] - 2026-09-20
 ### Added
 - Python SDK (`memoratum.client.Client`: add/search/profile, retries, errors)
