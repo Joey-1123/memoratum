@@ -46,6 +46,19 @@ def _error(code: str, message: str, status: int) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
 
 
+class KeyIn(BaseModel):
+    containerTag: str | None = None
+
+
+def _is_admin(authorization: str | None, settings: Settings) -> bool:
+    return bool(
+        settings.auth_enabled
+        and authorization
+        and authorization.startswith("Bearer ")
+        and hmac.compare_digest(authorization[len("Bearer ") :], settings.api_key)
+    )
+
+
 def build_embedder(settings: Settings) -> Embedder:
     if (
         settings.embeddings_provider == "api"
@@ -171,6 +184,20 @@ def create_app(settings: Settings | None = None):
             "facts": [f"{f['subject']} {f['predicate']} {f['object']}" for f in facts],
             "stats": {"documents": docs, "chunks": chunks, "facts": len(facts)},
         }
+
+    @app.post("/v4/keys", status_code=201)
+    def issue_key(body: KeyIn, conn: DbConn, authorization: str | None = Header(default=None)):
+        if not settings.auth_enabled:
+            return {"key": db.create_api_key(conn, container_tag=body.containerTag)}
+        if _is_admin(authorization, settings):
+            return {"key": db.create_api_key(conn, container_tag=body.containerTag)}
+        if (
+            authorization
+            and authorization.startswith("Bearer ")
+            and db.resolve_key(conn, authorization[len("Bearer ") :]) is not None
+        ):
+            return _error("FORBIDDEN", "admin key required", 403)
+        return _error("UNAUTHORIZED", "authentication required", 401)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
