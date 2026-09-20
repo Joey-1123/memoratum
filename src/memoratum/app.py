@@ -101,19 +101,24 @@ def create_app(settings: Settings | None = None):
         else None
     )
 
-    def credential_ok(authorization: str | None, conn: sqlite3.Connection) -> bool:
-        if not authorization or not authorization.startswith("Bearer "):
-            return False
-        raw = authorization[len("Bearer ") :]
-        return hmac.compare_digest(raw, settings.api_key) or db.resolve_key(conn, raw) is not None
-
-    def may_access(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> bool:
+    def scope_of(authorization: str | None, conn: sqlite3.Connection) -> str | None | bool:
+        """Admin key -> True; known key -> its scope (None = wildcard); else False."""
         if not authorization or not authorization.startswith("Bearer "):
             return False
         raw = authorization[len("Bearer ") :]
         if hmac.compare_digest(raw, settings.api_key):
             return True
-        return db.resolve_key(conn, raw) == container_tag
+        row = db.lookup_key(conn, raw)
+        if row is None:
+            return False
+        return row["container_tag"]
+
+    def credential_ok(authorization: str | None, conn: sqlite3.Connection) -> bool:
+        return scope_of(authorization, conn) is not False
+
+    def may_access(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> bool:
+        scope = scope_of(authorization, conn)
+        return scope is True or scope is None or scope == container_tag
 
     def authorize(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> None:
         if not settings.auth_enabled:
@@ -219,7 +224,7 @@ def create_app(settings: Settings | None = None):
         if (
             authorization
             and authorization.startswith("Bearer ")
-            and db.resolve_key(conn, authorization[len("Bearer ") :]) is not None
+            and db.lookup_key(conn, authorization[len("Bearer ") :]) is not None
         ):
             return _error("FORBIDDEN", "admin key required", 403)
         return _error("UNAUTHORIZED", "authentication required", 401)

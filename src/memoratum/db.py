@@ -210,10 +210,11 @@ def create_api_key(db: sqlite3.Connection, *, container_tag: str | None = None) 
     return raw
 
 
-def resolve_key(db: sqlite3.Connection, raw: str) -> str | None:
+def lookup_key(db: sqlite3.Connection, raw: str) -> dict[str, Any] | None:
+    """Return the key row (container_tag None = wildcard) or None if unknown."""
     row = db.execute(
         "SELECT container_tag FROM api_keys WHERE key_hash = ?", (_hash_key(raw),)
     ).fetchone()
     if row is None:
         return None
-    return row["container_tag"]
+    return dict(row)

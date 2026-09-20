@@ -56,11 +56,15 @@ def test_fts_special_chars_do_not_error() -> None:
 
 
 def test_scoped_keys() -> None:
-    from memoratum.db import create_api_key, resolve_key
+    from memoratum.db import create_api_key, lookup_key
 
     db = _open()
     raw = create_api_key(db, container_tag="proj-a")
     assert raw.startswith("mm_")
-    assert resolve_key(db, raw) == "proj-a"
-    assert resolve_key(db, "mm_bogus") is None
+    row = lookup_key(db, raw)
+    assert row is not None and row["container_tag"] == "proj-a"
+    assert lookup_key(db, "mm_bogus") is None
+    wild = create_api_key(db, container_tag=None)
+    wrow = lookup_key(db, wild)
+    assert wrow is not None and wrow["container_tag"] is None
     db.close()
