@@ -31,15 +31,16 @@ def process_one(conn: sqlite3.Connection, embedder: Embedder) -> dict[str, Any] 
         chunks = split_markdown(doc["content"])
         texts = [c["text"] for c in chunks] or [doc["content"]]
         vecs = embedder.embed(texts)
-        prior = conn.execute("SELECT embedding FROM chunks LIMIT 1").fetchone()
-        if (
-            prior is not None
-            and prior["embedding"] is not None
-            and len(prior["embedding"]) != len(vecs[0]) * 4
-        ):
-            raise RuntimeError(
-                "embedding dimension change detected; re-embed from a fresh database"
-            )
+        for table in ("chunks", "facts"):
+            prior = conn.execute(f"SELECT embedding FROM {table} LIMIT 1").fetchone()
+            if (
+                prior is not None
+                and prior["embedding"] is not None
+                and len(prior["embedding"]) != len(vecs[0]) * 4
+            ):
+                raise RuntimeError(
+                    "embedding dimension change detected; re-embed from a fresh database"
+                )
         db.add_chunks(conn, doc_id, texts, [_pack(v) for v in vecs])
         db.set_status(conn, doc_id, "done")
     except Exception:  # noqa: BLE001 — worker must record failure, never crash the loop

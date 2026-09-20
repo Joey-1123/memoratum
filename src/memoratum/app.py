@@ -25,7 +25,7 @@ from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.facts import list_facts
-from memoratum.search import search
+from memoratum.search import pack_vector, search
 
 
 class DocumentIn(BaseModel):
@@ -355,6 +355,15 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             metadata=body.metadata,
             supersede=body.supersede,
         )
+        try:
+            text = f"{fact['subject']} {fact['predicate']} {fact['object']}"
+            vec = app.state.embedder.embed([text])[0]
+            conn.execute(
+                "UPDATE facts SET embedding = ? WHERE id = ?", (pack_vector(vec), fact["id"])
+            )
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001 — fact exists; vector backfills on search
+            print(f"memoratum: inline fact embedding skipped: {exc}")
         return {
             "id": fact["id"],
             "subject": fact["subject"],

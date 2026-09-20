@@ -26,28 +26,11 @@ from memoratum.facts import list_facts
 
 _RRF_K = 60
 
-# Per-tag fact embedding cache: (count, max created_at, embedder key) -> (ids, vectors).
-# Single-process ceiling: rebuilds when the tag's live facts change. Invalidated
-# implicitly because the key includes row count + newest timestamp.
-_FACT_EMB_CACHE: dict[str, dict[str, Any]] = {}
 
+def pack_vector(vec: list[float]) -> bytes:
+    import struct
 
-def _fact_corpus(
-    conn: sqlite3.Connection, embedder: Embedder, container_tag: str
-) -> tuple[list[str], list[list[float]]]:
-    row = conn.execute(
-        "SELECT COUNT(*) AS n, MAX(created_at) AS m FROM facts WHERE container_tag = ? AND valid_to IS NULL",
-        (container_tag,),
-    ).fetchone()
-    key = f"{container_tag}|{row['n']}|{row['m']}|{type(embedder).__name__}|{embedder.dims}"
-    entry = _FACT_EMB_CACHE.get(container_tag)
-    if entry is None or entry["key"] != key:
-        current = list_facts(conn, container_tag)
-        texts = [_fact_text(f) for f in current]
-        embs = embedder.embed(texts) if texts else []
-        entry = {"key": key, "ids": [f["id"] for f in current], "embs": embs}
-        _FACT_EMB_CACHE[container_tag] = entry
-    return entry["ids"], entry["embs"]
+    return struct.pack(f"{len(vec)}f", *vec)
 
 
 def _unpack(blob: bytes) -> list[float]:
@@ -124,11 +107,17 @@ def search(
         chunk_embs = embedder.embed([texts[k] for k in chunk_keys])
         vec_items.extend(zip(chunk_keys, chunk_embs, strict=True))
     if want_facts and fact_list:
-        cached_ids, cached_embs = _fact_corpus(conn, embedder, container_tag)
-        by_id = dict(zip(cached_ids, cached_embs, strict=True))
+        missing = [f for f in fact_list if f.get("embedding") is None]
+        if missing:
+            vecs = embedder.embed([_fact_text(f) for f in missing])
+            for f, vec in zip(missing, vecs, strict=True):
+                blob = pack_vector(vec)
+                conn.execute("UPDATE facts SET embedding = ? WHERE id = ?", (blob, f["id"]))
+                f["embedding"] = blob
+            conn.commit()
         for f in fact_list:
-            if f["id"] in by_id:
-                vec_items.append((f"mem_{f['id']}", by_id[f["id"]]))
+            if f.get("embedding") is not None:
+                vec_items.append((f"mem_{f['id']}", _unpack(bytes(f["embedding"]))))
     if texts:
         qvec = embedder.embed([query])[0]
         vec_ranked = sorted(

@@ -44,9 +44,10 @@ endpoints) does not rewrite backup files you already took.
 
 ## Abuse limits (current ceilings)
 
-- Per-IP rate limiting (120 req/min, `/health` and `/dashboard` exempt, 429
-  envelope); request body caps (`content` ≤ 500k chars, `q` ≤ 2000). Bulk
-  importers should stay under these or run against localhost.
+- Per-IP rate limiting (120 req/min, `/health` and `/dashboard` exempt, loopback
+  bypass for local bulk importers, `Retry-After` header + SDK backoff); request
+  body caps (`content` ≤ 500k chars, `q` ≤ 2000). Bulk importers should stay under
+  these or run against localhost.
 - No background queue: ingest + dreaming run synchronously in the request
   path. Do not expose an open instance to untrusted writers.
 - Search is brute-force over a tag's chunks (documented upgrade path:

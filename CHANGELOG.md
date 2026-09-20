@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-20
+### Added
+- Per-IP rate limiting (120/min, health/dashboard exempt, loopback bypass,
+  `Retry-After` + SDK backoff), input size caps (422)
+- Bridge eval harness evidence (`eval/RESULTS-bridge.md`)
+### Fixed
+- Multi-valued relations coexist; re-assertion revives superseded facts
+- Thread-migrating SQLite connections (serialized requests + regression test)
+- Batched embedding calls; per-tag fact vector cache
+
 ## [0.6.0] - 2026-09-20
 ### Added
 - Dashboard console (Vite+React, served at `/dashboard`): tag cards, Sigma
