@@ -56,6 +56,13 @@ def add_fact(
     return get_fact(conn, fact_id)
 
 
+def delete_fact(conn: sqlite3.Connection, fact_id: str) -> bool:
+    """Hard-delete one fact. Returns True if it existed."""
+    cur = conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def get_fact(conn: sqlite3.Connection, fact_id: str) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM facts WHERE id = ?", (fact_id,)).fetchone()
     if row is None:

@@ -73,6 +73,12 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE documents ADD COLUMN metadata TEXT;
     ALTER TABLE facts ADD COLUMN metadata TEXT;
     """,
+    """
+    CREATE TABLE IF NOT EXISTS revoked_keys(
+      key_hash TEXT PRIMARY KEY,
+      revoked_at REAL NOT NULL
+    );
+    """,
 )
 
 
@@ -211,10 +217,32 @@ def create_api_key(db: sqlite3.Connection, *, container_tag: str | None = None) 
 
 
 def lookup_key(db: sqlite3.Connection, raw: str) -> dict[str, Any] | None:
-    """Return the key row (container_tag None = wildcard) or None if unknown."""
-    row = db.execute(
-        "SELECT container_tag FROM api_keys WHERE key_hash = ?", (_hash_key(raw),)
-    ).fetchone()
+    """Return the key row (container_tag None = wildcard), None if unknown/revoked."""
+    h = _hash_key(raw)
+    if db.execute("SELECT 1 FROM revoked_keys WHERE key_hash = ?", (h,)).fetchone() is not None:
+        return None
+    row = db.execute("SELECT container_tag FROM api_keys WHERE key_hash = ?", (h,)).fetchone()
     if row is None:
         return None
     return dict(row)
+
+
+def revoke_key(db: sqlite3.Connection, raw: str) -> bool:
+    """Revoke a key by its raw value. Returns True if a known key was revoked."""
+    h = _hash_key(raw)
+    if db.execute("SELECT 1 FROM api_keys WHERE key_hash = ?", (h,)).fetchone() is None:
+        return False
+    db.execute(
+        "INSERT OR IGNORE INTO revoked_keys(key_hash, revoked_at) VALUES (?, ?)", (h, time.time())
+    )
+    db.commit()
+    return True
+
+
+def purge_tag(db: sqlite3.Connection, container_tag: str) -> dict[str, int]:
+    """Delete everything scoped to a tag. Returns per-table counts."""
+    facts = db.execute("DELETE FROM facts WHERE container_tag = ?", (container_tag,)).rowcount
+    docs = db.execute("DELETE FROM documents WHERE container_tag = ?", (container_tag,)).rowcount
+    keys = db.execute("DELETE FROM api_keys WHERE container_tag = ?", (container_tag,)).rowcount
+    db.commit()
+    return {"facts": facts, "documents": docs, "keys": keys}

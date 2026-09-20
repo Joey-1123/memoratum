@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from memoratum import db, ingest
+from memoratum import facts as fact_store
 from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
@@ -244,6 +245,40 @@ def create_app(settings: Settings | None = None):
         ):
             return _error("FORBIDDEN", "admin key required", 403)
         return _error("UNAUTHORIZED", "authentication required", 401)
+
+    @app.post("/v4/keys/revoke")
+    def revoke(
+        body: dict[str, Any], conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        if settings.auth_enabled and not _is_admin(authorization, settings):
+            return _error("FORBIDDEN", "admin key required", 403)
+        key = body.get("key") if isinstance(body, dict) else None
+        if not isinstance(key, str) or not key:
+            return _error("VALIDATION_ERROR", "key is required", 422)
+        return {"revoked": db.revoke_key(conn, key)}
+
+    @app.delete("/v4/memories/{fact_id}")
+    def forget_fact(fact_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        try:
+            fact = fact_store.get_fact(conn, fact_id)
+        except KeyError:
+            return _error("NOT_FOUND", "fact not found", 404)
+        if settings.auth_enabled:
+            if not credential_ok(authorization, conn):
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            if not may_access(authorization, conn, fact["container_tag"]):
+                return _error("NOT_FOUND", "fact not found", 404)
+        fact_store.delete_fact(conn, fact_id)
+        return {"deleted": fact_id}
+
+    @app.delete("/v4/tags/{tag}")
+    def purge(tag: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        if settings.auth_enabled:
+            if not credential_ok(authorization, conn):
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            if not may_access(authorization, conn, tag):
+                return _error("NOT_FOUND", "tag not found", 404)
+        return db.purge_tag(conn, tag)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
