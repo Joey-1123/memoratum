@@ -58,6 +58,7 @@ class FactIn(BaseModel):
     object: str = Field(min_length=1)
     containerTag: str = "default"
     metadata: dict[str, Any] | None = None
+    supersede: bool = True
 
 
 def _is_admin(authorization: str | None, settings: Settings) -> bool:
@@ -307,6 +308,7 @@ def create_app(settings: Settings | None = None):
             object=body.object,
             document_id=None,
             metadata=body.metadata,
+            supersede=body.supersede,
         )
         return {
             "id": fact["id"],

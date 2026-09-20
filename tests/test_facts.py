@@ -80,3 +80,29 @@ def test_readding_identical_fact_is_noop() -> None:
     assert again["id"] == first["id"]
     assert len(list_facts(conn, "u1", include_superseded=True)) == 1
     conn.close()
+
+
+def test_multi_valued_predicates_coexist() -> None:
+    from memoratum.facts import add_fact, list_facts
+
+    conn = _db()
+    add_fact(
+        conn, container_tag="u1", subject="f", predicate="contains", object="a", document_id=None, supersede=False
+    )
+    add_fact(
+        conn, container_tag="u1", subject="f", predicate="contains", object="b", document_id=None, supersede=False
+    )
+    assert len(list_facts(conn, "u1")) == 2
+    conn.close()
+
+
+def test_reassert_revives_superseded_fact() -> None:
+    from memoratum.facts import add_fact, list_facts
+
+    conn = _db()
+    add_fact(conn, container_tag="u1", subject="user", predicate="works_at", object="Tencent", document_id=None)
+    add_fact(conn, container_tag="u1", subject="user", predicate="works_at", object="Moonshot", document_id=None)
+    revived = add_fact(conn, container_tag="u1", subject="user", predicate="works_at", object="Tencent", document_id=None)
+    assert revived["valid_to"] is None
+    assert "Tencent" in [f["object"] for f in list_facts(conn, "u1")]
+    conn.close()

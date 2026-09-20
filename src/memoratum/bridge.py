@@ -73,7 +73,7 @@ def sync_graph(api: GraphAPI, graph: dict[str, Any], *, slug: str) -> dict[str, 
     )
     records = fact_records(graph, slug=slug, commit=commit)
     for record in records:
-        api.post("/v4/facts", record)
+        api.post("/v4/facts", {**record, "supersede": False})
     wanted = {fact_key(r) for r in records}
     deleted = 0
     listed = api.get("/v4/facts", {"containerTag": tag, "limit": 10000})
