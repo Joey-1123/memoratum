@@ -1,7 +1,9 @@
 // Memoratum OpenCode plugin — recall-on-prompt + store-on-write against a
 // Memoratum server. Config via env: MEMORATUM_URL (default
 // http://localhost:6767), MEMORATUM_API_KEY (optional), MEMORATUM_TAG
-// (default "opencode"). AGPL-3.0-or-later.
+// (default "opencode").
+// Copyright (C) 2026 Memoratum contributors — SPDX-License-Identifier: MIT
+// (see LICENSE-MIT; client code exception to repo AGPL).
 // ponytail: mirrors the supermemory port's shape; talks to Memoratum's
 // compat API instead. Upgrade path: none needed — same repo.
 const URL = (process.env.MEMORATUM_URL || "http://localhost:6767").replace(/\/+$/, "");
