@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## [0.5.0] - 2026-09-20
 ### Added
 - First-boot admin keygen (secure by default, zero-config kept)
