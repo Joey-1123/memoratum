@@ -2,11 +2,11 @@
 
 Read this before exposing Memoratum beyond localhost.
 
-## Defaults are open
+## Defaults are open — unless keygen ran
 
-No `MEMORATUM_API_KEY` → no auth on any route (local-dev convenience). The
-server prints a WARNING at startup in this mode. Set the key on any shared
-host; issue per-tag keys via `POST /v4/keys` (admin only).
+Fresh databases mint a wildcard admin key on first boot (printed once). Legacy
+databases created before keygen, or servers run with no keys at all, still
+serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
 
 ## Trust boundaries
 
@@ -24,9 +24,9 @@ host; issue per-tag keys via `POST /v4/keys` (admin only).
   Protect the file (`chmod 600`, encrypted volume for sensitive use).
 - API keys are stored as SHA-256 hashes. Secrets/keys travel only via env and
   are never logged.
-- Contradictions supersede facts (history kept) — there is **no delete or
-  per-tag wipe yet**, so a secret spilled into facts cannot be erased short of
-  deleting the database file. Rotation/revocation listing is also missing.
+- Contradictions supersede facts (history kept). True erasure exists too:
+  `DELETE /v4/memories/{id}`, `DELETE /v4/tags/{tag}`, and key revocation via
+  `POST /v4/keys/revoke` — use these for secret spills and erasure requests.
 
 ## Abuse limits (current ceilings)
 

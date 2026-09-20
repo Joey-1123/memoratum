@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from memoratum import db, ingest
+from memoratum import facts as fact_store
 from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
@@ -85,6 +86,21 @@ def get_conn(request: Request):
 DbConn = Annotated[sqlite3.Connection, Depends(get_conn)]
 
 
+def _ensure_boot_key(settings: Settings) -> None:
+    """First boot with no auth configured: mint a wildcard admin key and print it once."""
+    if settings.auth_enabled:
+        return
+    conn = db.connect(settings.db_path)
+    try:
+        existing = conn.execute("SELECT COUNT(*) AS n FROM api_keys").fetchone()["n"]
+        if existing:
+            return
+        raw = db.create_api_key(conn, container_tag=None)
+        print(f"memoratum: generated admin key (shown once, store it): {raw}")
+    finally:
+        conn.close()
+
+
 def create_app(settings: Settings | None = None):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
@@ -100,20 +116,26 @@ def create_app(settings: Settings | None = None):
         if settings.llm_endpoint and settings.llm_model
         else None
     )
+    _ensure_boot_key(settings)
 
-    def credential_ok(authorization: str | None, conn: sqlite3.Connection) -> bool:
-        if not authorization or not authorization.startswith("Bearer "):
-            return False
-        raw = authorization[len("Bearer ") :]
-        return hmac.compare_digest(raw, settings.api_key) or db.resolve_key(conn, raw) is not None
-
-    def may_access(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> bool:
+    def scope_of(authorization: str | None, conn: sqlite3.Connection) -> str | None | bool:
+        """Admin key -> True; known key -> its scope (None = wildcard); else False."""
         if not authorization or not authorization.startswith("Bearer "):
             return False
         raw = authorization[len("Bearer ") :]
         if hmac.compare_digest(raw, settings.api_key):
             return True
-        return db.resolve_key(conn, raw) == container_tag
+        row = db.lookup_key(conn, raw)
+        if row is None:
+            return False
+        return row["container_tag"]
+
+    def credential_ok(authorization: str | None, conn: sqlite3.Connection) -> bool:
+        return scope_of(authorization, conn) is not False
+
+    def may_access(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> bool:
+        scope = scope_of(authorization, conn)
+        return scope is True or scope is None or scope == container_tag
 
     def authorize(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> None:
         if not settings.auth_enabled:
@@ -219,10 +241,44 @@ def create_app(settings: Settings | None = None):
         if (
             authorization
             and authorization.startswith("Bearer ")
-            and db.resolve_key(conn, authorization[len("Bearer ") :]) is not None
+            and db.lookup_key(conn, authorization[len("Bearer ") :]) is not None
         ):
             return _error("FORBIDDEN", "admin key required", 403)
         return _error("UNAUTHORIZED", "authentication required", 401)
+
+    @app.post("/v4/keys/revoke")
+    def revoke(
+        body: dict[str, Any], conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        if settings.auth_enabled and not _is_admin(authorization, settings):
+            return _error("FORBIDDEN", "admin key required", 403)
+        key = body.get("key") if isinstance(body, dict) else None
+        if not isinstance(key, str) or not key:
+            return _error("VALIDATION_ERROR", "key is required", 422)
+        return {"revoked": db.revoke_key(conn, key)}
+
+    @app.delete("/v4/memories/{fact_id}")
+    def forget_fact(fact_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        try:
+            fact = fact_store.get_fact(conn, fact_id)
+        except KeyError:
+            return _error("NOT_FOUND", "fact not found", 404)
+        if settings.auth_enabled:
+            if not credential_ok(authorization, conn):
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            if not may_access(authorization, conn, fact["container_tag"]):
+                return _error("NOT_FOUND", "fact not found", 404)
+        fact_store.delete_fact(conn, fact_id)
+        return {"deleted": fact_id}
+
+    @app.delete("/v4/tags/{tag}")
+    def purge(tag: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        if settings.auth_enabled:
+            if not credential_ok(authorization, conn):
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            if not may_access(authorization, conn, tag):
+                return _error("NOT_FOUND", "tag not found", 404)
+        return db.purge_tag(conn, tag)
 
     @app.get("/health")
     def health() -> dict[str, Any]:

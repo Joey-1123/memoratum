@@ -27,14 +27,22 @@ MEMORATUM_API_KEY=... docker compose up --build
 
 ## Auth
 
-No `MEMORATUM_API_KEY` set → open local-dev mode (like the reference
-self-hosted servers). Set it to require Bearer auth:
+`MEMORATUM_API_KEY` sets a fixed admin key. Without it, the first boot mints
+a wildcard admin key and prints it once on stdout — secure by default with
+zero config kept. Set the env key to pin admin access instead.
 
 - The admin key accesses every container tag.
 - Scoped keys are bound to one tag: create them as admin —
   `POST /v4/keys {"containerTag": "proj-a"}` → `{key: "mm_..."}`.
 - A scoped key gets 403 outside its tag; unknown/missing credentials get 401.
 - Keys are stored as SHA-256 hashes; the raw value is shown once at creation.
+
+## Forgetting
+
+Nothing is append-only here: `DELETE /v4/memories/{id}` removes one fact,
+`DELETE /v4/tags/{tag}` purges a tag's documents, chunks, facts, and keys
+(admin key, or a scoped key for its own tag), and `POST /v4/keys/revoke
+{"key": ...}` (admin) kills a leaked key immediately.
 
 ## Dreaming (fact extraction)
 
