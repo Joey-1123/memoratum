@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { api } from "../api";
 import type { GraphFact } from "../types";
 import { useTimeScrub } from "../components/TimeScrub";
 import { GraphView } from "./GraphView";
+
+const ThreeGraphView = lazy(() =>
+  import("./ThreeGraphView").then((m) => ({ default: m.ThreeGraphView }))
+);
 
 export interface Selection {
   node: string;
@@ -99,6 +103,7 @@ export function GraphPanel({ tag }: { tag: string }) {
   const [facts, setFacts] = useState<GraphFact[]>([]);
   const [error, setError] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [mode3d, setMode3d] = useState(false);
 
   useEffect(() => {
     setSelection(null);
@@ -118,12 +123,26 @@ export function GraphPanel({ tag }: { tag: string }) {
     );
   return (
     <div>
-      {scrubber}
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}>
+        <div style={{ flex: 1 }}>{scrubber}</div>
+        <button onClick={() => setMode3d((m) => !m)} aria-pressed={mode3d}>
+          {mode3d ? "2D graph" : "3D present"}
+        </button>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "1rem" }}>
-        <GraphView
-          facts={visible}
-          onSelect={(node, nodeFacts) => setSelection({ node, facts: nodeFacts })}
-        />
+        {mode3d ? (
+          <Suspense fallback={<div className="skeleton" aria-label="Loading 3D view" />}>
+            <ThreeGraphView
+              facts={visible}
+              onSelect={(node, nodeFacts) => setSelection({ node, facts: nodeFacts })}
+            />
+          </Suspense>
+        ) : (
+          <GraphView
+            facts={visible}
+            onSelect={(node, nodeFacts) => setSelection({ node, facts: nodeFacts })}
+          />
+        )}
       {selection ? (
         <Inspector tag={tag} selection={selection} onClose={() => setSelection(null)} />
       ) : (
