@@ -79,6 +79,9 @@ _MIGRATIONS: tuple[str, ...] = (
       revoked_at REAL NOT NULL
     );
     """,
+    """
+    ALTER TABLE facts ADD COLUMN embedding BLOB;
+    """,
 )
 
 

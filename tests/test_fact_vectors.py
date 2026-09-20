@@ -1,7 +1,7 @@
-"""Fact embedding cache contract (RED)."""
+"""Persisted fact vectors contract (RED)."""
 
 
-def test_fact_embeddings_cached_across_searches() -> None:
+def test_search_backfills_missing_vectors_once() -> None:
     import os
     import tempfile
 
@@ -27,21 +27,12 @@ def test_fact_embeddings_cached_across_searches() -> None:
         object="Paris",
         document_id=None,
     )
-    add_fact(
-        conn,
-        container_tag="u1",
-        subject="user",
-        predicate="hates",
-        object="Mondays",
-        document_id=None,
-    )
+    row = conn.execute("SELECT embedding FROM facts").fetchone()
+    assert row["embedding"] is None
     search(conn, e, "paris", container_tag="u1", search_mode="memories")
-    first_calls = list(calls)
+    row = conn.execute("SELECT embedding FROM facts").fetchone()
+    assert row["embedding"] is not None
+    n_calls = len(calls)
     search(conn, e, "paris", container_tag="u1", search_mode="memories")
-    # second search must not re-embed the corpus: only the fresh query vector
-    assert sum(calls) < sum(first_calls) + 2, calls
-    # new fact invalidates the cache
-    add_fact(conn, container_tag="u1", subject="x", predicate="y", object="z", document_id=None)
-    search(conn, e, "paris", container_tag="u1", search_mode="memories")
-    assert sum(calls) > sum(first_calls) + 1
+    assert len(calls) == n_calls + 1, calls  # query vector only
     conn.close()

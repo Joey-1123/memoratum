@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -24,11 +25,11 @@ from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.facts import list_facts
-from memoratum.search import search
+from memoratum.search import pack_vector, search
 
 
 class DocumentIn(BaseModel):
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=500_000)
     containerTag: str = "default"
     customId: str | None = None
     dreaming: Literal["dynamic", "instant"] = "dynamic"
@@ -36,7 +37,7 @@ class DocumentIn(BaseModel):
 
 
 class SearchIn(BaseModel):
-    q: str = Field(min_length=1)
+    q: str = Field(min_length=1, max_length=2000)
     containerTag: str = "default"
     limit: int = Field(default=10, ge=1, le=100)
     threshold: float = Field(default=0.0, ge=0.0)
@@ -45,8 +46,12 @@ class SearchIn(BaseModel):
     rerank: bool = False
 
 
-def _error(code: str, message: str, status: int) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+def _error(
+    code: str, message: str, status: int, headers: dict[str, str] | None = None
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status, content={"error": {"code": code, "message": message}}, headers=headers
+    )
 
 
 class KeyIn(BaseModel):
@@ -124,10 +129,37 @@ def _ensure_boot_key(settings: Settings) -> None:
         conn.close()
 
 
-def create_app(settings: Settings | None = None):
+def _is_loopback(ip: str) -> bool:
+    return ip == "localhost" or ip.startswith("127.") or ip in ("::1", "::ffff:127.0.0.1")
+
+
+def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int | None = 120):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
     app = FastAPI(title="Memoratum")
+    app.state.settings = settings
+    if rate_limit_per_minute:
+        buckets: dict[str, list[float]] = {}
+
+        @app.middleware("http")
+        async def _rate_limit(request: Request, call_next):
+            if request.url.path == "/health" or request.url.path.startswith("/dashboard"):
+                return await call_next(request)
+            now = time.time()
+            window = 60.0
+            ip = request.client.host if request.client else "unknown"
+            if _is_loopback(ip):
+                return await call_next(request)
+            hits = [t for t in buckets.get(ip, []) if now - t < window]
+            if len(hits) >= rate_limit_per_minute:
+                retry_after = max(1, math.ceil(hits[0] + window - now))
+                return _error(
+                    "RATE_LIMITED", "rate limit exceeded", 429, {"Retry-After": str(retry_after)}
+                )
+            hits.append(now)
+            buckets[ip] = hits
+            return await call_next(request)
+
     app.state.settings = settings
     app.state.embedder = build_embedder(settings)
     app.state.llm = (
@@ -323,6 +355,15 @@ def create_app(settings: Settings | None = None):
             metadata=body.metadata,
             supersede=body.supersede,
         )
+        try:
+            text = f"{fact['subject']} {fact['predicate']} {fact['object']}"
+            vec = app.state.embedder.embed([text])[0]
+            conn.execute(
+                "UPDATE facts SET embedding = ? WHERE id = ?", (pack_vector(vec), fact["id"])
+            )
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001 — fact exists; vector backfills on search
+            print(f"memoratum: inline fact embedding skipped: {exc}")
         return {
             "id": fact["id"],
             "subject": fact["subject"],
