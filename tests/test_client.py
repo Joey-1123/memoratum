@@ -78,3 +78,44 @@ def test_http_error_raises() -> None:
     except MemoratumError:
         return
     raise AssertionError("expected MemoratumError")
+
+
+def test_client_backs_off_on_429_then_succeeds() -> None:
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from memoratum.client import Client
+
+    state = {"n": 0}
+
+    class _Flaky(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            state["n"] += 1
+            if state["n"] == 1:
+                body = json.dumps({"error": {"code": "RATE_LIMITED", "message": "slow"}}).encode()
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Retry-After", "0")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = json.dumps({"results": [], "timing": 0, "total": 0}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _Flaky)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        c = Client(base_url=f"http://127.0.0.1:{server.server_port}", api_key="k", timeout=5.0)
+        assert c.search("x")["total"] == 0
+        assert state["n"] == 2
+    finally:
+        server.shutdown()

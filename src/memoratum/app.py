@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -45,8 +46,12 @@ class SearchIn(BaseModel):
     rerank: bool = False
 
 
-def _error(code: str, message: str, status: int) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+def _error(
+    code: str, message: str, status: int, headers: dict[str, str] | None = None
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status, content={"error": {"code": code, "message": message}}, headers=headers
+    )
 
 
 class KeyIn(BaseModel):
@@ -141,10 +146,14 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             ip = request.client.host if request.client else "unknown"
             hits = [t for t in buckets.get(ip, []) if now - t < window]
             if len(hits) >= rate_limit_per_minute:
-                return _error("RATE_LIMITED", "rate limit exceeded", 429)
+                retry_after = max(1, math.ceil(hits[0] + window - now))
+                return _error(
+                    "RATE_LIMITED", "rate limit exceeded", 429, {"Retry-After": str(retry_after)}
+                )
             hits.append(now)
             buckets[ip] = hits
             return await call_next(request)
+
     app.state.settings = settings
     app.state.embedder = build_embedder(settings)
     app.state.llm = (
