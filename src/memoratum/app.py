@@ -20,6 +20,7 @@ from memoratum import db, ingest
 from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
+from memoratum.facts import list_facts
 from memoratum.search import search
 
 
@@ -28,6 +29,7 @@ class DocumentIn(BaseModel):
     containerTag: str = "default"
     customId: str | None = None
     dreaming: Literal["dynamic", "instant"] = "dynamic"
+    metadata: dict[str, Any] | None = None
 
 
 class SearchIn(BaseModel):
@@ -36,10 +38,25 @@ class SearchIn(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
     threshold: float = Field(default=0.0, ge=0.0)
     searchMode: str = "hybrid"
+    filters: dict[str, Any] | None = None
+    rerank: bool = False
 
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+
+
+class KeyIn(BaseModel):
+    containerTag: str | None = None
+
+
+def _is_admin(authorization: str | None, settings: Settings) -> bool:
+    return bool(
+        settings.auth_enabled
+        and authorization
+        and authorization.startswith("Bearer ")
+        and hmac.compare_digest(authorization[len("Bearer ") :], settings.api_key)
+    )
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -110,7 +127,11 @@ def create_app(settings: Settings | None = None):
     ):
         authorize(authorization, conn, doc.containerTag)
         created = db.create_document(
-            conn, container_tag=doc.containerTag, content=doc.content, custom_id=doc.customId
+            conn,
+            container_tag=doc.containerTag,
+            content=doc.content,
+            custom_id=doc.customId,
+            metadata=doc.metadata,
         )
         ingest.process_one(conn, app.state.embedder)
         if app.state.llm is not None:
@@ -138,8 +159,49 @@ def create_app(settings: Settings | None = None):
             limit=query.limit,
             threshold=query.threshold,
             search_mode=query.searchMode,
+            filters=query.filters,
+            rerank=query.rerank,
         )
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
+
+    @app.get("/v4/profile")
+    def get_profile(
+        conn: DbConn,
+        containerTag: str = "default",
+        authorization: str | None = Header(default=None),
+    ):
+        authorize(authorization, conn, containerTag)
+        facts = list_facts(conn, container_tag=containerTag)[:20]
+        docs = conn.execute(
+            "SELECT COUNT(*) AS n FROM documents WHERE container_tag = ?", (containerTag,)
+        ).fetchone()["n"]
+        chunks = conn.execute(
+            "SELECT COUNT(*) AS n FROM chunks c JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?",
+            (containerTag,),
+        ).fetchone()["n"]
+        nfacts = conn.execute(
+            "SELECT COUNT(*) AS n FROM facts WHERE container_tag = ? AND valid_to IS NULL",
+            (containerTag,),
+        ).fetchone()["n"]
+        return {
+            "containerTag": containerTag,
+            "facts": [f"{f['subject']} {f['predicate']} {f['object']}" for f in facts],
+            "stats": {"documents": docs, "chunks": chunks, "facts": nfacts},
+        }
+
+    @app.post("/v4/keys", status_code=201)
+    def issue_key(body: KeyIn, conn: DbConn, authorization: str | None = Header(default=None)):
+        if not settings.auth_enabled:
+            return {"key": db.create_api_key(conn, container_tag=body.containerTag)}
+        if _is_admin(authorization, settings):
+            return {"key": db.create_api_key(conn, container_tag=body.containerTag)}
+        if (
+            authorization
+            and authorization.startswith("Bearer ")
+            and db.resolve_key(conn, authorization[len("Bearer ") :]) is not None
+        ):
+            return _error("FORBIDDEN", "admin key required", 403)
+        return _error("UNAUTHORIZED", "authentication required", 401)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
