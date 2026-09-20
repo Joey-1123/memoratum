@@ -135,7 +135,7 @@ def create_app(settings: Settings | None = None):
         )
         ingest.process_one(conn, app.state.embedder)
         if app.state.llm is not None:
-            dream_pending(conn, app.state.llm, mode=doc.dreaming)
+            dream_pending(conn, app.state.llm, mode=doc.dreaming, container_tag=doc.containerTag)
         return {"id": created["id"], "status": db.get_document(conn, created["id"])["status"]}
 
     @app.get("/v3/documents/{doc_id}")

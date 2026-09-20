@@ -122,11 +122,23 @@ def dream_document(conn: sqlite3.Connection, llm: ChatLLM, doc_id: str) -> list[
     return stored
 
 
-def dream_pending(conn: sqlite3.Connection, llm: ChatLLM, *, mode: str = "instant") -> int:
-    """Dream all undreamed documents. Returns number of LLM calls made."""
-    rows = conn.execute(
-        "SELECT id, container_tag, content FROM documents WHERE dreamed_at IS NULL ORDER BY created_at"
-    ).fetchall()
+_BUDGET = 8000
+
+
+def dream_pending(
+    conn: sqlite3.Connection,
+    llm: ChatLLM,
+    *,
+    mode: str = "instant",
+    container_tag: str | None = None,
+) -> int:
+    """Dream undreamed documents, optionally scoped to one tag. Returns LLM calls made."""
+    query = "SELECT id, container_tag, content FROM documents WHERE dreamed_at IS NULL"
+    params: tuple = ()
+    if container_tag is not None:
+        query += " AND container_tag = ?"
+        params = (container_tag,)
+    rows = conn.execute(query + " ORDER BY created_at", params).fetchall()
     if not rows:
         return 0
     calls = 0
@@ -135,13 +147,33 @@ def dream_pending(conn: sqlite3.Connection, llm: ChatLLM, *, mode: str = "instan
         for row in rows:
             by_tag.setdefault(row["container_tag"], []).append(row)
         for tag, docs in by_tag.items():
-            bundle = "\n\n---\n\n".join(d["content"] for d in docs)
-            for f in extract_facts(llm, bundle):
-                add_fact(conn, container_tag=tag, document_id=None, **f)
-            _mark_dreamed(conn, [d["id"] for d in docs])
-            calls += 1
+            windows: list[tuple[str, int]] = []
+            for doc in docs:
+                text = doc["content"] or " "
+                for i in range(0, len(text), _BUDGET):
+                    windows.append((text[i : i + _BUDGET], doc["id"]))
+            bundle: list[tuple[str, int]] = []
+            used = 0
+            for text, doc_id in windows:
+                if bundle and used + len(text) > _BUDGET:
+                    calls += _dream_bundle(conn, llm, tag, bundle)
+                    bundle, used = [], 0
+                bundle.append((text, doc_id))
+                used += len(text)
+            if bundle:
+                calls += _dream_bundle(conn, llm, tag, bundle)
     else:
         for row in rows:
             dream_document(conn, llm, row["id"])
             calls += 1
     return calls
+
+
+def _dream_bundle(
+    conn: sqlite3.Connection, llm: ChatLLM, tag: str, bundle: list[tuple[str, int]]
+) -> int:
+    text = "\n\n---\n\n".join(t for t, _ in bundle)
+    for f in extract_facts(llm, text):
+        add_fact(conn, container_tag=tag, document_id=None, **f)
+    _mark_dreamed(conn, list({doc_id for _, doc_id in bundle}))
+    return 1
