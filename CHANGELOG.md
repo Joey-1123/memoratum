@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0] - 2026-09-20
+### Added
+- Dreaming: LLM fact extraction (`instant` per-doc, `dynamic` tag-bundle),
+  `dreaming` param on document ingest, temporal fact graph with contradiction
+  supersede (history preserved, never deleted)
+- `searchMode` on search: `memories` (facts), `documents` (chunks), `hybrid`
+- `MEMORATUM_LLM_ENDPOINT/MODEL/KEY` settings (OpenAI-compatible)
+- FTS5 input sanitizing (punctuation no longer breaks keyword search)
+
 ## [0.1.0] - 2026-09-20
 ### Added
 - Phase 1 core: `POST /v3/documents`, `GET /v3/documents/{id}`, `POST /v4/search`

@@ -21,7 +21,11 @@ curl -X POST localhost:6767/v4/search \
   -d '{"q": "where does the user want to travel?", "containerTag": "user_123"}'
 ```
 
-Set `MEMORATUM_API_KEY` to require Bearer auth. Build follows `docs/PARITY.md`.
+Set `MEMORATUM_API_KEY` to require Bearer auth. For fact extraction
+("dreaming"), point `MEMORATUM_LLM_ENDPOINT`/`MEMORATUM_LLM_MODEL` at any
+OpenAI-compatible chat endpoint (`MEMORATUM_LLM_KEY` optional); documents
+accept `"dreaming": "instant"|"dynamic"`, and search accepts
+`"searchMode": "memories"|"documents"|"hybrid"`. Build follows `docs/PARITY.md`.
 
 ## License
 
