@@ -1,6 +1,6 @@
 # Memoratum — self-hosted context infrastructure for AI agents.
 # Copyright (C) 2026 Memoratum contributors
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT (see LICENSE-MIT; client code exception to repo AGPL)
 
 """Python SDK: thin typed wrapper over the HTTP API (stdlib only)."""
 
