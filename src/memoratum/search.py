@@ -108,9 +108,10 @@ def search(
         vec_items.extend(zip(chunk_keys, chunk_embs, strict=True))
     if want_facts and fact_list:
         missing = [f for f in fact_list if f.get("embedding") is None]
-        if missing:
-            vecs = embedder.embed([_fact_text(f) for f in missing])
-            for f, vec in zip(missing, vecs, strict=True):
+        for i in range(0, len(missing), 512):
+            window = missing[i : i + 512]
+            vecs = embedder.embed([_fact_text(f) for f in window])
+            for f, vec in zip(window, vecs, strict=True):
                 blob = pack_vector(vec)
                 conn.execute("UPDATE facts SET embedding = ? WHERE id = ?", (blob, f["id"]))
                 f["embedding"] = blob
