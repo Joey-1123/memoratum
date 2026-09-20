@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0] - 2026-09-20
+### Added
+- Python SDK (`memoratum.client.Client`: add/search/profile, retries, errors)
+- MCP server (`python -m memoratum.mcp`: stdio JSON-RPC `remember`/`recall`)
+- OpenCode V2 plugin (`clients/opencode/memoratum.js`)
+- TypeScript SDK (`clients/ts`, zero-dep, `npm test`)
+
 ## [0.3.0] - 2026-09-20
 ### Added
 - Metadata on documents/facts with AND-equality `filters` on search
