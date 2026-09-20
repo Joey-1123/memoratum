@@ -179,10 +179,14 @@ def create_app(settings: Settings | None = None):
             "SELECT COUNT(*) AS n FROM chunks c JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?",
             (containerTag,),
         ).fetchone()["n"]
+        nfacts = conn.execute(
+            "SELECT COUNT(*) AS n FROM facts WHERE container_tag = ? AND valid_to IS NULL",
+            (containerTag,),
+        ).fetchone()["n"]
         return {
             "containerTag": containerTag,
             "facts": [f"{f['subject']} {f['predicate']} {f['object']}" for f in facts],
-            "stats": {"documents": docs, "chunks": chunks, "facts": len(facts)},
+            "stats": {"documents": docs, "chunks": chunks, "facts": nfacts},
         }
 
     @app.post("/v4/keys", status_code=201)
