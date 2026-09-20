@@ -134,6 +134,13 @@ def create_app(settings: Settings | None = None):
         else None
     )
     _ensure_boot_key(settings)
+    dashboard_index = os.path.join(settings.dashboard_dir, "index.html")
+    if os.path.exists(dashboard_index):
+        from starlette.staticfiles import StaticFiles
+
+        app.mount(
+            "/dashboard", StaticFiles(directory=settings.dashboard_dir, html=True), name="dashboard"
+        )
 
     def scope_of(authorization: str | None, conn: sqlite3.Connection) -> str | None | bool:
         """Admin key -> True; known key -> its scope (None = wildcard); else False."""
