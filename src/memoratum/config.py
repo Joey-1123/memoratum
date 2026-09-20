@@ -22,6 +22,8 @@ class Settings:
     embeddings_endpoint: str
     embeddings_model: str
     embeddings_dims: int
+    llm_endpoint: str
+    llm_model: str
 
     @classmethod
     def load(cls) -> Settings:
@@ -32,6 +34,8 @@ class Settings:
             embeddings_endpoint=_get("MEMORATUM_EMBEDDINGS_ENDPOINT", ""),
             embeddings_model=_get("MEMORATUM_EMBEDDINGS_MODEL", ""),
             embeddings_dims=int(_get("MEMORATUM_EMBEDDINGS_DIMS", "0") or 0),
+            llm_endpoint=_get("MEMORATUM_LLM_ENDPOINT", ""),
+            llm_model=_get("MEMORATUM_LLM_MODEL", ""),
         )
 
     @property
