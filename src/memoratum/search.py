@@ -2,10 +2,13 @@
 # Copyright (C) 2026 Memoratum contributors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Hybrid retrieval: cosine vector leg + FTS5 keyword leg, fused with RRF.
+"""Hybrid retrieval: cosine vector leg + keyword leg, fused with RRF.
 
-Phase 1 ceiling: brute-force cosine over stored chunk embeddings (fine at small
-scale; upgrade path is sqlite-vec vec0). container_tag filter is mandatory.
+Candidate types: chunks (documents mode) and facts rendered as
+"subject predicate object" (memories mode); hybrid searches both.
+Phase 2 ceiling: fact embeddings computed per search (batched, one call);
+brute-force cosine (upgrade path is sqlite-vec vec0). container_tag filter
+is mandatory.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from typing import Any
 
 from memoratum import db
 from memoratum.embeddings import Embedder
+from memoratum.facts import list_facts
 
 _RRF_K = 60
 
@@ -32,6 +36,18 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
+def _fact_text(fact: dict[str, Any]) -> str:
+    return f"{fact['subject']} {fact['predicate']} {fact['object']}"
+
+
+def _token_overlap(query: str, text: str) -> float:
+    qtokens = {t.lower() for t in query.split()}
+    if not qtokens:
+        return 0.0
+    ttokens = {t.lower() for t in text.split()}
+    return len(qtokens & ttokens) / len(qtokens)
+
+
 def search(
     conn: sqlite3.Connection,
     embedder: Embedder,
@@ -41,41 +57,66 @@ def search(
     limit: int = 10,
     threshold: float = 0.0,
     keyword_limit: int = 50,
+    search_mode: str = "hybrid",
 ) -> list[dict[str, Any]]:
-    qvec = embedder.embed([query])[0]
+    want_chunks = search_mode in ("hybrid", "documents")
+    want_facts = search_mode in ("hybrid", "memories")
 
-    rows = conn.execute(
-        "SELECT c.id, c.text, c.embedding FROM chunks c JOIN documents d ON d.id = c.document_id"
-        " WHERE d.container_tag = ?",
-        (container_tag,),
-    ).fetchall()
-    vec_ranked = sorted(
-        (
-            (r["id"], r["text"], _cosine(qvec, _unpack(r["embedding"])))
-            for r in rows
-            if r["embedding"] is not None
-        ),
-        key=lambda t: t[2],
-        reverse=True,
-    )
+    texts: dict[str, str] = {}
+    kinds: dict[str, str] = {}
+    if want_chunks:
+        rows = conn.execute(
+            "SELECT c.id, c.text, c.embedding FROM chunks c JOIN documents d ON d.id = c.document_id"
+            " WHERE d.container_tag = ?",
+            (container_tag,),
+        ).fetchall()
+        for r in rows:
+            key = f"chunk_{r['id']}"
+            texts[key] = r["text"]
+            kinds[key] = "chunk"
+    fact_list: list[dict[str, Any]] = []
+    if want_facts:
+        fact_list = list_facts(conn, container_tag)
+        for f in fact_list:
+            key = f"mem_{f['id']}"
+            texts[key] = _fact_text(f)
+            kinds[key] = "memory"
 
-    kw_ranked = [
-        (r["id"], r["text"])
-        for r in db.keyword_search(conn, query, container_tag=container_tag, limit=keyword_limit)
-    ]
+    scores: dict[str, float] = {}
+    if texts:
+        qvec = embedder.embed([query])[0]
+        embs = embedder.embed(list(texts.values()))
+        vec_ranked = sorted(
+            ((key, _cosine(qvec, emb)) for key, emb in zip(texts, embs, strict=True)),
+            key=lambda t: t[1],
+            reverse=True,
+        )
+        for rank, (key, _sim) in enumerate(vec_ranked, start=1):
+            scores[key] = scores.get(key, 0.0) + 0.6 / (_RRF_K + rank)
 
-    scores: dict[int, float] = {}
-    texts: dict[int, str] = {}
-    for rank, (cid, text, _sim) in enumerate(vec_ranked, start=1):
-        scores[cid] = scores.get(cid, 0.0) + 0.6 / (_RRF_K + rank)
-        texts[cid] = text
-    for rank, (cid, text) in enumerate(kw_ranked, start=1):
-        scores[cid] = scores.get(cid, 0.0) + 0.4 / (_RRF_K + rank)
-        texts[cid] = text
+    kw_ranked: list[tuple[str, float]] = []
+    if want_chunks:
+        for r in db.keyword_search(conn, query, container_tag=container_tag, limit=keyword_limit):
+            kw_ranked.append((f"chunk_{r['id']}", 1.0))
+    if want_facts:
+        scored = sorted(
+            ((f"mem_{f['id']}", _token_overlap(query, _fact_text(f))) for f in fact_list),
+            key=lambda t: t[1],
+            reverse=True,
+        )
+        kw_ranked.extend([(key, s) for key, s in scored[:keyword_limit] if s > 0])
+    for rank, (key, _s) in enumerate(
+        sorted(kw_ranked, key=lambda t: t[1], reverse=True)[:keyword_limit], start=1
+    ):
+        if key in texts:
+            scores[key] = scores.get(key, 0.0) + 0.4 / (_RRF_K + rank)
 
-    hits = [
-        {"id": f"chunk_{cid}", "chunk": texts[cid], "similarity": round(score, 6)}
-        for cid, score in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-        if score >= threshold
-    ]
+    hits = []
+    for key, score in sorted(scores.items(), key=lambda kv: kv[1], reverse=True):
+        if score < threshold:
+            continue
+        if kinds[key] == "memory":
+            hits.append({"id": key, "memory": texts[key], "similarity": round(score, 6)})
+        else:
+            hits.append({"id": key, "chunk": texts[key], "similarity": round(score, 6)})
     return hits[:limit]
