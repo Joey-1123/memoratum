@@ -23,9 +23,12 @@ def add_fact(
 ) -> dict[str, Any]:
     now = time.time()
     current = conn.execute(
-        "SELECT id FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL",
+        "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL",
         (container_tag, subject, predicate),
     ).fetchall()
+    for row in current:
+        if row["object"] == object:
+            return dict(row)
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"
@@ -33,8 +36,6 @@ def add_fact(
         (fact_id, container_tag, subject, predicate, object, document_id, now, now),
     )
     for row in current:
-        if row["id"] == fact_id:
-            continue
         conn.execute(
             "UPDATE facts SET valid_to = ?, superseded_by = ? WHERE id = ?",
             (now, fact_id, row["id"]),

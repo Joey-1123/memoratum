@@ -65,3 +65,18 @@ def test_tags_are_isolated() -> None:
     add_fact(conn, container_tag="u1", subject="a", predicate="b", object="c", document_id=None)
     assert list_facts(conn, "u2") == []
     conn.close()
+
+
+def test_readding_identical_fact_is_noop() -> None:
+    from memoratum.facts import add_fact, list_facts
+
+    conn = _db()
+    first = add_fact(
+        conn, container_tag="u1", subject="a", predicate="b", object="c", document_id=None
+    )
+    again = add_fact(
+        conn, container_tag="u1", subject="a", predicate="b", object="c", document_id=None
+    )
+    assert again["id"] == first["id"]
+    assert len(list_facts(conn, "u1", include_superseded=True)) == 1
+    conn.close()
