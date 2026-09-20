@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import sqlite3
 import threading
@@ -59,6 +60,11 @@ class FactIn(BaseModel):
     containerTag: str = "default"
     metadata: dict[str, Any] | None = None
     supersede: bool = True
+
+
+class ImportIn(BaseModel):
+    graph_dir: str = Field(min_length=1)
+    tag: str = Field(min_length=1, max_length=128)
 
 
 def _is_admin(authorization: str | None, settings: Settings) -> bool:
@@ -354,6 +360,35 @@ def create_app(settings: Settings | None = None):
             ],
             "total": len(facts),
         }
+
+    @app.post("/v4/import")
+    def import_graph(
+        body: ImportIn, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        # Server-local path by design (single-host tool). Any authenticated caller
+        # may import, but only into tags they can write.
+        slug = body.tag.removeprefix("graphify:")
+        authorize(authorization, conn, f"graphify:{slug}")
+        graph_path = os.path.join(os.path.abspath(body.graph_dir), "graph.json")
+        if not os.path.isfile(graph_path):
+            return _error("VALIDATION_ERROR", "graph_dir must contain graph.json", 422)
+        try:
+            with open(graph_path) as f:
+                graph = json.load(f)
+        except (ValueError, OSError) as e:
+            return _error("VALIDATION_ERROR", f"unreadable graph.json: {e}", 422)
+        if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list):
+            return _error("VALIDATION_ERROR", "graph.json must have nodes[]", 422)
+        report_path = os.path.join(os.path.dirname(graph_path), "GRAPH_REPORT.md")
+        if os.path.isfile(report_path):
+            try:
+                with open(report_path) as f:
+                    graph["report"] = f.read()
+            except OSError:
+                pass
+        from memoratum.bridge import sync_records
+
+        return sync_records(conn, graph, slug)
 
     @app.get("/health")
     def health() -> dict[str, Any]:

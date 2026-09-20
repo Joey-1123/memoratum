@@ -4,7 +4,7 @@ import os
 import tempfile
 
 
-def _client(dist_dir: str | None):
+def _client(dist_dir: str | None, *, with_index: bool = True):
     from fastapi.testclient import TestClient
 
     os.environ["MEMORATUM_DATA_DIR"] = tempfile.mkdtemp()
@@ -13,8 +13,9 @@ def _client(dist_dir: str | None):
         os.environ.pop("MEMORATUM_DASHBOARD_DIR", None)
     else:
         os.makedirs(dist_dir, exist_ok=True)
-        with open(os.path.join(dist_dir, "index.html"), "w") as f:
-            f.write("<html>dash</html>")
+        if with_index:
+            with open(os.path.join(dist_dir, "index.html"), "w") as f:
+                f.write("<html>dash</html>")
         os.environ["MEMORATUM_DASHBOARD_DIR"] = dist_dir
     from memoratum.app import create_app
 
@@ -26,7 +27,7 @@ def _client(dist_dir: str | None):
 
 
 def test_missing_dist_leaves_api_intact() -> None:
-    c = _client(None)
+    c = _client(os.path.join(tempfile.mkdtemp(), "no-dist-here"), with_index=False)
     assert c.get("/health").json() == {"ok": True}
     assert c.get("/dashboard").status_code == 404
 
