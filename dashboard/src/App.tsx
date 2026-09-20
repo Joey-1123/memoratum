@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { KeyField } from "./components/KeyField";
+import { GraphPanel } from "./views/Inspector";
 import { TagsView } from "./views/TagsView";
 
 type View = "tags" | "graph";
@@ -33,12 +34,7 @@ export function App() {
             }}
           />
         )}
-        {view === "graph" && (
-          <section aria-label="Graph">
-            <h2 className="mono">{tag}</h2>
-            <p className="muted">Interactive graph lands in the next milestone.</p>
-          </section>
-        )}
+        {view === "graph" && <GraphPanel key={tag} tag={tag} />}
       </main>
     </>
   );
