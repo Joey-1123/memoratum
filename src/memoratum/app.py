@@ -51,6 +51,14 @@ class KeyIn(BaseModel):
     containerTag: str | None = None
 
 
+class FactIn(BaseModel):
+    subject: str = Field(min_length=1)
+    predicate: str = Field(min_length=1)
+    object: str = Field(min_length=1)
+    containerTag: str = "default"
+    metadata: dict[str, Any] | None = None
+
+
 def _is_admin(authorization: str | None, settings: Settings) -> bool:
     return bool(
         settings.auth_enabled
@@ -279,6 +287,26 @@ def create_app(settings: Settings | None = None):
             if not may_access(authorization, conn, tag):
                 return _error("NOT_FOUND", "tag not found", 404)
         return db.purge_tag(conn, tag)
+
+    @app.post("/v4/facts", status_code=201)
+    def create_fact(body: FactIn, conn: DbConn, authorization: str | None = Header(default=None)):
+        authorize(authorization, conn, body.containerTag)
+        fact = fact_store.add_fact(
+            conn,
+            container_tag=body.containerTag,
+            subject=body.subject,
+            predicate=body.predicate,
+            object=body.object,
+            document_id=None,
+            metadata=body.metadata,
+        )
+        return {
+            "id": fact["id"],
+            "subject": fact["subject"],
+            "predicate": fact["predicate"],
+            "object": fact["object"],
+            "containerTag": fact["container_tag"],
+        }
 
     @app.get("/v4/facts")
     def list_facts_ep(
