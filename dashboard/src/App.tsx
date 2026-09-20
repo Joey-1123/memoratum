@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { KeyField } from "./components/KeyField";
 import { GraphPanel } from "./views/Inspector";
+import { SearchView } from "./views/SearchView";
 import { TagsView } from "./views/TagsView";
 
-type View = "tags" | "graph";
+type View = "tags" | "graph" | "search";
 
 export function App() {
   const [view, setView] = useState<View>("tags");
@@ -21,6 +22,9 @@ export function App() {
           <button aria-current={view === "graph" ? "page" : undefined} onClick={() => setView("graph")}>
             Graph
           </button>
+          <button aria-current={view === "search" ? "page" : undefined} onClick={() => setView("search")}>
+            Search
+          </button>
         </nav>
         <span className="spacer" />
         <KeyField onChange={() => setKeyEpoch((n) => n + 1)} />
@@ -35,6 +39,7 @@ export function App() {
           />
         )}
         {view === "graph" && <GraphPanel key={tag} tag={tag} />}
+        {view === "search" && <SearchView key={`s-${tag}`} tag={tag} />}
       </main>
     </>
   );

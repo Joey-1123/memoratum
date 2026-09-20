@@ -107,7 +107,9 @@ def main() -> None:
     if os.path.exists(report_path):
         with open(report_path) as f:
             graph["report"] = f.read()
-    summary = sync_graph(Client(base_url=args.url, api_key=args.api_key), graph, slug=slug)
+    summary = sync_graph(
+        Client(base_url=args.url, api_key=args.api_key, timeout=300.0), graph, slug=slug
+    )
     print(json.dumps(summary))
 
 
