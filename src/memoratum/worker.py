@@ -64,6 +64,16 @@ def _dispatch(
     payload = job["payload"] or {}
     if kind == "ingest":
         doc = ingest.process_document(conn, embedder, payload["document_id"])
+        if llm is not None and doc["status"] == "done":
+            jobs.enqueue(
+                conn,
+                kind="dream",
+                payload={
+                    "document_id": doc["id"],
+                    "mode": payload.get("dreaming", "dynamic"),
+                    "container_tag": doc["container_tag"],
+                },
+            )
         return {"document_id": doc["id"], "status": doc["status"]}
     if kind == "dream":
         if llm is None:

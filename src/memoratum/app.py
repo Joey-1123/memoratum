@@ -19,10 +19,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from memoratum import db, ingest
+from memoratum import db, jobs
 from memoratum import facts as fact_store
 from memoratum.config import Settings
-from memoratum.dreaming import ChatLLM, dream_pending
+from memoratum.dreaming import ChatLLM
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.facts import list_facts
 from memoratum.rerank import build_reranker
@@ -222,6 +222,16 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     ) -> bool:
         return may_access(authorization, conn, container_tag)
 
+    def _job_tag(conn: sqlite3.Connection, job: dict[str, Any]) -> str | None:
+        payload = job.get("payload") or {}
+        if job.get("kind") == "ingest" and payload.get("document_id"):
+            try:
+                return db.get_document(conn, payload["document_id"])["container_tag"]
+            except KeyError:
+                return None
+        tag = payload.get("container_tag")
+        return tag if isinstance(tag, str) else None
+
     @app.exception_handler(HTTPException)
     async def _http_errors(_req: Request, exc: HTTPException):
         detail = exc.detail if isinstance(exc.detail, str) else "ERROR"
@@ -242,10 +252,16 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             custom_id=doc.customId,
             metadata=doc.metadata,
         )
-        ingest.process_one(conn, app.state.embedder)
-        if app.state.llm is not None:
-            dream_pending(conn, app.state.llm, mode=doc.dreaming, container_tag=doc.containerTag)
-        return {"id": created["id"], "status": db.get_document(conn, created["id"])["status"]}
+        job_id = jobs.enqueue(
+            conn,
+            kind="ingest",
+            payload={
+                "document_id": created["id"],
+                "dreaming": doc.dreaming,
+                "container_tag": doc.containerTag,
+            },
+        )
+        return {"id": created["id"], "status": "queued", "job_id": job_id}
 
     @app.get("/v3/documents/{doc_id}")
     def get_document(doc_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -448,6 +464,26 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         from memoratum.bridge import sync_records
 
         return sync_records(conn, graph, slug)
+
+    @app.get("/v4/jobs/{job_id}")
+    def get_job(job_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        job = jobs.get(conn, job_id)
+        if job is None:
+            return _error("NOT_FOUND", "job not found", 404)
+        if settings.auth_enabled:
+            if not credential_ok(authorization, conn):
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            tag = _job_tag(conn, job)
+            if tag is None or not may_access(authorization, conn, tag):
+                return _error("NOT_FOUND", "job not found", 404)
+        return {
+            "id": job["id"],
+            "kind": job["kind"],
+            "status": job["status"],
+            "attempts": job["attempts"],
+            "result": job["result"],
+            "error": job["error"],
+        }
 
     @app.get("/health")
     def health() -> dict[str, Any]:
