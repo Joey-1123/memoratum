@@ -62,6 +62,14 @@ def fail(conn: sqlite3.Connection, job_id: str, *, error: str) -> None:
     conn.commit()
 
 
+def requeue(conn: sqlite3.Connection, job_id: str) -> None:
+    conn.execute(
+        "UPDATE jobs SET status = 'queued', worker = NULL, updated_at = ? WHERE id = ?",
+        (time.time(), job_id),
+    )
+    conn.commit()
+
+
 def get(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:
     row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if row is None:

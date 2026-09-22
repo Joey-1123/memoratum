@@ -19,13 +19,7 @@ def _pack(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
 
-def process_one(conn: sqlite3.Connection, embedder: Embedder) -> dict[str, Any] | None:
-    row = conn.execute(
-        "SELECT id FROM documents WHERE status = 'queued' ORDER BY created_at LIMIT 1"
-    ).fetchone()
-    if row is None:
-        return None
-    doc_id = row["id"]
+def process_document(conn: sqlite3.Connection, embedder: Embedder, doc_id: str) -> dict[str, Any]:
     try:
         doc = db.get_document(conn, doc_id)
         chunks = split_markdown(doc["content"])
@@ -43,9 +37,22 @@ def process_one(conn: sqlite3.Connection, embedder: Embedder) -> dict[str, Any] 
                 )
         db.add_chunks(conn, doc_id, texts, [_pack(v) for v in vecs])
         db.set_status(conn, doc_id, "done")
-    except Exception:  # noqa: BLE001 — worker must record failure, never crash the loop
+    except Exception:
         db.set_status(conn, doc_id, "failed")
+        raise
     return db.get_document(conn, doc_id)
+
+
+def process_one(conn: sqlite3.Connection, embedder: Embedder) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT id FROM documents WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return process_document(conn, embedder, row["id"])
+    except Exception:  # noqa: BLE001 — callers of process_one get status, not exceptions
+        return db.get_document(conn, row["id"])
 
 
 def process_all(conn: sqlite3.Connection, embedder: Embedder) -> int:
