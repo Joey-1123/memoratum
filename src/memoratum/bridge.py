@@ -105,7 +105,9 @@ def sync_graph(api: GraphAPI, graph: dict[str, Any], *, slug: str) -> dict[str, 
     )
     records = fact_records(graph, slug=slug, commit=commit)
     for record in records:
-        api.post("/v4/facts", {**record, "supersede": False})
+        # Vectors backfill lazily on search; skipping inline embed keeps bulk
+        # imports fast (one Ollama call per fact would take hours on CPU).
+        api.post("/v4/facts", {**record, "supersede": False, "skipEmbedding": True})
     wanted = {fact_key(r) for r in records}
     deleted = 0
     listed = api.get("/v4/facts", {"containerTag": tag, "limit": 10000})
