@@ -69,6 +69,11 @@ Hard-deletes one fact. Missing or out-of-scope → 404; bad credentials → 401.
 
 Purges the tag's documents (chunks cascade), facts, and keys. Admin or a scoped key for that tag; otherwise 401/404 (uniform). Idempotent — returns `{facts, documents, keys}` counts (zeros when empty).
 
+## `GET /v4/jobs/{id}` → 200 | 404
+
+`{id, kind, status, attempts, result, error}`. Requires valid credentials;
+out-of-scope jobs read as 404 (tag resolved from the payload's document or tag).
+
 ## `GET /health` → 200
 
 `{ok: true}`. Unauthenticated by design (load-balancer checks).

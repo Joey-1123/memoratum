@@ -65,6 +65,9 @@ def test_rewrite_expands_and_merges() -> None:
         c.post(
             "/v3/documents", json={"content": "alpha project guide text here", "containerTag": "u1"}
         )
+        from helpers import drain
+
+        drain()
         r = c.post(
             "/v4/search",
             json={"q": "zzz-no-match", "containerTag": "u1", "rewriteQuery": True, "limit": 5},

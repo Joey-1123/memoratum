@@ -34,12 +34,16 @@ MEMORATUM_API_KEY=... docker compose up --build
 ## Quick Start
 
 ```sh
+uv sync --group dev
 uv run pytest                                  # verify your checkout
 MEMORATUM_DATA_DIR=./data uv run python -m memoratum  # :6767, prints admin key on first boot
+MEMORATUM_DATA_DIR=./data uv run python -m memoratum.worker  # background jobs (ingest/dream)
 
 curl -X POST localhost:6767/v3/documents \
   -H 'Content-Type: application/json' \
   -d '{"content": "The user loves Paris.", "containerTag": "user_123"}'
+# → {"id": "...", "status": "queued", "job_id": "..."}; the worker flips it to done
+curl localhost:6767/v3/documents/<id>          # poll status
 curl -X POST localhost:6767/v4/search \
   -H 'Content-Type: application/json' \
   -d '{"q": "where does the user want to travel?", "containerTag": "user_123"}'

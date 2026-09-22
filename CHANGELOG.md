@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-22
+### Added
+- Background worker (`python -m memoratum.worker`, compose service):
+  durable jobs, atomic claims, retries with poison-pill handling, dream
+  chaining, job status endpoint (`GET /v4/jobs/{id}`)
+### Changed
+- Ingest is async-only: `POST /v3/documents` returns `queued` + `job_id`;
+  poll the document or job for completion
+
 ## [0.7.0] - 2026-09-22
 ### Added
 - Relevance rerank (heuristic default, cross-encoder optional), query
