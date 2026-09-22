@@ -1,23 +1,27 @@
 # Bridge eval — graphify import → memory recall
 
-Date: 2026-09-20. Corpus: lunee `graphify-out` (4,114 nodes / 8,734 links →
-8,716 live facts after exact-duplicate collapse). Vectors: nomic-embed-text
-via Ollama (CPU). Method: 10 keyword questions (2 per relation: calls,
+Date: 2026-09-22 (re-run with real vectors + coexistence fix).
+
+## Setup
+
+Corpus: lunee `graphify-out` (5,780 nodes / 13,890 links → 13,837 live facts
+after exact-duplicate collapse). Vectors: nomic-embed-text via Ollama (CPU),
+persisted per fact. Method: 10 keyword questions (2 per relation: calls,
 imports, references, contains, inherits), `searchMode=memories`, top-5 must
 contain both endpoint labels.
 
-## Result: recall@5 = 6/10
+## Result: recall@5 = 10/10 (plain and reranked)
 
-Hits: log_context/_get_log_context, App/createVoiceSession,
-package/mediapipe + react pairs, .timeout/setter, health/custom_route.
-Misses: HologramOrb/updateTheme, createOrbScene/lineMat,
-BlocklistViolationError/RuntimeError, UnknownTargetError/ValueError.
+## History (why this took three attempts)
+
+- Attempt 1 (HashEmbedder): 0/10 — vector leg pure noise, keyword leg drowned.
+- Attempt 2 (nomic, supersede bug live): 6/10 — blind multi-valued supersede
+  had silently killed ~4.7k facts.
+- Attempt 3 (nomic + coexistence + stopwords + persisted vectors): 10/10.
 
 ## Reading
 
-- Import pipeline is exact (8,734/8,734 upserted, diff-clean on re-run).
-- Misses are ranking misses, not missing data — small-corpus exact-overlap
-  queries against 8.7k candidates with CPU embeddings. Real levers, in order:
-  real reranker, HyDE/query-rewrite for question-style queries, sqlite-vec ANN.
-- Baseline for comparison: same 10 questions with HashEmbedder scored 0/10,
-  confirming the vector leg (not just keywords) now carries the result.
+Import pipeline is exact (13,890/13,890 upserted, diff-clean on re-run) and
+fast (2.5 min with `skipEmbedding`, backfill ~1h CPU one-time, persistent
+thereafter). Remaining levers for harder queries (question-style rather than
+keyword): query-rewrite (shipped, unmeasured here) and a real cross-encoder.
