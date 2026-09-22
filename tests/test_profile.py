@@ -13,6 +13,9 @@ def test_profile_returns_facts_and_stats() -> None:
 
     c = TestClient(create_app())
     c.post("/v3/documents", json={"content": "The user loves Paris.", "containerTag": "u1"})
+    from helpers import drain
+
+    drain()
     r = c.get("/v4/profile", params={"containerTag": "u1"})
     assert r.status_code == 200, r.text
     body = r.json()

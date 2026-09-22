@@ -17,11 +17,19 @@ def _client(auth: bool = False):
     return TestClient(create_app())
 
 
+def _drain() -> None:
+    """Run the worker until the queue is empty (async ingest in tests)."""
+    from helpers import drain
+
+    drain()
+
+
 def test_ingest_then_search_roundtrip() -> None:
     c = _client()
     r = c.post("/v3/documents", json={"content": "The cat sat on the mat.", "containerTag": "u1"})
     assert r.status_code == 201, r.text
     doc_id = r.json()["id"]
+    _drain()
     s = c.get(f"/v3/documents/{doc_id}")
     assert s.json()["status"] == "done"
     q = c.post("/v4/search", json={"q": "cat mat", "containerTag": "u1", "limit": 5})
@@ -85,6 +93,7 @@ def test_dreaming_param_and_memory_search_mode() -> None:
             json={"content": "The user loves Paris.", "containerTag": "u1", "dreaming": "instant"},
         )
         assert r.status_code == 201, r.text
+        _drain()
         q = c.post(
             "/v4/search",
             json={"q": "what does the user love", "containerTag": "u1", "searchMode": "memories"},

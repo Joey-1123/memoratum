@@ -29,6 +29,15 @@ changes across ingests fail loudly instead of silently corrupting ranking.
 Chunking keeps delimiter-attached units (chunks are verbatim substrings),
 prefixes Markdown headings, and keeps small fenced code blocks atomic.
 
+## Worker
+
+`python -m memoratum.worker` (separate process, `MEMORATUM_WORKER_INTERVAL`
+poll seconds) claims `jobs` rows atomically (`UPDATE … WHERE status='queued'`,
+so N workers share one DB) and runs ingest → dream chains plus backfill jobs:
+3 attempts with backoff, then `failed` with the error recorded (poison pills
+never loop forever; unknown kinds fail fast). `POST /v3/documents` only
+enqueues — documents read `queued` until the worker flips them.
+
 ## Dreaming (`dreaming.py` + `facts.py`)
 
 LLM extraction (strict-validated `{subject, predicate, object}` JSON; malformed

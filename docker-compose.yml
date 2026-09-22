@@ -11,6 +11,23 @@ services:
       MEMORATUM_EMBEDDINGS_MODEL: ${MEMORATUM_EMBEDDINGS_MODEL:-}
     volumes:
       - memoratum-data:/data
+  worker:
+    build: .
+    command: ["uv", "run", "--no-dev", "python", "-m", "memoratum.worker"]
+    environment:
+      MEMORATUM_DATA_DIR: /data
+      MEMORATUM_EMBEDDINGS_PROVIDER: ${MEMORATUM_EMBEDDINGS_PROVIDER:-hash}
+      MEMORATUM_EMBEDDINGS_ENDPOINT: ${MEMORATUM_EMBEDDINGS_ENDPOINT:-}
+      MEMORATUM_EMBEDDINGS_MODEL: ${MEMORATUM_EMBEDDINGS_MODEL:-}
+      MEMORATUM_LLM_ENDPOINT: ${MEMORATUM_LLM_ENDPOINT:-}
+      MEMORATUM_LLM_MODEL: ${MEMORATUM_LLM_MODEL:-}
+      MEMORATUM_LLM_KEY: ${MEMORATUM_LLM_KEY:-}
+      MEMORATUM_WORKER_INTERVAL: ${MEMORATUM_WORKER_INTERVAL:-2}
+    volumes:
+      - memoratum-data:/data
+    depends_on:
+      memoratum:
+        condition: service_started
 
 volumes:
   memoratum-data:
