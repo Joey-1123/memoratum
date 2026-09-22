@@ -82,6 +82,21 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE facts ADD COLUMN embedding BLOB;
     """,
+    """
+    CREATE TABLE IF NOT EXISTS jobs(
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      result TEXT,
+      error TEXT,
+      worker TEXT,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
+    """,
 )
 
 
