@@ -44,10 +44,12 @@ class CrossEncoderReranker:
             try:
                 from sentence_transformers import CrossEncoder
             except ImportError:
-                raise RuntimeError("sentence-transformers is not installed; pip install sentence-transformers") from None
+                raise RuntimeError(
+                    "sentence-transformers is not installed; pip install sentence-transformers"
+                ) from None
             try:
                 self._ranker = CrossEncoder(self.model)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise RuntimeError(f"cross-encoder model unavailable: {exc}") from exc
         return self._ranker
 

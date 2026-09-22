@@ -23,6 +23,7 @@ from typing import Any
 from memoratum import db
 from memoratum.embeddings import Embedder
 from memoratum.facts import list_facts
+from memoratum.rerank import HeuristicReranker, Reranker
 
 _RRF_K = 60
 
@@ -68,6 +69,7 @@ def search(
     search_mode: str = "hybrid",
     filters: dict[str, Any] | None = None,
     rerank: bool = False,
+    reranker: Reranker | None = None,
 ) -> list[dict[str, Any]]:
     want_chunks = search_mode in ("hybrid", "documents")
     want_facts = search_mode in ("hybrid", "memories")
@@ -148,13 +150,18 @@ def search(
 
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
     if rerank:
+        scorer = reranker or HeuristicReranker()
         now = time.time()
+        pool = ranked[: max(limit * 3, limit)]
+        rel = scorer.score(query, [texts[key] for key, _ in pool])
         rescored = []
-        for key, score in ranked[: max(limit * 3, limit)]:
+        for (key, _score), relevance in zip(pool, rel, strict=True):
             age_days = max(0.0, now - stamped.get(key, now)) / 86400.0
             recency = 1.0 / (1.0 + age_days)
-            rescored.append((key, 0.7 * score + 0.3 * recency))
-        ranked = sorted(rescored, key=lambda kv: kv[1], reverse=True)
+            rescored.append((relevance, recency, key))
+        # relevance first, freshness breaks ties
+        rescored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        ranked = [(key, rel) for rel, _rec, key in rescored]
 
     hits = []
     for key, score in ranked:

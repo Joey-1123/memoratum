@@ -25,6 +25,7 @@ from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.facts import list_facts
+from memoratum.rerank import build_reranker
 from memoratum.search import pack_vector, search
 
 
@@ -162,6 +163,10 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
 
     app.state.settings = settings
     app.state.embedder = build_embedder(settings)
+    app.state.reranker = build_reranker(
+        os.environ.get("MEMORATUM_RERANKER", "heuristic"),
+        os.environ.get("MEMORATUM_RERANKER_MODEL", ""),
+    )
     app.state.llm = (
         ChatLLM(
             endpoint=settings.llm_endpoint,
@@ -266,6 +271,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             search_mode=query.searchMode,
             filters=query.filters,
             rerank=query.rerank,
+            reranker=app.state.reranker,
         )
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
 
