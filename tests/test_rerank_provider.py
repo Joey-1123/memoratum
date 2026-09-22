@@ -12,6 +12,7 @@ def test_heuristic_precision_ranking() -> None:
     scores = r.score("cat mat", docs)
     assert scores[0] > scores[1]
     assert all(0.0 <= s <= 1.0 for s in scores)
+    assert r.score("which is it", docs) == [0.0, 0.0]
 
 
 def test_cross_encoder_lazy_missing() -> None:

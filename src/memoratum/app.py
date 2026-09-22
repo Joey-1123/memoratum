@@ -26,7 +26,7 @@ from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.facts import list_facts
 from memoratum.rerank import build_reranker
-from memoratum.search import pack_vector, search
+from memoratum.search import expand_query, merge_hits, pack_vector, search
 
 
 class DocumentIn(BaseModel):
@@ -45,6 +45,7 @@ class SearchIn(BaseModel):
     searchMode: str = "hybrid"
     filters: dict[str, Any] | None = None
     rerank: bool = False
+    rewriteQuery: bool = False
 
 
 def _error(
@@ -261,18 +262,27 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     def run_search(query: SearchIn, conn: DbConn, authorization: str | None = Header(default=None)):
         authorize(authorization, conn, query.containerTag)
         started = time.time()
-        hits = search(
-            conn,
-            app.state.embedder,
-            query.q,
-            container_tag=query.containerTag,
-            limit=query.limit,
-            threshold=query.threshold,
-            search_mode=query.searchMode,
-            filters=query.filters,
-            rerank=query.rerank,
-            reranker=app.state.reranker,
+        queries = (
+            expand_query(app.state.llm, query.q)
+            if query.rewriteQuery and app.state.llm is not None
+            else [query.q]
         )
+        batches = [
+            search(
+                conn,
+                app.state.embedder,
+                q,
+                container_tag=query.containerTag,
+                limit=query.limit,
+                threshold=query.threshold,
+                search_mode=query.searchMode,
+                filters=query.filters,
+                rerank=query.rerank,
+                reranker=app.state.reranker,
+            )
+            for q in queries
+        ]
+        hits = merge_hits(batches, limit=query.limit)
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
 
     @app.get("/v4/profile")

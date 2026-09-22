@@ -14,8 +14,73 @@ class Reranker(Protocol):
     def score(self, query: str, docs: list[str]) -> list[float]: ...
 
 
+STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "which",
+        "what",
+        "who",
+        "whom",
+        "whose",
+        "where",
+        "when",
+        "why",
+        "how",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "have",
+        "has",
+        "had",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "there",
+        "their",
+        "my",
+        "your",
+        "his",
+        "her",
+        "our",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "from",
+        "with",
+        "by",
+        "and",
+        "or",
+        "not",
+        "no",
+    }
+)
+
+
 def _tokens(text: str) -> set[str]:
-    return {t.strip(".,;:!?()[]{}\"'").lower() for t in text.split() if t.strip(".,;:!?()[]{}\"'")}
+    return {
+        t.strip(".,;:!?()[]{}\"'").lower()
+        for t in text.split()
+        if t.strip(".,;:!?()[]{}\"'").lower() not in STOPWORDS
+    }
 
 
 class HeuristicReranker:

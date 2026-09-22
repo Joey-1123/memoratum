@@ -23,7 +23,7 @@ from typing import Any
 from memoratum import db
 from memoratum.embeddings import Embedder
 from memoratum.facts import list_facts
-from memoratum.rerank import HeuristicReranker, Reranker
+from memoratum.rerank import STOPWORDS, HeuristicReranker, Reranker
 
 _RRF_K = 60
 
@@ -50,11 +50,40 @@ def _fact_text(fact: dict[str, Any]) -> str:
 
 
 def _token_overlap(query: str, text: str) -> float:
-    qtokens = {t.lower() for t in query.split()}
+    qtokens = {t.lower() for t in query.split()} - STOPWORDS
     if not qtokens:
         return 0.0
     ttokens = {t.lower() for t in text.split()}
     return len(qtokens & ttokens) / len(qtokens)
+
+
+def merge_hits(batches: list[list[dict[str, Any]]], *, limit: int) -> list[dict[str, Any]]:
+    """Merge per-query hit lists, keeping each id once at its best similarity."""
+    best: dict[str, dict[str, Any]] = {}
+    for batch in batches:
+        for hit in batch:
+            prev = best.get(hit["id"])
+            if prev is None or hit.get("similarity", 0) > prev.get("similarity", 0):
+                best[hit["id"]] = hit
+    return sorted(best.values(), key=lambda h: h.get("similarity", 0), reverse=True)[:limit]
+
+
+def expand_query(llm, query: str, *, variants: int = 2) -> list[str]:
+    """LLM-generated alternative queries; falls back to [query] on any failure."""
+    import json as _json
+
+    try:
+        raw = llm.complete(
+            "Generate alternative search queries that would find documents relevant"
+            " to the user's question. Include synonym and more-specific versions."
+            f' Return a JSON object like {{"queries": ["...", "..."]}} with at most {variants} items.',
+            query[:500],
+        )
+        items = _json.loads(raw).get("queries")
+        cleaned = [q.strip() for q in items if isinstance(q, str) and q.strip()][:variants]
+        return [query, *cleaned] if cleaned else [query]
+    except Exception:  # noqa: BLE001 — any expansion failure falls back to [query]
+        return [query]
 
 
 def search(
