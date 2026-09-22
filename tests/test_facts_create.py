@@ -30,3 +30,14 @@ def test_create_fact_returns_full_row() -> None:
     assert again.json()["id"] == body["id"]
     bad = c.post("/v4/facts", json={"subject": "a", "predicate": "calls"})
     assert bad.status_code == 422
+    skipped = c.post(
+        "/v4/facts",
+        json={
+            "subject": "x",
+            "predicate": "y",
+            "object": "z",
+            "containerTag": "g1",
+            "skipEmbedding": True,
+        },
+    )
+    assert skipped.status_code == 201, skipped.text

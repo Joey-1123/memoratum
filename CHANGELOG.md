@@ -2,11 +2,13 @@
 
 ## [Unreleased]
 
-## [0.7.0] - 2026-09-20
+## [0.7.0] - 2026-09-22
 ### Added
+- Relevance rerank (heuristic default, cross-encoder optional), query
+  rewrite via LLM with merge, stopword-aware keyword overlap
 - Per-IP rate limiting (120/min, health/dashboard exempt, loopback bypass,
   `Retry-After` + SDK backoff), input size caps (422)
-- Bridge eval harness evidence (`eval/RESULTS-bridge.md`)
+- Bridge eval harness evidence (`eval/RESULTS-bridge.md`, recall@5 10/10)
 ### Fixed
 - Multi-valued relations coexist; re-assertion revives superseded facts
 - Thread-migrating SQLite connections (serialized requests + regression test)

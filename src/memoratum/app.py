@@ -25,7 +25,8 @@ from memoratum.config import Settings
 from memoratum.dreaming import ChatLLM, dream_pending
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.facts import list_facts
-from memoratum.search import pack_vector, search
+from memoratum.rerank import build_reranker
+from memoratum.search import expand_query, merge_hits, pack_vector, search
 
 
 class DocumentIn(BaseModel):
@@ -44,6 +45,7 @@ class SearchIn(BaseModel):
     searchMode: str = "hybrid"
     filters: dict[str, Any] | None = None
     rerank: bool = False
+    rewriteQuery: bool = False
 
 
 def _error(
@@ -65,6 +67,7 @@ class FactIn(BaseModel):
     containerTag: str = "default"
     metadata: dict[str, Any] | None = None
     supersede: bool = True
+    skipEmbedding: bool = False
 
 
 class ImportIn(BaseModel):
@@ -162,6 +165,10 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
 
     app.state.settings = settings
     app.state.embedder = build_embedder(settings)
+    app.state.reranker = build_reranker(
+        os.environ.get("MEMORATUM_RERANKER", "heuristic"),
+        os.environ.get("MEMORATUM_RERANKER_MODEL", ""),
+    )
     app.state.llm = (
         ChatLLM(
             endpoint=settings.llm_endpoint,
@@ -256,17 +263,27 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     def run_search(query: SearchIn, conn: DbConn, authorization: str | None = Header(default=None)):
         authorize(authorization, conn, query.containerTag)
         started = time.time()
-        hits = search(
-            conn,
-            app.state.embedder,
-            query.q,
-            container_tag=query.containerTag,
-            limit=query.limit,
-            threshold=query.threshold,
-            search_mode=query.searchMode,
-            filters=query.filters,
-            rerank=query.rerank,
+        queries = (
+            expand_query(app.state.llm, query.q)
+            if query.rewriteQuery and app.state.llm is not None
+            else [query.q]
         )
+        batches = [
+            search(
+                conn,
+                app.state.embedder,
+                q,
+                container_tag=query.containerTag,
+                limit=query.limit,
+                threshold=query.threshold,
+                search_mode=query.searchMode,
+                filters=query.filters,
+                rerank=query.rerank,
+                reranker=app.state.reranker,
+            )
+            for q in queries
+        ]
+        hits = merge_hits(batches, limit=query.limit)
         return {"results": hits, "timing": int((time.time() - started) * 1000), "total": len(hits)}
 
     @app.get("/v4/profile")
@@ -356,12 +373,13 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             supersede=body.supersede,
         )
         try:
-            text = f"{fact['subject']} {fact['predicate']} {fact['object']}"
-            vec = app.state.embedder.embed([text])[0]
-            conn.execute(
-                "UPDATE facts SET embedding = ? WHERE id = ?", (pack_vector(vec), fact["id"])
-            )
-            conn.commit()
+            if not body.skipEmbedding:
+                text = f"{fact['subject']} {fact['predicate']} {fact['object']}"
+                vec = app.state.embedder.embed([text])[0]
+                conn.execute(
+                    "UPDATE facts SET embedding = ? WHERE id = ?", (pack_vector(vec), fact["id"])
+                )
+                conn.commit()
         except Exception as exc:  # noqa: BLE001 — fact exists; vector backfills on search
             print(f"memoratum: inline fact embedding skipped: {exc}")
         return {
