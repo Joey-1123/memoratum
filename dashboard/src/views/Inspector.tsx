@@ -70,8 +70,8 @@ export function Inspector({ tag, selection, onClose, onOpenNote }: { tag: string
       {tab === "relations" && (
         <dl style={{ margin: 0 }}>
           {current.map((f) => (
-            <div key={f.id} style={{ display: "flex", gap: "0.5rem", padding: "0.2rem 0", borderBottom: "1px solid var(--border)" }}>
-              <dt className="mono" style={{ color: "var(--accent-dim)", minWidth: 88 }}>{f.predicate}</dt>
+            <div key={f.id} style={{ display: "flex", gap: "0.5rem", padding: "0.2rem 0", borderBottom: "1px solid var(--background-modifier-border)" }}>
+              <dt className="mono" style={{ color: "var(--interactive-accent-hover)", minWidth: 88 }}>{f.predicate}</dt>
               <dd className="mono" style={{ margin: 0, overflowWrap: "anywhere" }}>{f.object}</dd>
             </div>
           ))}

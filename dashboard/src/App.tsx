@@ -5,6 +5,7 @@ import { KeyField } from "./components/KeyField";
 import { Explorer } from "./shell/Explorer";
 import { Shell } from "./shell/Shell";
 import { TagSwitcher } from "./shell/TagSwitcher";
+import { ThemeToggle } from "./shell/ThemeToggle";
 import { useServerStatus } from "./shell/useServerStatus";
 import { ExportView } from "./views/ExportView";
 import { GraphPanel } from "./views/Inspector";
@@ -68,6 +69,9 @@ export function App() {
             <section aria-label="Session">
               <h2>Session</h2>
               <KeyField onChange={() => setKeyEpoch((n) => n + 1)} />
+              <div style={{ marginTop: "0.5rem" }}>
+                <ThemeToggle />
+              </div>
             </section>
           </>
         }
