@@ -172,6 +172,20 @@ _MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_usage_updated ON usage_counters(updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_usage_scope ON usage_counters(container_tag, org_id, updated_at DESC);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS vector_points(
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      vector BLOB NOT NULL,
+      container_tag TEXT NOT NULL,
+      org_id TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_vector_scope ON vector_points(container_tag, org_id);
+    CREATE INDEX IF NOT EXISTS idx_vector_created ON vector_points(created_at DESC);
+    """,
 )
 
 
