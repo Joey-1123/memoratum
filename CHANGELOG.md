@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-23
+### Added
+- Memory orbit hero (ported orbiting-rings concept onto our tokens: particle
+  globe core, 3 counter-rotating concept rings, lazy chunk) as the Tags
+  empty state; Tailwind v4 mapped to Obsidian variables
+
 ## [0.11.0] - 2026-09-23
 ### Changed
 - Dashboard theme rebuilt on Obsidian's variable architecture (sample-template

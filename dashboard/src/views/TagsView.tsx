@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { api } from "../api";
 import type { Profile } from "../types";
+
+const MemoryOrbitHero = lazy(() => import("../components/orbit/MemoryOrbitHero"));
 
 const KNOWN_TAGS = ["default"];
 
@@ -64,14 +66,19 @@ export function TagsView({ onSelect }: { onSelect: (tag: string) => void }) {
         </p>
       )}
       {!loading && !error && profiles.length === 0 && (
-        <div role="status" className="card">
-          <h3>No tags loaded</h3>
-          <p className="muted">
-            Type a container tag above (e.g. <span className="mono">graphify:lunee</span>) and press
-            Load — or ingest your first document with{" "}
-            <span className="mono">POST /v3/documents</span>.
-          </p>
-        </div>
+        <>
+          <Suspense fallback={<div className="skeleton" aria-label="Loading visual" />}>
+            <MemoryOrbitHero />
+          </Suspense>
+          <div role="status" className="card" style={{ marginTop: "1rem" }}>
+            <h3>Nothing remembered yet</h3>
+            <p className="muted">
+              Type a container tag above (e.g. <span className="mono">graphify:lunee</span>) and
+              press Load — or ingest your first document with{" "}
+              <span className="mono">POST /v3/documents</span>.
+            </p>
+          </div>
+        </>
       )}
       <div className="grid">
         {profiles.map((p, i) => (
