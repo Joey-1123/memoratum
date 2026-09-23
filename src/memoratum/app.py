@@ -22,9 +22,9 @@ from pydantic import BaseModel, Field
 from memoratum import db, jobs
 from memoratum import facts as fact_store
 from memoratum.config import Settings
-from memoratum.dreaming import ChatLLM
 from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
 from memoratum.facts import list_facts
+from memoratum.llm import build_chat
 from memoratum.rerank import build_reranker
 from memoratum.search import expand_query, merge_hits, pack_vector, search
 
@@ -183,12 +183,13 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         os.environ.get("MEMORATUM_RERANKER_MODEL", ""),
     )
     app.state.llm = (
-        ChatLLM(
+        build_chat(
+            settings.llm_provider,
             endpoint=settings.llm_endpoint,
             model=settings.llm_model,
             api_key=os.environ.get("MEMORATUM_LLM_KEY", ""),
         )
-        if settings.llm_endpoint and settings.llm_model
+        if settings.llm_model
         else None
     )
     _ensure_boot_key(settings)

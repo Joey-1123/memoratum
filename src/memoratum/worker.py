@@ -14,8 +14,9 @@ from typing import Any
 
 from memoratum import db, ingest, jobs
 from memoratum.config import Settings
-from memoratum.dreaming import ChatLLM, dream_document, dream_pending
+from memoratum.dreaming import dream_document, dream_pending
 from memoratum.embeddings import Embedder
+from memoratum.llm import ChatModel, build_chat
 
 MAX_ATTEMPTS = 3
 
@@ -27,18 +28,19 @@ def _handle_stop(signum, frame) -> None:
     _stop = True
 
 
-def build_llm(settings: Settings) -> ChatLLM | None:
-    if settings.llm_endpoint and settings.llm_model:
-        return ChatLLM(
-            endpoint=settings.llm_endpoint,
-            model=settings.llm_model,
-            api_key=os.environ.get("MEMORATUM_LLM_KEY", ""),
-        )
-    return None
+def build_llm(settings: Settings) -> ChatModel | None:
+    if not settings.llm_model:
+        return None
+    return build_chat(
+        settings.llm_provider,
+        endpoint=settings.llm_endpoint,
+        model=settings.llm_model,
+        api_key=os.environ.get("MEMORATUM_LLM_KEY", ""),
+    )
 
 
 def run_once(
-    conn: sqlite3.Connection, embedder: Embedder, llm: ChatLLM | None, *, worker_id: str
+    conn: sqlite3.Connection, embedder: Embedder, llm: ChatModel | None, *, worker_id: str
 ) -> str | None:
     """Claim and run one job. Returns the job id, or None when the queue is empty."""
     job = jobs.claim(conn, worker=worker_id)
@@ -58,7 +60,7 @@ def run_once(
 
 
 def _dispatch(
-    conn: sqlite3.Connection, embedder: Embedder, llm: ChatLLM | None, job: dict[str, Any]
+    conn: sqlite3.Connection, embedder: Embedder, llm: ChatModel | None, job: dict[str, Any]
 ) -> dict[str, Any]:
     kind = job["kind"]
     payload = job["payload"] or {}
