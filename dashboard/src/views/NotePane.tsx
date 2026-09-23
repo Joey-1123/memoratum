@@ -85,7 +85,7 @@ function LinkText({
         seg.kind === "link" ? (
           <button
             key={i}
-            style={{ padding: 0, border: "none", background: "none", color: "var(--accent)", cursor: "pointer", minHeight: "unset" }}
+            style={{ padding: 0, border: "none", background: "none", color: "var(--text-accent)", cursor: "pointer", minHeight: "unset" }}
             onClick={() => onOpen(seg.value)}
             onMouseEnter={(e) => onHover(seg.value, e.clientX, e.clientY)}
             onMouseLeave={() => onHover(null, 0, 0)}

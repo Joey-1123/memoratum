@@ -154,5 +154,5 @@ export function GraphView({
       </div>
     );
   }
-  return <div ref={containerRef} style={{ height: "70vh", background: "var(--bg)" }} role="application" aria-label="Memory graph. Click a node to inspect it." />;
+  return <div ref={containerRef} style={{ height: "70vh", background: "var(--background-primary)" }} role="application" aria-label="Memory graph. Click a node to inspect it." />;
 }
