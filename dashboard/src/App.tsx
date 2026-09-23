@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { CommandPalette } from "./components/CommandPalette";
+import { HoverCard } from "./components/HoverCard";
 import { KeyField } from "./components/KeyField";
 import { Explorer } from "./shell/Explorer";
 import { Shell } from "./shell/Shell";
@@ -20,8 +21,12 @@ export function App() {
   const [keyEpoch, setKeyEpoch] = useState(0);
   const [notes, setNotes] = useState<string[]>([]);
   const [activeNote, setActiveNote] = useState<string | null>(null);
+  const [hover, setHover] = useState<{ subject: string; x: number; y: number } | null>(null);
   const status = useServerStatus(tag, keyEpoch);
 
+  const onHover = (subject: string | null, x: number, y: number) => {
+    setHover(subject ? { subject, x, y } : null);
+  };
   const openNote = (subject: string) => {
     setNotes((n) => (n.includes(subject) ? n : [...n, subject].slice(-8)));
     setActiveNote(subject);
@@ -125,10 +130,11 @@ export function App() {
               tag={tag}
               subject={activeNote}
               onOpen={openNote}
-              onHover={() => {}}
+              onHover={onHover}
             />
           )}
         </div>
+        {hover && <HoverCard tag={tag} subject={hover.subject} x={hover.x} y={hover.y} />}
       </Shell>
     </>
   );
