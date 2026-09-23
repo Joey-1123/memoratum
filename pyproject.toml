@@ -24,6 +24,9 @@ qdrant = [
 chroma = [
     "chromadb>=1.5.9,<2",
 ]
+pgvector = [
+    "psycopg[binary]>=3.3.6,<4",
+]
 
 [dependency-groups]
 dev = [

@@ -11,9 +11,11 @@ backend can return useful candidates without reopening the relational store.
 Metadata filters are applied before ranking. External backends can replace the
 SQLite implementation without changing API or embedding contracts.
 
-Install optional backends with `uv sync --extra qdrant` or
-`uv sync --extra chroma`. Configure the provider, endpoint, collection, and
-credentials through the vector-store settings when search wiring is enabled.
+Install optional backends with `uv sync --extra qdrant`,
+`uv sync --extra chroma`, or `uv sync --extra pgvector`. The Postgres adapter
+expects the `vector` extension to be available in the target database.
+Configure the provider, endpoint, collection, and credentials through the
+vector-store settings when search wiring is enabled.
 
 The adapters use explicit vectors and scope metadata, so the embedding
 provider remains independent from the vector backend.
@@ -23,3 +25,4 @@ References:
 - https://qdrant.tech/documentation/search/
 - https://docs.trychroma.com/docs/querying-collections/query-and-get
 - https://docs.trychroma.com/docs/collections/manage-collections
+- https://github.com/pgvector/pgvector
