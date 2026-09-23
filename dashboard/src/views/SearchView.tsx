@@ -80,7 +80,7 @@ export function SearchView({ tag }: { tag: string }) {
             <div>{h.memory ?? h.chunk}</div>
             <div
               aria-label={`similarity ${h.similarity}`}
-              style={{ height: 4, background: "var(--surface-2)", marginTop: "0.5rem" }}
+              style={{ height: 4, background: "var(--background-secondary-alt)", marginTop: "0.5rem" }}
             >
               <div style={{ width: `${Math.min(100, h.similarity * 100)}%`, height: "100%", background: "var(--interactive-accent)" }} />
             </div>
