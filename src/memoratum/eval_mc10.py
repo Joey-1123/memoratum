@@ -185,6 +185,11 @@ def evaluate_mc10(
     embedder = embedder or build_embedder()
     answerer = answerer or HeuristicChoiceAnswerer()
     factory = vector_store_factory or (lambda conn: SQLiteVectorStore(conn))
+    store_label = (
+        "sqlite"
+        if vector_store_factory is None
+        else getattr(vector_store_factory, "__name__", type(vector_store_factory).__name__)
+    )
     rows = []
     for item in picked:
         with tempfile.TemporaryDirectory(prefix="memoratum-mc10-") as directory:
@@ -244,6 +249,7 @@ def evaluate_mc10(
             "n": len(picked),
             "k": k,
             "embedder": f"{type(embedder).__name__}:{getattr(embedder, 'dims', 0)}",
+            "vector_store": store_label,
             "answerer": type(answerer).__name__,
             "data_sha256": dataset_hash or records_sha256(picked),
         },

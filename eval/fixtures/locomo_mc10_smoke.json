@@ -1,0 +1,15 @@
+[
+  {
+    "question_id": "smoke-mc1",
+    "question_type": "single_hop",
+    "question": "What color is the key?",
+    "choices": ["blue", "red", "green", "yellow", "black", "white", "purple", "orange", "pink", "brown"],
+    "answer": "blue",
+    "correct_choice_index": 0,
+    "haystack_session_ids": ["session-1", "session-2"],
+    "haystack_sessions": [
+      [{"speaker": "A", "text": "The key is blue."}],
+      [{"speaker": "B", "text": "The house is red."}]
+    ]
+  }
+]
