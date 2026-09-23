@@ -210,18 +210,90 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         row = db.lookup_key(conn, raw)
         if row is None:
             return False
-        return {"container_tag": row["container_tag"], "org_id": row["org_id"]}
+        return {
+            "key_hash": row["key_hash"],
+            "container_tag": row["container_tag"],
+            "org_id": row["org_id"],
+        }
+
+    def actor_from_scope(authorization: str | None, scope: dict | bool) -> tuple[str, str | None]:
+        if not authorization or not authorization.startswith("Bearer "):
+            return "anonymous", None
+        raw = authorization[len("Bearer ") :]
+        if scope is True:
+            return "admin", db.hash_key(raw)
+        if isinstance(scope, dict):
+            return "key", scope.get("key_hash")
+        return "anonymous", None
+
+    def actor(authorization: str | None, conn: sqlite3.Connection) -> tuple[str, str | None]:
+        return actor_from_scope(authorization, scope_of(authorization, conn))
+
+    def meter(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        *,
+        container_tag: str | None,
+        org_id: str | None,
+        operation: str = "request",
+        input_chars: int = 0,
+        actor_override: tuple[str, str | None] | None = None,
+    ) -> None:
+        _, key_hash = actor_override or actor(authorization, conn)
+        db.record_usage(
+            conn,
+            key_hash=key_hash,
+            container_tag=container_tag,
+            org_id=org_id,
+            operation=operation,
+            input_chars=input_chars,
+        )
+
+    def audit(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        *,
+        container_tag: str | None,
+        org_id: str | None,
+        action: str,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        outcome: str = "succeeded",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        actor_kind, key_hash = actor(authorization, conn)
+        db.append_audit_event(
+            conn,
+            actor_kind=actor_kind,
+            actor_key_hash=key_hash,
+            container_tag=container_tag,
+            org_id=org_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            outcome=outcome,
+            metadata=metadata,
+        )
+
+    def admin_error(authorization: str | None, conn: sqlite3.Connection) -> JSONResponse | None:
+        if _is_admin(authorization, settings):
+            return None
+        if (
+            authorization
+            and authorization.startswith("Bearer ")
+            and db.lookup_key(conn, authorization[len("Bearer ") :]) is not None
+        ):
+            return _error("FORBIDDEN", "admin key required", 403)
+        return _error("UNAUTHORIZED", "authentication required", 401)
 
     def credential_ok(authorization: str | None, conn: sqlite3.Connection) -> bool:
         return scope_of(authorization, conn) is not False
 
-    def may_access(
-        authorization: str | None,
-        conn: sqlite3.Connection,
+    def scope_allows(
+        scope: dict | bool,
         container_tag: str,
         org_id: str | None = None,
     ) -> bool:
-        scope = scope_of(authorization, conn)
         if scope is True or scope is None:
             return True
         if scope is False:
@@ -232,22 +304,50 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         scope_org = scope.get("org_id")
         return scope_org is None or org_id == scope_org
 
+    def may_access(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        container_tag: str,
+        org_id: str | None = None,
+    ) -> bool:
+        return scope_allows(scope_of(authorization, conn), container_tag, org_id)
+
     def authorize(
         authorization: str | None,
         conn: sqlite3.Connection,
         container_tag: str,
         org_id: str | None = None,
+        *,
+        operation: str = "request",
+        input_chars: int = 0,
     ) -> str | None:
         if not settings.auth_enabled:
+            meter(
+                authorization,
+                conn,
+                container_tag=container_tag,
+                org_id=org_id,
+                operation=operation,
+                input_chars=input_chars,
+            )
             return org_id
-        if not credential_ok(authorization, conn):
+        scope = scope_of(authorization, conn)
+        if scope is False:
             raise HTTPException(status_code=401, detail="UNAUTHORIZED")
         effective_org = org_id
-        scope = scope_of(authorization, conn)
         if isinstance(scope, dict) and scope.get("org_id") is not None and org_id is None:
             effective_org = scope["org_id"]
-        if not may_access(authorization, conn, container_tag, effective_org):
+        if not scope_allows(scope, container_tag, effective_org):
             raise HTTPException(status_code=403, detail="FORBIDDEN")
+        meter(
+            authorization,
+            conn,
+            container_tag=container_tag,
+            org_id=effective_org,
+            operation=operation,
+            input_chars=input_chars,
+            actor_override=actor_from_scope(authorization, scope),
+        )
         return effective_org
 
     def _authorized(authorization: str | None, conn: sqlite3.Connection) -> bool:
@@ -293,7 +393,14 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     def add_document(
         doc: DocumentIn, conn: DbConn, authorization: str | None = Header(default=None)
     ):
-        org_id = authorize(authorization, conn, doc.containerTag, doc.org_id)
+        org_id = authorize(
+            authorization,
+            conn,
+            doc.containerTag,
+            doc.org_id,
+            operation="document",
+            input_chars=len(doc.content),
+        )
         created = db.create_document(
             conn,
             container_tag=doc.containerTag,
@@ -313,6 +420,16 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 "org_id": org_id,
             },
         )
+        audit(
+            authorization,
+            conn,
+            container_tag=doc.containerTag,
+            org_id=org_id,
+            action="document.created",
+            resource_type="document",
+            resource_id=created["id"],
+            metadata={"job_id": job_id},
+        )
         return {"id": created["id"], "status": "queued", "job_id": job_id}
 
     @app.get("/v3/documents/{doc_id}")
@@ -327,6 +444,12 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             authorization, conn, doc["container_tag"], doc.get("org_id")
         ):
             return _error("NOT_FOUND", "document not found", 404)
+        meter(
+            authorization,
+            conn,
+            container_tag=doc["container_tag"],
+            org_id=doc.get("org_id"),
+        )
         return {"id": doc["id"], "containerTag": doc["container_tag"], "status": doc["status"]}
 
     @app.patch("/v3/documents/{doc_id}")
@@ -342,6 +465,14 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 return _error("UNAUTHORIZED", "authentication required", 401)
             if not _may_access(authorization, conn, doc["container_tag"], doc.get("org_id")):
                 return _error("NOT_FOUND", "document not found", 404)
+        meter(
+            authorization,
+            conn,
+            container_tag=doc["container_tag"],
+            org_id=doc.get("org_id"),
+            operation="document",
+            input_chars=len(patch.content or doc["content"]),
+        )
         updated = db.update_document(conn, doc_id, content=patch.content, metadata=patch.metadata)
         job_id = jobs.enqueue(
             conn,
@@ -351,6 +482,16 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 "container_tag": updated["container_tag"],
                 "org_id": updated.get("org_id"),
             },
+        )
+        audit(
+            authorization,
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            action="document.updated",
+            resource_type="document",
+            resource_id=updated["id"],
+            metadata={"job_id": job_id},
         )
         return {"id": updated["id"], "status": "queued", "job_id": job_id}
 
@@ -393,7 +534,14 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
 
     @app.post("/v4/search")
     def run_search(query: SearchIn, conn: DbConn, authorization: str | None = Header(default=None)):
-        org_id = authorize(authorization, conn, query.containerTag, query.org_id)
+        org_id = authorize(
+            authorization,
+            conn,
+            query.containerTag,
+            query.org_id,
+            operation="search",
+            input_chars=len(query.q),
+        )
         started = time.time()
         queries = (
             expand_query(app.state.llm, query.q)
@@ -459,14 +607,25 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
 
     @app.post("/v4/keys", status_code=201)
     def issue_key(body: KeyIn, conn: DbConn, authorization: str | None = Header(default=None)):
-        if not settings.auth_enabled:
-            return {
-                "key": db.create_api_key(conn, container_tag=body.containerTag, org_id=body.org_id)
-            }
-        if _is_admin(authorization, settings):
-            return {
-                "key": db.create_api_key(conn, container_tag=body.containerTag, org_id=body.org_id)
-            }
+        if not settings.auth_enabled or _is_admin(authorization, settings):
+            raw = db.create_api_key(conn, container_tag=body.containerTag, org_id=body.org_id)
+            meter(
+                authorization,
+                conn,
+                container_tag=body.containerTag,
+                org_id=body.org_id,
+            )
+            audit(
+                authorization,
+                conn,
+                container_tag=body.containerTag,
+                org_id=body.org_id,
+                action="key.issued",
+                resource_type="api_key",
+                resource_id=db.hash_key(raw)[:16],
+                metadata={"containerTag": body.containerTag, "org_id": body.org_id},
+            )
+            return {"key": raw}
         if (
             authorization
             and authorization.startswith("Bearer ")
@@ -484,7 +643,19 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         key = body.get("key") if isinstance(body, dict) else None
         if not isinstance(key, str) or not key:
             return _error("VALIDATION_ERROR", "key is required", 422)
-        return {"revoked": db.revoke_key(conn, key)}
+        revoked = db.revoke_key(conn, key)
+        meter(authorization, conn, container_tag=None, org_id=None)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            action="key.revoked",
+            resource_type="api_key",
+            resource_id=db.hash_key(key)[:16],
+            outcome="succeeded" if revoked else "not_found",
+        )
+        return {"revoked": revoked}
 
     @app.delete("/v4/memories/{fact_id}")
     def forget_fact(fact_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -498,6 +669,21 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             if not may_access(authorization, conn, fact["container_tag"], fact.get("org_id")):
                 return _error("NOT_FOUND", "fact not found", 404)
         fact_store.delete_fact(conn, fact_id)
+        meter(
+            authorization,
+            conn,
+            container_tag=fact["container_tag"],
+            org_id=fact.get("org_id"),
+        )
+        audit(
+            authorization,
+            conn,
+            container_tag=fact["container_tag"],
+            org_id=fact.get("org_id"),
+            action="fact.deleted",
+            resource_type="fact",
+            resource_id=fact_id,
+        )
         return {"deleted": fact_id}
 
     @app.delete("/v4/tags/{tag}")
@@ -510,11 +696,29 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             if exc.status_code == 403:
                 return _error("NOT_FOUND", "tag not found", 404)
             raise
-        return db.purge_tag(conn, tag, org_id=org_id)
+        counts = db.purge_tag(conn, tag, org_id=org_id)
+        audit(
+            authorization,
+            conn,
+            container_tag=tag,
+            org_id=org_id,
+            action="tag.purged",
+            resource_type="tag",
+            resource_id=tag,
+            metadata=counts,
+        )
+        return counts
 
     @app.post("/v4/facts", status_code=201)
     def create_fact(body: FactIn, conn: DbConn, authorization: str | None = Header(default=None)):
-        org_id = authorize(authorization, conn, body.containerTag, body.org_id)
+        org_id = authorize(
+            authorization,
+            conn,
+            body.containerTag,
+            body.org_id,
+            operation="fact",
+            input_chars=len(body.subject) + len(body.predicate) + len(body.object),
+        )
         fact = fact_store.add_fact(
             conn,
             container_tag=body.containerTag,
@@ -538,6 +742,15 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 conn.commit()
         except Exception as exc:  # noqa: BLE001 — fact exists; vector backfills on search
             print(f"memoratum: inline fact embedding skipped: {exc}")
+        audit(
+            authorization,
+            conn,
+            container_tag=body.containerTag,
+            org_id=org_id,
+            action="fact.created",
+            resource_type="fact",
+            resource_id=fact["id"],
+        )
         return {
             "id": fact["id"],
             "subject": fact["subject"],
@@ -591,7 +804,13 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         # Server-local path by design (single-host tool). Any authenticated caller
         # may import, but only into tags they can write.
         slug = body.tag.removeprefix("graphify:")
-        org_id = authorize(authorization, conn, f"graphify:{slug}", body.org_id)
+        org_id = authorize(
+            authorization,
+            conn,
+            f"graphify:{slug}",
+            body.org_id,
+            operation="document",
+        )
         graph_path = os.path.join(os.path.abspath(body.graph_dir), "graph.json")
         if not os.path.isfile(graph_path):
             return _error("VALIDATION_ERROR", "graph_dir must contain graph.json", 422)
@@ -611,7 +830,18 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 pass
         from memoratum.bridge import sync_records
 
-        return sync_records(conn, graph, slug, org_id=org_id)
+        counts = sync_records(conn, graph, slug, org_id=org_id)
+        audit(
+            authorization,
+            conn,
+            container_tag=f"graphify:{slug}",
+            org_id=org_id,
+            action="graph.imported",
+            resource_type="graph",
+            resource_id=slug,
+            metadata=counts,
+        )
+        return counts
 
     @app.get("/v4/jobs/{job_id}")
     def get_job(job_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -625,6 +855,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             org_id = _job_org(conn, job)
             if tag is None or not may_access(authorization, conn, tag, org_id):
                 return _error("NOT_FOUND", "job not found", 404)
+            meter(authorization, conn, container_tag=tag, org_id=org_id)
         return {
             "id": job["id"],
             "kind": job["kind"],
@@ -632,6 +863,83 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             "attempts": job["attempts"],
             "result": job["result"],
             "error": job["error"],
+        }
+
+    @app.get("/v4/audit")
+    def list_audit_events_ep(
+        conn: DbConn,
+        containerTag: str | None = None,
+        org_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        events = db.list_audit_events(
+            conn,
+            container_tag=containerTag,
+            org_id=org_id,
+            limit=max(1, min(limit, 200)),
+            offset=max(0, offset),
+        )
+        return {
+            "events": [
+                {
+                    "id": event["id"],
+                    "createdAt": event["created_at"],
+                    "actorKind": event["actor_kind"],
+                    "actorKeyFingerprint": event["actor_key_hash"],
+                    "containerTag": event["container_tag"],
+                    "orgId": event["org_id"],
+                    "action": event["action"],
+                    "resourceType": event["resource_type"],
+                    "resourceId": event["resource_id"],
+                    "outcome": event["outcome"],
+                    "metadata": event["metadata"],
+                }
+                for event in events
+            ],
+            "total": db.count_audit_events(conn, container_tag=containerTag, org_id=org_id),
+        }
+
+    @app.get("/v4/usage")
+    def list_usage_ep(
+        conn: DbConn,
+        containerTag: str | None = None,
+        org_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        counters = db.list_usage(
+            conn,
+            container_tag=containerTag,
+            org_id=org_id,
+            limit=max(1, min(limit, 500)),
+            offset=max(0, offset),
+        )
+        return {
+            "usage": [
+                {
+                    "keyFingerprint": row["key_hash"][:16],
+                    "containerTag": row["container_tag"],
+                    "orgId": row["org_id"],
+                    "requests": row["requests"],
+                    "searches": row["searches"],
+                    "documentWrites": row["document_writes"],
+                    "factWrites": row["fact_writes"],
+                    "inputChars": row["input_chars"],
+                    "createdAt": row["created_at"],
+                    "updatedAt": row["updated_at"],
+                }
+                for row in counters
+            ],
+            "total": db.count_usage(conn, container_tag=containerTag, org_id=org_id),
         }
 
     @app.get("/health")

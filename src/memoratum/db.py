@@ -140,6 +140,38 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE documents ADD COLUMN dreamed_at REAL;
     """,
+    """
+    CREATE TABLE IF NOT EXISTS audit_events(
+      id TEXT PRIMARY KEY,
+      created_at REAL NOT NULL,
+      actor_kind TEXT NOT NULL,
+      actor_key_hash TEXT,
+      container_tag TEXT,
+      org_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      outcome TEXT NOT NULL DEFAULT 'succeeded',
+      metadata TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_scope ON audit_events(container_tag, org_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS usage_counters(
+      key_hash TEXT NOT NULL,
+      container_tag TEXT NOT NULL,
+      org_id TEXT NOT NULL,
+      requests INTEGER NOT NULL DEFAULT 0,
+      searches INTEGER NOT NULL DEFAULT 0,
+      document_writes INTEGER NOT NULL DEFAULT 0,
+      fact_writes INTEGER NOT NULL DEFAULT 0,
+      input_chars INTEGER NOT NULL DEFAULT 0,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      PRIMARY KEY(key_hash, container_tag, org_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_updated ON usage_counters(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_scope ON usage_counters(container_tag, org_id, updated_at DESC);
+    """,
 )
 
 
@@ -303,6 +335,11 @@ def _hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def hash_key(raw: str) -> str:
+    """Return the non-reversible identifier used for local accounting records."""
+    return _hash_key(raw)
+
+
 def create_api_key(
     db: sqlite3.Connection, *, container_tag: str | None = None, org_id: str | None = None
 ) -> str:
@@ -321,7 +358,7 @@ def lookup_key(db: sqlite3.Connection, raw: str) -> dict[str, Any] | None:
     if db.execute("SELECT 1 FROM revoked_keys WHERE key_hash = ?", (h,)).fetchone() is not None:
         return None
     row = db.execute(
-        "SELECT container_tag, org_id FROM api_keys WHERE key_hash = ?", (h,)
+        "SELECT key_hash, container_tag, org_id FROM api_keys WHERE key_hash = ?", (h,)
     ).fetchone()
     if row is None:
         return None
@@ -367,3 +404,202 @@ def purge_tag(
     keys = db.execute(f"DELETE FROM api_keys WHERE {where}", params).rowcount
     db.commit()
     return {"facts": facts, "documents": docs, "keys": keys}
+
+
+_USAGE_COLUMNS = {
+    "request": None,
+    "search": "searches",
+    "document": "document_writes",
+    "fact": "fact_writes",
+}
+
+
+def _scope_value(value: str | None) -> str:
+    return value or ""
+
+
+def _scope_filter(
+    *, container_tag: str | None, org_id: str | None, prefix: str = ""
+) -> tuple[str, list[Any]]:
+    conditions: list[str] = []
+    params: list[Any] = []
+    if container_tag is not None:
+        conditions.append(f"{prefix}container_tag = ?")
+        params.append(_scope_value(container_tag))
+    if org_id is not None:
+        conditions.append(f"{prefix}org_id = ?")
+        params.append(_scope_value(org_id))
+    return (" AND ".join(conditions), params)
+
+
+def record_usage(
+    db: sqlite3.Connection,
+    *,
+    key_hash: str | None,
+    container_tag: str | None,
+    org_id: str | None,
+    operation: str,
+    units: int = 1,
+    input_chars: int = 0,
+) -> None:
+    """Increment one local per-key usage row; no data leaves the process."""
+    if operation not in _USAGE_COLUMNS:
+        raise ValueError(f"unknown usage operation: {operation}")
+    if units < 0 or input_chars < 0:
+        raise ValueError("usage units and input_chars must be non-negative")
+    counter_column = _USAGE_COLUMNS[operation]
+    now = _now()
+    key = _scope_value(key_hash) or "anonymous"
+    tag = _scope_value(container_tag)
+    org = _scope_value(org_id)
+    values: dict[str, int] = {
+        "requests": units,
+        "searches": 0,
+        "document_writes": 0,
+        "fact_writes": 0,
+        "input_chars": input_chars,
+    }
+    if counter_column is not None:
+        values[counter_column] = units
+    db.execute(
+        """
+        INSERT INTO usage_counters(
+          key_hash, container_tag, org_id, requests, searches,
+          document_writes, fact_writes, input_chars, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(key_hash, container_tag, org_id) DO UPDATE SET
+          requests = requests + excluded.requests,
+          searches = searches + excluded.searches,
+          document_writes = document_writes + excluded.document_writes,
+          fact_writes = fact_writes + excluded.fact_writes,
+          input_chars = input_chars + excluded.input_chars,
+          updated_at = excluded.updated_at
+        """,
+        (
+            key,
+            tag,
+            org,
+            values["requests"],
+            values["searches"],
+            values["document_writes"],
+            values["fact_writes"],
+            values["input_chars"],
+            now,
+            now,
+        ),
+    )
+    db.commit()
+
+
+def list_usage(
+    db: sqlite3.Connection,
+    *,
+    container_tag: str | None = None,
+    org_id: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    clause = f" WHERE {where}" if where else ""
+    rows = db.execute(
+        "SELECT key_hash, container_tag, org_id, requests, searches, document_writes,"
+        " fact_writes, input_chars, created_at, updated_at"
+        f" FROM usage_counters{clause}"
+        " ORDER BY updated_at DESC, key_hash LIMIT ? OFFSET ?",
+        [*params, max(1, min(limit, 500)), max(0, offset)],
+    ).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["container_tag"] = item["container_tag"] or None
+        item["org_id"] = item["org_id"] or None
+        out.append(item)
+    return out
+
+
+def count_usage(
+    db: sqlite3.Connection, *, container_tag: str | None = None, org_id: str | None = None
+) -> int:
+    where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    clause = f" WHERE {where}" if where else ""
+    return int(
+        db.execute(f"SELECT COUNT(*) AS n FROM usage_counters{clause}", params).fetchone()["n"]
+    )
+
+
+def append_audit_event(
+    db: sqlite3.Connection,
+    *,
+    actor_kind: str,
+    actor_key_hash: str | None,
+    container_tag: str | None,
+    org_id: str | None,
+    action: str,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    outcome: str = "succeeded",
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Append an accountability event without storing credentials or payloads."""
+    if actor_kind not in {"admin", "key", "anonymous"}:
+        raise ValueError(f"unknown audit actor kind: {actor_kind}")
+    event_id = uuid.uuid4().hex
+    db.execute(
+        """
+        INSERT INTO audit_events(
+          id, created_at, actor_kind, actor_key_hash, container_tag, org_id,
+          action, resource_type, resource_id, outcome, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            _now(),
+            actor_kind,
+            # Hash again at the persistence boundary in case a caller passes a raw value.
+            hashlib.sha256(actor_key_hash.encode()).hexdigest()[:16] if actor_key_hash else None,
+            container_tag,
+            org_id,
+            action,
+            resource_type,
+            resource_id,
+            outcome,
+            json.dumps(metadata or {}, separators=(",", ":")),
+        ),
+    )
+    db.commit()
+    return event_id
+
+
+def list_audit_events(
+    db: sqlite3.Connection,
+    *,
+    container_tag: str | None = None,
+    org_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    clause = f" WHERE {where}" if where else ""
+    rows = db.execute(
+        "SELECT id, created_at, actor_kind, actor_key_hash, container_tag, org_id, action,"
+        " resource_type, resource_id, outcome, metadata"
+        f" FROM audit_events{clause}"
+        " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+        [*params, max(1, min(limit, 200)), max(0, offset)],
+    ).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["metadata"] = json.loads(item["metadata"] or "{}")
+        out.append(item)
+    return out
+
+
+def count_audit_events(
+    db: sqlite3.Connection, *, container_tag: str | None = None, org_id: str | None = None
+) -> int:
+    where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    clause = f" WHERE {where}" if where else ""
+    return int(
+        db.execute(f"SELECT COUNT(*) AS n FROM audit_events{clause}", params).fetchone()["n"]
+    )

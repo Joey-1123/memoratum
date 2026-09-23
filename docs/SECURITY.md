@@ -25,6 +25,8 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
   Protect the file (`chmod 600`, encrypted volume for sensitive use).
 - API keys are stored as SHA-256 hashes. Secrets/keys travel only via env and
   are never logged.
+- Audit events and usage counters stay in the local SQLite file as operational
+  accountability; they are not sent to an external service.
 - Contradictions supersede facts (history kept). True erasure exists too:
   `DELETE /v4/memories/{id}`, `DELETE /v4/tags/{tag}`, and key revocation via
   `POST /v4/keys/revoke` — use these for secret spills and erasure requests.
