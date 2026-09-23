@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-23
+### Changed
+- Dashboard theme rebuilt on Obsidian's variable architecture (sample-template
+  derived): full dark + light themes with toggle, size/radius/type scales
+
 ## [0.10.0] - 2026-09-23
 ### Changed
 - Dashboard de-slopped: SVG ribbon icons, button press/hover physics, refined
