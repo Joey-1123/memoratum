@@ -1,22 +1,39 @@
 import { useState } from "react";
 import { CommandPalette } from "./components/CommandPalette";
 import { KeyField } from "./components/KeyField";
+import { Explorer } from "./shell/Explorer";
 import { Shell } from "./shell/Shell";
 import { TagSwitcher } from "./shell/TagSwitcher";
 import { useServerStatus } from "./shell/useServerStatus";
 import { ExportView } from "./views/ExportView";
 import { GraphPanel } from "./views/Inspector";
 import { ImportView } from "./views/ImportView";
+import { NotePane } from "./views/NotePane";
 import { SearchView } from "./views/SearchView";
 import { TagsView } from "./views/TagsView";
 
-type View = "tags" | "graph" | "search" | "import" | "export";
+type View = "tags" | "graph" | "search" | "import" | "export" | "note";
 
 export function App() {
   const [view, setView] = useState<View>("tags");
   const [tag, setTag] = useState("default");
   const [keyEpoch, setKeyEpoch] = useState(0);
+  const [notes, setNotes] = useState<string[]>([]);
+  const [activeNote, setActiveNote] = useState<string | null>(null);
   const status = useServerStatus(tag, keyEpoch);
+
+  const openNote = (subject: string) => {
+    setNotes((n) => (n.includes(subject) ? n : [...n, subject].slice(-8)));
+    setActiveNote(subject);
+    setView("note");
+  };
+  const closeNote = (subject: string) => {
+    setNotes((n) => {
+      const rest = n.filter((x) => x !== subject);
+      if (activeNote === subject) setActiveNote(rest[rest.length - 1] ?? null);
+      return rest;
+    });
+  };
 
   return (
     <>
@@ -42,6 +59,7 @@ export function App() {
                 setView("graph");
               }}
             />
+            <Explorer tag={tag} onOpen={openNote} />
             <section aria-label="Session">
               <h2>Session</h2>
               <KeyField onChange={() => setKeyEpoch((n) => n + 1)} />
@@ -60,6 +78,28 @@ export function App() {
         }
       >
         <div key={keyEpoch}>
+          {notes.length > 0 && (
+            <div role="tablist" aria-label="Open notes" style={{ display: "flex", gap: "0.25rem", marginBottom: "0.5rem" }}>
+              {notes.map((n) => (
+                <span key={n} style={{ display: "inline-flex" }}>
+                  <button
+                    role="tab"
+                    aria-selected={view === "note" && activeNote === n}
+                    onClick={() => {
+                      setActiveNote(n);
+                      setView("note");
+                    }}
+                    title={n}
+                  >
+                    {n.length > 24 ? `${n.slice(0, 24)}…` : n}
+                  </button>
+                  <button aria-label={`Close ${n}`} onClick={() => closeNote(n)}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           {view === "tags" && (
             <TagsView
               onSelect={(t) => {
@@ -68,7 +108,7 @@ export function App() {
               }}
             />
           )}
-          {view === "graph" && <GraphPanel key={tag} tag={tag} />}
+          {view === "graph" && <GraphPanel key={tag} tag={tag} onOpenNote={openNote} />}
           {view === "search" && <SearchView key={`s-${tag}`} tag={tag} />}
           {view === "import" && (
             <ImportView
@@ -79,6 +119,15 @@ export function App() {
             />
           )}
           {view === "export" && <ExportView key={`e-${tag}`} tag={tag} />}
+          {view === "note" && activeNote && (
+            <NotePane
+              key={`${tag}:${activeNote}`}
+              tag={tag}
+              subject={activeNote}
+              onOpen={openNote}
+              onHover={() => {}}
+            />
+          )}
         </div>
       </Shell>
     </>
