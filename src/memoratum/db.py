@@ -97,6 +97,10 @@ _MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
     """,
+    """
+    ALTER TABLE documents ADD COLUMN expires_at REAL;
+    ALTER TABLE facts ADD COLUMN expires_at REAL;
+    """,
 )
 
 
@@ -133,6 +137,7 @@ def create_document(
     content: str,
     custom_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    expires_at: float | None = None,
 ) -> dict[str, Any]:
     now = _now()
     meta = json.dumps(metadata or {})
@@ -143,18 +148,18 @@ def create_document(
         ).fetchone()
         if row is not None:
             db.execute(
-                "UPDATE documents SET content = ?, status = 'queued', updated_at = ?, metadata = ?, dreamed_at = NULL"
-                " WHERE id = ?",
-                (content, now, meta, row["id"]),
+                "UPDATE documents SET content = ?, status = 'queued', updated_at = ?, metadata = ?, dreamed_at = NULL,"
+                " expires_at = ? WHERE id = ?",
+                (content, now, meta, expires_at, row["id"]),
             )
             db.execute("DELETE FROM chunks WHERE document_id = ?", (row["id"],))
             db.commit()
             return get_document(db, row["id"])
     doc_id = uuid.uuid4().hex
     db.execute(
-        "INSERT INTO documents(id, container_tag, custom_id, content, status, created_at, updated_at, metadata)"
-        " VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)",
-        (doc_id, container_tag, custom_id, content, now, now, meta),
+        "INSERT INTO documents(id, container_tag, custom_id, content, status, created_at, updated_at, metadata,"
+        " expires_at) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
+        (doc_id, container_tag, custom_id, content, now, now, meta, expires_at),
     )
     db.commit()
     return get_document(db, doc_id)
@@ -257,6 +262,19 @@ def revoke_key(db: sqlite3.Connection, raw: str) -> bool:
     )
     db.commit()
     return True
+
+
+def prune_expired(conn: sqlite3.Connection) -> dict[str, int]:
+    """Hard-delete expired documents (chunks cascade) and facts. Returns counts."""
+    now = time.time()
+    facts = conn.execute(
+        "DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
+    ).rowcount
+    docs = conn.execute(
+        "DELETE FROM documents WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
+    ).rowcount
+    conn.commit()
+    return {"facts": facts, "documents": docs}
 
 
 def purge_tag(db: sqlite3.Connection, container_tag: str) -> dict[str, int]:

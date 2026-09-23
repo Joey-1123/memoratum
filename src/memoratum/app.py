@@ -35,6 +35,7 @@ class DocumentIn(BaseModel):
     customId: str | None = None
     dreaming: Literal["dynamic", "instant"] = "dynamic"
     metadata: dict[str, Any] | None = None
+    expires_at: float | None = None
 
 
 class SearchIn(BaseModel):
@@ -68,6 +69,7 @@ class FactIn(BaseModel):
     metadata: dict[str, Any] | None = None
     supersede: bool = True
     skipEmbedding: bool = False
+    expires_at: float | None = None
 
 
 class ImportIn(BaseModel):
@@ -251,6 +253,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             content=doc.content,
             custom_id=doc.customId,
             metadata=doc.metadata,
+            expires_at=doc.expires_at,
         )
         job_id = jobs.enqueue(
             conn,
@@ -387,6 +390,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             document_id=None,
             metadata=body.metadata,
             supersede=body.supersede,
+            expires_at=body.expires_at,
         )
         try:
             if not body.skipEmbedding:

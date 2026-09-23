@@ -23,6 +23,7 @@ def add_fact(
     document_id: str | None,
     metadata: dict[str, Any] | None = None,
     supersede: bool = True,
+    expires_at: float | None = None,
 ) -> dict[str, Any]:
     """Add a fact. Same (s,p,o) re-asserts (reviving a superseded row).
     Same (s,p) with a different object supersedes live rows only when
@@ -48,7 +49,7 @@ def add_fact(
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"
-        " superseded_by, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+        " superseded_by, created_at, metadata, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
         (
             fact_id,
             container_tag,
@@ -59,6 +60,7 @@ def add_fact(
             now,
             now,
             json.dumps(metadata or {}),
+            expires_at,
         ),
     )
     for row in current:
@@ -100,14 +102,16 @@ def list_facts(
     include_superseded: bool = False,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    now = time.time()
     if include_superseded:
         rows = conn.execute(
             "SELECT * FROM facts WHERE container_tag = ? ORDER BY created_at", (container_tag,)
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM facts WHERE container_tag = ? AND valid_to IS NULL ORDER BY created_at",
-            (container_tag,),
+            "SELECT * FROM facts WHERE container_tag = ? AND valid_to IS NULL"
+            " AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at",
+            (container_tag, now),
         ).fetchall()
     out = []
     for r in rows:

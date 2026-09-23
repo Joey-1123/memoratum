@@ -109,11 +109,13 @@ def search(
     texts: dict[str, str] = {}
     kinds: dict[str, str] = {}
     stamped: dict[str, float] = {}
+    now = time.time()
     if want_chunks:
         rows = conn.execute(
             "SELECT c.id, c.text, c.embedding, c.created_at, d.metadata FROM chunks c"
-            " JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?",
-            (container_tag,),
+            " JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?"
+            " AND (d.expires_at IS NULL OR d.expires_at > ?)",
+            (container_tag, now),
         ).fetchall()
         for r in rows:
             if not _matches(json.loads(r["metadata"] or "{}")):
