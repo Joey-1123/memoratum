@@ -24,6 +24,7 @@ from memoratum import db
 from memoratum.embeddings import Embedder
 from memoratum.facts import list_facts
 from memoratum.rerank import STOPWORDS, HeuristicReranker, Reranker
+from memoratum.vectorstore import VectorStore
 
 _RRF_K = 60
 
@@ -100,6 +101,7 @@ def search(
     filters: dict[str, Any] | None = None,
     rerank: bool = False,
     reranker: Reranker | None = None,
+    vector_store: VectorStore | None = None,
 ) -> list[dict[str, Any]]:
     want_chunks = search_mode in ("hybrid", "documents")
     want_facts = search_mode in ("hybrid", "memories")
@@ -143,8 +145,34 @@ def search(
 
     scores: dict[str, float] = {}
     vec_items: list[tuple[str, list[float]]] = []
+    qvec: list[float] | None = None
+    store_ranked: list[tuple[str, float]] = []
+    if vector_store is not None and want_chunks:
+        try:
+            qvec = embedder.embed([query])[0]
+            store_hits = vector_store.query(
+                qvec,
+                container_tag=container_tag,
+                org_id=org_id,
+                limit=max(limit * 3, keyword_limit),
+                filters=filters,
+            )
+            for hit in store_hits:
+                key = f"chunk_{hit.id}"
+                if key not in texts or not _matches(hit.metadata):
+                    continue
+                if hit.text:
+                    texts[key] = hit.text
+                stamped.setdefault(key, hit.created_at or now)
+                store_ranked.append((key, hit.score))
+        except Exception:  # noqa: BLE001 — an unavailable index falls back to SQLite search
+            store_ranked = []
+    store_ranked.sort(key=lambda item: item[1], reverse=True)
+    for rank, (key, _similarity) in enumerate(store_ranked, start=1):
+        scores[key] = scores.get(key, 0.0) + 0.6 / (_RRF_K + rank)
+
     chunk_keys = [k for k in texts if kinds[k] == "chunk"]
-    if chunk_keys:
+    if chunk_keys and not store_ranked:
         chunk_embs = embedder.embed([texts[k] for k in chunk_keys])
         vec_items.extend(zip(chunk_keys, chunk_embs, strict=True))
     if want_facts and fact_list:
@@ -161,7 +189,8 @@ def search(
             if f.get("embedding") is not None:
                 vec_items.append((f"mem_{f['id']}", _unpack(bytes(f["embedding"]))))
     if texts:
-        qvec = embedder.embed([query])[0]
+        if qvec is None:
+            qvec = embedder.embed([query])[0]
         vec_ranked = sorted(
             ((key, _cosine(qvec, emb)) for key, emb in vec_items),
             key=lambda t: t[1],

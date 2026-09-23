@@ -28,6 +28,7 @@ from memoratum.facts import list_facts
 from memoratum.llm import build_chat
 from memoratum.rerank import build_reranker
 from memoratum.search import expand_query, merge_hits, pack_vector, search
+from memoratum.vectorstore import build_vector_store as build_provider_vector_store
 
 
 class DocumentIn(BaseModel):
@@ -105,6 +106,18 @@ def build_embedder(settings: Settings) -> Embedder:
         model=settings.embeddings_model,
         api_key=os.environ.get("MEMORATUM_EMBEDDINGS_KEY", ""),
         dims=settings.embeddings_dims,
+    )
+
+
+def build_vector_store(settings: Settings, conn: sqlite3.Connection | None = None):
+    return build_provider_vector_store(
+        settings.vector_store,
+        conn=conn,
+        endpoint=settings.vector_store_endpoint,
+        path=settings.vector_store_path,
+        api_key=os.environ.get("MEMORATUM_VECTOR_STORE_KEY", ""),
+        collection_name=settings.vector_store_collection,
+        dims=settings.vector_store_dims or settings.embeddings_dims,
     )
 
 
@@ -187,6 +200,10 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         )
         if settings.llm_model
         else None
+    )
+    vector_provider = settings.vector_store.strip().lower()
+    app.state.vector_store = (
+        None if vector_provider in {"", "sqlite", "local"} else build_vector_store(settings)
     )
     _ensure_boot_key(settings)
     dashboard_index = os.path.join(settings.dashboard_dir, "index.html")
@@ -545,6 +562,9 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             if query.rewriteQuery and app.state.llm is not None
             else [query.q]
         )
+        vector_store = app.state.vector_store
+        if vector_store is None and vector_provider in {"", "sqlite", "local"}:
+            vector_store = build_vector_store(settings, conn)
         batches = [
             search(
                 conn,
@@ -558,6 +578,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 filters=query.filters,
                 rerank=query.rerank,
                 reranker=app.state.reranker,
+                vector_store=vector_store,
             )
             for q in queries
         ]
