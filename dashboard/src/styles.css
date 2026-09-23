@@ -1,3 +1,11 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background-primary);
+  --color-border: var(--background-modifier-border);
+  --color-accent: var(--interactive-accent);
+}
+
 /* Memoratum console theme — token architecture adapted from the official
  * Obsidian sample theme (https://github.com/obsidianmd/obsidian-sample-theme,
  * ISC-licensed) to Obsidian's public CSS variable scheme. `.theme-dark` is
