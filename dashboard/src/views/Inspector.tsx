@@ -13,7 +13,7 @@ export interface Selection {
   facts: GraphFact[];
 }
 
-export function Inspector({ tag, selection, onClose }: { tag: string; selection: Selection; onClose: () => void }) {
+export function Inspector({ tag, selection, onClose, onOpenNote }: { tag: string; selection: Selection; onClose: () => void; onOpenNote: (s: string) => void }) {
   const [tab, setTab] = useState<"ai" | "relations" | "history" | "provenance">("ai");
   const [recall, setRecall] = useState("");
   const [loading, setLoading] = useState(false);
@@ -42,6 +42,7 @@ export function Inspector({ tag, selection, onClose }: { tag: string; selection:
     <aside className="card" aria-label={`Details for ${selection.node}`} role="complementary">
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
         <h3 style={{ margin: 0, flex: 1 }}>{selection.node}</h3>
+        <button onClick={() => onOpenNote(selection.node)}>Open note</button>
         <button onClick={onClose} aria-label="Close details">
           ×
         </button>
@@ -99,7 +100,7 @@ export function Inspector({ tag, selection, onClose }: { tag: string; selection:
   );
 }
 
-export function GraphPanel({ tag }: { tag: string }) {
+export function GraphPanel({ tag, onOpenNote }: { tag: string; onOpenNote: (s: string) => void }) {
   const [facts, setFacts] = useState<GraphFact[]>([]);
   const [error, setError] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -144,7 +145,7 @@ export function GraphPanel({ tag }: { tag: string }) {
           />
         )}
       {selection ? (
-        <Inspector tag={tag} selection={selection} onClose={() => setSelection(null)} />
+        <Inspector tag={tag} selection={selection} onClose={() => setSelection(null)} onOpenNote={onOpenNote} />
       ) : (
         <div className="card" role="status">
           <h3>Nothing selected</h3>

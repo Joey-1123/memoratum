@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-23
+### Added
+- Obsidian-style console shell: ribbon, explorer tree, note tabs, live
+  status bar, vault tag switcher
+- Note pane with wikilinks, backlinks, history, and hover preview cards
+- Graph selection opens notes; shared selection state across views
+
 ## [0.8.0] - 2026-09-22
 ### Added
 - Background worker (`python -m memoratum.worker`, compose service):
