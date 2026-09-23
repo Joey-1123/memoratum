@@ -25,6 +25,11 @@ class Settings:
     llm_endpoint: str
     llm_model: str
     llm_provider: str
+    vector_store: str
+    vector_store_endpoint: str
+    vector_store_path: str
+    vector_store_collection: str
+    vector_store_dims: int
     dashboard_dir: str
 
     @classmethod
@@ -33,6 +38,10 @@ class Settings:
             dims = int(_get("MEMORATUM_EMBEDDINGS_DIMS", "0") or 0)
         except ValueError:
             raise ValueError("MEMORATUM_EMBEDDINGS_DIMS must be an integer") from None
+        try:
+            vector_dims = int(_get("MEMORATUM_VECTOR_STORE_DIMS", "0") or 0)
+        except ValueError:
+            raise ValueError("MEMORATUM_VECTOR_STORE_DIMS must be an integer") from None
         return cls(
             data_dir=_get("MEMORATUM_DATA_DIR", os.path.join(os.getcwd(), ".memoratum-data")),
             api_key=_get("MEMORATUM_API_KEY", ""),
@@ -43,6 +52,11 @@ class Settings:
             llm_endpoint=_get("MEMORATUM_LLM_ENDPOINT", ""),
             llm_model=_get("MEMORATUM_LLM_MODEL", ""),
             llm_provider=_get("MEMORATUM_LLM_PROVIDER", "openai"),
+            vector_store=_get("MEMORATUM_VECTOR_STORE", "sqlite"),
+            vector_store_endpoint=_get("MEMORATUM_VECTOR_STORE_ENDPOINT", ""),
+            vector_store_path=_get("MEMORATUM_VECTOR_STORE_PATH", ""),
+            vector_store_collection=_get("MEMORATUM_VECTOR_STORE_COLLECTION", "memoratum"),
+            vector_store_dims=vector_dims,
             dashboard_dir=_get(
                 "MEMORATUM_DASHBOARD_DIR",
                 os.path.join(
