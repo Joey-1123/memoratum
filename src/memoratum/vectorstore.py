@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 import struct
 import time
@@ -637,6 +638,198 @@ class ChromaVectorStore:
             close()
 
 
+class PgVectorStore:
+    """Postgres/pgvector adapter using cosine distance and scoped SQL predicates."""
+
+    name = "pgvector"
+
+    def __init__(
+        self,
+        connection: Any | None = None,
+        *,
+        dsn: str = "",
+        dims: int = 0,
+        table: str = "memoratum_vectors",
+    ) -> None:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+            raise ValueError("pgvector table must be a simple SQL identifier")
+        self.conn = connection if connection is not None else self._load_connection(dsn)
+        self.dims = dims
+        self.table = table
+        self._ready = False
+
+    @staticmethod
+    def _load_connection(dsn: str) -> Any:
+        if not dsn:
+            raise ValueError("pgvector requires a database connection or DSN")
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise ProviderUnavailable(
+                "the psycopg package is not installed; install the pgvector extra"
+            ) from exc
+        return psycopg.connect(dsn)
+
+    @staticmethod
+    def _vector_literal(vector: Sequence[float]) -> str:
+        return json.dumps([float(value) for value in vector], separators=(",", ":"))
+
+    def _ensure_schema(self) -> None:
+        if self._ready:
+            return
+        cursor = self.conn.cursor()
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        vector_type = f"vector({self.dims})" if self.dims else "vector"
+        cursor.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.table}(
+              id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              text TEXT NOT NULL,
+              embedding {vector_type} NOT NULL,
+              container_tag TEXT NOT NULL,
+              org_id TEXT,
+              metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+              created_at DOUBLE PRECISION NOT NULL
+            )
+            """
+        )
+        self.conn.commit()
+        self._ready = True
+
+    def upsert(self, records: Sequence[VectorRecord]) -> None:
+        if not records:
+            return
+        self._ensure_schema()
+        cursor = self.conn.cursor()
+        for record in records:
+            if self.dims and len(record.vector) != self.dims:
+                raise ValueError(
+                    f"vector dimension mismatch: expected {self.dims}, got {len(record.vector)}"
+                )
+            if not self.dims:
+                self.dims = len(record.vector)
+            cursor.execute(
+                f"""
+                INSERT INTO {self.table}(
+                  id, kind, text, embedding, container_tag, org_id, metadata, created_at
+                ) VALUES (%s, %s, %s, %s::vector, %s, %s, %s::jsonb, %s)
+                ON CONFLICT(id) DO UPDATE SET
+                  kind = EXCLUDED.kind,
+                  text = EXCLUDED.text,
+                  embedding = EXCLUDED.embedding,
+                  container_tag = EXCLUDED.container_tag,
+                  org_id = EXCLUDED.org_id,
+                  metadata = EXCLUDED.metadata,
+                  created_at = EXCLUDED.created_at
+                """,
+                (
+                    record.id,
+                    record.kind,
+                    record.text,
+                    self._vector_literal(record.vector),
+                    record.container_tag,
+                    record.org_id,
+                    json.dumps(record.metadata or {}, separators=(",", ":")),
+                    record.created_at or time.time(),
+                ),
+            )
+        self.conn.commit()
+
+    @staticmethod
+    def _row_value(row: Any, index: int, name: str, default: Any = None) -> Any:
+        if isinstance(row, dict):
+            return row.get(name, default)
+        return getattr(row, name, row[index]) if not isinstance(row, (tuple, list)) else row[index]
+
+    def query(
+        self,
+        vector: Sequence[float],
+        *,
+        container_tag: str,
+        org_id: str | None = None,
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+    ) -> list[VectorHit]:
+        self._ensure_schema()
+        conditions = ["container_tag = %s"]
+        query_params: list[Any] = [self._vector_literal(vector), container_tag]
+        if org_id is not None:
+            conditions.append("org_id = %s")
+            query_params.append(org_id)
+        query_params.extend([self._vector_literal(vector), max(0, limit)])
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT id, kind, text, container_tag, org_id, metadata, created_at,
+                   1 - (embedding <=> %s::vector) AS score
+            FROM {self.table}
+            WHERE {" AND ".join(conditions)}
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+            """,
+            query_params,
+        )
+        hits = []
+        for row in cursor.fetchall():
+            metadata = self._row_value(row, 5, "metadata", {})
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except ValueError:
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            if not _matches(metadata, filters):
+                continue
+            hits.append(
+                VectorHit(
+                    id=str(self._row_value(row, 0, "id")),
+                    score=float(self._row_value(row, 7, "score", 0.0) or 0.0),
+                    text=str(self._row_value(row, 2, "text", "")),
+                    kind=str(self._row_value(row, 1, "kind", "")),
+                    container_tag=str(self._row_value(row, 3, "container_tag", "")),
+                    org_id=self._row_value(row, 4, "org_id"),
+                    metadata=metadata,
+                    created_at=float(self._row_value(row, 6, "created_at", 0.0) or 0.0),
+                )
+            )
+        return hits
+
+    def delete(
+        self,
+        *,
+        ids: Sequence[str] | None = None,
+        container_tag: str | None = None,
+        org_id: str | None = None,
+    ) -> int:
+        self._ensure_schema()
+        if ids is not None:
+            if not ids:
+                return 0
+            placeholders = ",".join("%s" for _ in ids)
+            query = f"DELETE FROM {self.table} WHERE id IN ({placeholders})"
+            params: list[Any] = list(ids)
+        elif container_tag is not None:
+            query = f"DELETE FROM {self.table} WHERE container_tag = %s"
+            params = [container_tag]
+            if org_id is not None:
+                query += " AND org_id = %s"
+                params.append(org_id)
+        else:
+            raise ValueError("delete requires ids or a container tag")
+        cursor = self.conn.cursor()
+        cursor.execute(query, params)
+        deleted = cursor.rowcount
+        if callable(deleted):
+            deleted = deleted()
+        self.conn.commit()
+        return int(deleted or 0)
+
+    def close(self) -> None:
+        self.conn.close()
+
+
 def build_vector_store(
     provider: str,
     *,
@@ -673,5 +866,12 @@ def build_vector_store(
             endpoint=endpoint,
             path=path,
             api_key=api_key,
+        )
+    if normalized in {"pgvector", "postgres"}:
+        return PgVectorStore(
+            client,
+            dsn=endpoint,
+            dims=dims,
+            table=collection_name,
         )
     raise ValueError(f"unknown vector store: {provider}")

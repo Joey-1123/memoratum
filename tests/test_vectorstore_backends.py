@@ -176,3 +176,4 @@ def test_backend_factory_selects_injected_clients() -> None:
         build_vector_store("chroma", conn=None, client=client, collection_name="c"),
         ChromaVectorStore,
     )
+    assert build_vector_store("pgvector", conn=None, client=client).name == "pgvector"
