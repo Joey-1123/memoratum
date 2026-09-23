@@ -66,7 +66,11 @@ export function TagsView({ onSelect }: { onSelect: (tag: string) => void }) {
       {!loading && !error && profiles.length === 0 && (
         <div role="status" className="card">
           <h3>No tags loaded</h3>
-          <p className="muted">Enter a container tag above, or ingest documents via the API first.</p>
+          <p className="muted">
+            Type a container tag above (e.g. <span className="mono">graphify:lunee</span>) and press
+            Load — or ingest your first document with{" "}
+            <span className="mono">POST /v3/documents</span>.
+          </p>
         </div>
       )}
       <div className="grid">
@@ -79,10 +83,10 @@ export function TagsView({ onSelect }: { onSelect: (tag: string) => void }) {
             transition={{ duration: 0.25, delay: i * 0.05 }}
           >
             <h3 className="mono">{p.containerTag}</h3>
-            <p className="stat">
+            <p className="stat num">
               {p.stats.facts} <span className="muted" style={{ fontSize: "0.85rem" }}>facts</span>
             </p>
-            <p className="muted">
+            <p className="muted num">
               {p.stats.documents} documents · {p.stats.chunks} chunks
             </p>
             <button onClick={() => onSelect(p.containerTag)}>Open graph</button>

@@ -1,8 +1,9 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { GraphFact } from "../types";
 import { useTimeScrub } from "../components/TimeScrub";
 import { GraphView } from "./GraphView";
+import { Legend } from "./Legend";
 
 const ThreeGraphView = lazy(() =>
   import("./ThreeGraphView").then((m) => ({ default: m.ThreeGraphView }))
@@ -67,14 +68,15 @@ export function Inspector({ tag, selection, onClose, onOpenNote }: { tag: string
         </div>
       )}
       {tab === "relations" && (
-        <ul>
+        <dl style={{ margin: 0 }}>
           {current.map((f) => (
-            <li key={f.id} className="mono">
-              {f.subject} —<strong>{f.predicate}</strong>→ {f.object}
-            </li>
+            <div key={f.id} style={{ display: "flex", gap: "0.5rem", padding: "0.2rem 0", borderBottom: "1px solid var(--border)" }}>
+              <dt className="mono" style={{ color: "var(--accent-dim)", minWidth: 88 }}>{f.predicate}</dt>
+              <dd className="mono" style={{ margin: 0, overflowWrap: "anywhere" }}>{f.object}</dd>
+            </div>
           ))}
-          {current.length === 0 && <li className="muted">No live relations.</li>}
-        </ul>
+          {current.length === 0 && <p className="muted">No live relations.</p>}
+        </dl>
       )}
       {tab === "history" && (
         <ul>
@@ -115,6 +117,10 @@ export function GraphPanel({ tag, onOpenNote }: { tag: string; onOpenNote: (s: s
   }, [tag]);
 
   const { visible, scrubber } = useTimeScrub(facts);
+  const predicates = useMemo(
+    () => [...new Set(visible.map((f) => f.predicate))].sort(),
+    [visible]
+  );
 
   if (error)
     return (
@@ -130,6 +136,7 @@ export function GraphPanel({ tag, onOpenNote }: { tag: string; onOpenNote: (s: s
           {mode3d ? "2D graph" : "3D present"}
         </button>
       </div>
+      {!mode3d && <Legend predicates={predicates} />}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "1rem" }}>
         {mode3d ? (
           <Suspense fallback={<div className="skeleton" aria-label="Loading 3D view" />}>

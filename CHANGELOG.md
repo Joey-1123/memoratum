@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-23
+### Changed
+- Dashboard de-slopped: SVG ribbon icons, button press/hover physics, refined
+  focus rings, restrained community palette (goodbye rainbow), degree sizing,
+  predicate-colored edges with legend, hover neighbor focus, type scale with
+  tabular numbers, dense inspector rows, guided empty states
+
 ## [0.9.0] - 2026-09-23
 ### Added
 - Obsidian-style console shell: ribbon, explorer tree, note tabs, live

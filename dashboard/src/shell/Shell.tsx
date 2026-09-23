@@ -1,13 +1,18 @@
 import type { ReactNode } from "react";
+import { ExportIcon } from "./icons";
+import { GraphIcon } from "./icons";
+import { ImportIcon } from "./icons";
+import { SearchIcon } from "./icons";
+import { TagsIcon } from "./icons";
 import type { ServerStatus } from "./useServerStatus";
 
-const RIBBON: Array<{ id: string; label: string; icon: string }> = [
-  { id: "tags", label: "Tags", icon: "◫" },
-  { id: "graph", label: "Graph", icon: "◉" },
-  { id: "search", label: "Search", icon: "⌕" },
-  { id: "import", label: "Import", icon: "⤓" },
-  { id: "export", label: "Export", icon: "⤒" },
-];
+const RIBBON = [
+  { id: "tags", label: "Tags", Icon: TagsIcon },
+  { id: "graph", label: "Graph", Icon: GraphIcon },
+  { id: "search", label: "Search", Icon: SearchIcon },
+  { id: "import", label: "Import", Icon: ImportIcon },
+  { id: "export", label: "Export", Icon: ExportIcon },
+] as const;
 
 export function Shell({
   view,
@@ -33,9 +38,9 @@ export function Shell({
             aria-label={item.label}
             aria-current={view === item.id ? "page" : undefined}
             title={item.label}
-            onClick={() => onView(item.id as "tags")}
+            onClick={() => onView(item.id)}
           >
-            <span aria-hidden="true">{item.icon}</span>
+            <item.Icon label="" />
           </button>
         ))}
       </div>
