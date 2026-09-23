@@ -18,6 +18,12 @@ llm = [
 embeddings = [
     "fastembed>=0.8.1,<1",
 ]
+qdrant = [
+    "qdrant-client>=1.19.1,<2",
+]
+chroma = [
+    "chromadb>=1.5.9,<2",
+]
 
 [dependency-groups]
 dev = [
