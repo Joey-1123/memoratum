@@ -89,6 +89,17 @@ Purges the tag's documents (chunks cascade), facts, and keys. Admin or a scoped 
 `{id, kind, status, attempts, result, error}`. Requires valid credentials;
 out-of-scope jobs read as 404 (tag resolved from the payload's document or tag).
 
+## `GET /v4/audit?containerTag=&org_id=&limit=&offset=` → 200 | 401 | 403
+
+Administrator-only, paginated local accountability events. Events contain
+fingerprints and resource identifiers, never raw keys, content, request bodies,
+or IP addresses.
+
+## `GET /v4/usage?containerTag=&org_id=&limit=&offset=` → 200 | 401 | 403
+
+Administrator-only cumulative counters for each local key fingerprint and
+scope: requests, searches, document writes, fact writes, and input characters.
+
 ## `GET /health` → 200
 
 `{ok: true}`. Unauthenticated by design (load-balancer checks).
