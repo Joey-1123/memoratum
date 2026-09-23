@@ -19,6 +19,7 @@ def test_env_overrides() -> None:
     os.environ["MEMORATUM_DATA_DIR"] = "/tmp/x"
     os.environ["MEMORATUM_API_KEY"] = "k"
     os.environ["MEMORATUM_EMBEDDINGS_PROVIDER"] = "api"
+    os.environ["MEMORATUM_LLM_PROVIDER"] = "litellm"
     try:
         from memoratum.config import Settings
 
@@ -26,6 +27,12 @@ def test_env_overrides() -> None:
         assert s.data_dir == "/tmp/x"
         assert s.api_key == "k"
         assert s.embeddings_provider == "api"
+        assert s.llm_provider == "litellm"
     finally:
-        for k in ("MEMORATUM_DATA_DIR", "MEMORATUM_API_KEY", "MEMORATUM_EMBEDDINGS_PROVIDER"):
+        for k in (
+            "MEMORATUM_DATA_DIR",
+            "MEMORATUM_API_KEY",
+            "MEMORATUM_EMBEDDINGS_PROVIDER",
+            "MEMORATUM_LLM_PROVIDER",
+        ):
             os.environ.pop(k, None)

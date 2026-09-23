@@ -24,6 +24,7 @@ class Settings:
     embeddings_dims: int
     llm_endpoint: str
     llm_model: str
+    llm_provider: str
     dashboard_dir: str
 
     @classmethod
@@ -41,6 +42,7 @@ class Settings:
             embeddings_dims=dims,
             llm_endpoint=_get("MEMORATUM_LLM_ENDPOINT", ""),
             llm_model=_get("MEMORATUM_LLM_MODEL", ""),
+            llm_provider=_get("MEMORATUM_LLM_PROVIDER", "openai"),
             dashboard_dir=_get(
                 "MEMORATUM_DASHBOARD_DIR",
                 os.path.join(

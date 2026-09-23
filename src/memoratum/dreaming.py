@@ -14,11 +14,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-import urllib.request
 from typing import Any
 
 from memoratum import db
 from memoratum.facts import add_fact
+from memoratum.llm import ChatModel, OpenAICompatibleChat
 
 _SYSTEM = (
     "Extract atomic facts from the text. Each fact must be a single complete claim,"
@@ -29,50 +29,11 @@ _SYSTEM = (
 )
 
 
-class ChatLLM:
-    """OpenAI-compatible chat client (works with Ollama, vLLM, proxies)."""
-
-    def __init__(
-        self, *, endpoint: str, model: str, api_key: str = "", timeout: float = 60.0
-    ) -> None:
-        self.endpoint = endpoint.rstrip("/")
-        self.model = model
-        self.api_key = api_key
-        self.timeout = timeout
-
-    def complete(self, system: str, user: str) -> str:
-        body = json.dumps(
-            {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": 0,
-            }
-        ).encode()
-        last: Exception | None = None
-        for attempt in range(3):
-            try:
-                req = urllib.request.Request(
-                    self.endpoint + "/chat/completions",
-                    data=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        **({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}),
-                    },
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=self.timeout) as res:
-                    data = json.loads(res.read().decode())
-                return str(data["choices"][0]["message"]["content"])
-            except Exception as exc:  # noqa: BLE001 — retry transient failures, raise after
-                last = exc
-                time.sleep(2**attempt)
-        raise last  # type: ignore[misc]
+class ChatLLM(OpenAICompatibleChat):
+    """Backward-compatible name for the built-in OpenAI-compatible adapter."""
 
 
-def extract_facts(llm: ChatLLM, text: str) -> list[dict[str, str]]:
+def extract_facts(llm: ChatModel, text: str) -> list[dict[str, str]]:
     """Extract validated facts; malformed LLM output yields [] (never raises)."""
     try:
         raw = llm.complete(_SYSTEM, text[:8000])
@@ -111,7 +72,7 @@ def _mark_dreamed(conn: sqlite3.Connection, doc_ids: list[str]) -> None:
     conn.commit()
 
 
-def dream_document(conn: sqlite3.Connection, llm: ChatLLM, doc_id: str) -> list[dict[str, Any]]:
+def dream_document(conn: sqlite3.Connection, llm: ChatModel, doc_id: str) -> list[dict[str, Any]]:
     """Instant mode: dream one document on its own; facts carry its id."""
     doc = db.get_document(conn, doc_id)
     stored = [
@@ -133,7 +94,7 @@ _BUDGET = 8000
 
 def dream_pending(
     conn: sqlite3.Connection,
-    llm: ChatLLM,
+    llm: ChatModel,
     *,
     mode: str = "instant",
     container_tag: str | None = None,
@@ -181,7 +142,7 @@ def dream_pending(
 
 def _dream_bundle(
     conn: sqlite3.Connection,
-    llm: ChatLLM,
+    llm: ChatModel,
     tag: str,
     org_id: str | None,
     bundle: list[tuple[str, int]],

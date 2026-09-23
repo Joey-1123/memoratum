@@ -11,6 +11,11 @@ dependencies = [
     "uvicorn[standard]>=0.53.0",
 ]
 
+[project.optional-dependencies]
+llm = [
+    "litellm>=1.102.1,<2",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",
