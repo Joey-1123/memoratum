@@ -24,16 +24,20 @@ def add_fact(
     metadata: dict[str, Any] | None = None,
     supersede: bool = True,
     expires_at: float | None = None,
+    memory_type: str = "semantic",
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     """Add a fact. Same (s,p,o) re-asserts (reviving a superseded row).
     Same (s,p) with a different object supersedes live rows only when
     supersede=True (functional relations); multi-valued relations
     (calls/contains/imports) pass supersede=False and coexist."""
     now = time.time()
+    org_clause = "org_id IS NULL" if org_id is None else "org_id = ?"
+    org_params: tuple[Any, ...] = () if org_id is None else (org_id,)
     same = conn.execute(
         "SELECT id, valid_to FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND object = ?"
-        " ORDER BY created_at DESC LIMIT 1",
-        (container_tag, subject, predicate, object),
+        f" AND {org_clause} ORDER BY created_at DESC LIMIT 1",
+        (container_tag, subject, predicate, object, *org_params),
     ).fetchone()
     if same is not None:
         if same["valid_to"] is not None:
@@ -43,13 +47,15 @@ def add_fact(
             conn.commit()
         return get_fact(conn, same["id"])
     current = conn.execute(
-        "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL",
-        (container_tag, subject, predicate),
+        "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL"
+        f" AND {org_clause}",
+        (container_tag, subject, predicate, *org_params),
     ).fetchall()
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"
-        " superseded_by, created_at, metadata, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+        " superseded_by, created_at, metadata, expires_at, memory_type, org_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)",
         (
             fact_id,
             container_tag,
@@ -61,6 +67,8 @@ def add_fact(
             now,
             json.dumps(metadata or {}),
             expires_at,
+            memory_type,
+            org_id,
         ),
     )
     for row in current:
@@ -101,18 +109,22 @@ def list_facts(
     *,
     include_superseded: bool = False,
     filters: dict[str, Any] | None = None,
+    memory_type: str | None = None,
+    org_id: str | None = None,
 ) -> list[dict[str, Any]]:
     now = time.time()
-    if include_superseded:
-        rows = conn.execute(
-            "SELECT * FROM facts WHERE container_tag = ? ORDER BY created_at", (container_tag,)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM facts WHERE container_tag = ? AND valid_to IS NULL"
-            " AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at",
-            (container_tag, now),
-        ).fetchall()
+    params: list[Any] = [container_tag]
+    where = "container_tag = ?"
+    if not include_superseded:
+        where += " AND valid_to IS NULL AND (expires_at IS NULL OR expires_at > ?)"
+        params.append(now)
+    if memory_type is not None:
+        where += " AND memory_type = ?"
+        params.append(memory_type)
+    if org_id is not None:
+        where += " AND org_id = ?"
+        params.append(org_id)
+    rows = conn.execute(f"SELECT * FROM facts WHERE {where} ORDER BY created_at", params).fetchall()
     out = []
     for r in rows:
         fact = dict(r)

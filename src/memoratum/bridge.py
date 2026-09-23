@@ -62,12 +62,24 @@ def fact_key(record: dict[str, Any]) -> tuple[str, str, str]:
     return (record["subject"], record["predicate"], record["object"])
 
 
-def sync_records(conn: sqlite3.Connection, graph: dict[str, Any], slug: str) -> dict[str, int]:
+def sync_records(
+    conn: sqlite3.Connection,
+    graph: dict[str, Any],
+    slug: str,
+    *,
+    org_id: str | None = None,
+) -> dict[str, int]:
     """Direct-DB sync (server-side import endpoint). Same semantics as sync_graph."""
     tag = f"graphify:{slug}"
     commit = str(graph.get("built_at_commit", ""))
     report = graph.get("report") or f"graphify snapshot {slug}@{commit}"
-    db.create_document(conn, container_tag=tag, content=report, custom_id=f"graphify:{slug}:report")
+    db.create_document(
+        conn,
+        container_tag=tag,
+        content=report,
+        custom_id=f"graphify:{slug}:report",
+        org_id=org_id,
+    )
     records = fact_records(graph, slug=slug, commit=commit)
     for record in records:
         add_fact(
@@ -79,10 +91,11 @@ def sync_records(conn: sqlite3.Connection, graph: dict[str, Any], slug: str) -> 
             document_id=None,
             metadata=record["metadata"],
             supersede=False,
+            org_id=org_id,
         )
     wanted = {fact_key(r) for r in records}
     deleted = 0
-    for fact in list_facts(conn, tag, include_superseded=True):
+    for fact in list_facts(conn, tag, include_superseded=True, org_id=org_id):
         key = (fact["subject"], fact["predicate"], fact["object"])
         is_graph = bool((fact.get("metadata") or {}).get("graphify"))
         if is_graph and key not in wanted and delete_fact(conn, fact["id"]):

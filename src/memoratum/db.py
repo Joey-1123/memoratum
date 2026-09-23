@@ -15,6 +15,8 @@ import time
 import uuid
 from typing import Any
 
+# Rebuild the unique key first, then restore the legacy dreaming column as a
+# separate migration so databases interrupted during the rebuild can recover.
 _MIGRATIONS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS documents(
@@ -101,6 +103,43 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE documents ADD COLUMN expires_at REAL;
     ALTER TABLE facts ADD COLUMN expires_at REAL;
     """,
+    """
+    ALTER TABLE facts ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'semantic';
+    """,
+    """
+    ALTER TABLE api_keys ADD COLUMN org_id TEXT;
+    ALTER TABLE documents ADD COLUMN org_id TEXT;
+    ALTER TABLE facts ADD COLUMN org_id TEXT;
+    """,
+    """
+    PRAGMA foreign_keys=OFF;
+    DROP TABLE IF EXISTS documents_org_scoped;
+    CREATE TABLE documents_org_scoped(
+      id TEXT PRIMARY KEY,
+      container_tag TEXT NOT NULL,
+      custom_id TEXT,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      metadata TEXT,
+      expires_at REAL,
+      org_id TEXT,
+      UNIQUE(container_tag, custom_id, org_id)
+    );
+    INSERT INTO documents_org_scoped(
+      id, container_tag, custom_id, content, status, created_at, updated_at, metadata, expires_at, org_id
+    )
+    SELECT id, container_tag, custom_id, content, status, created_at, updated_at, metadata, expires_at, org_id
+    FROM documents;
+    DROP TABLE documents;
+    ALTER TABLE documents_org_scoped RENAME TO documents;
+    CREATE INDEX IF NOT EXISTS idx_documents_tag ON documents(container_tag);
+    PRAGMA foreign_keys=ON;
+    """,
+    """
+    ALTER TABLE documents ADD COLUMN dreamed_at REAL;
+    """,
 )
 
 
@@ -138,19 +177,22 @@ def create_document(
     custom_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     expires_at: float | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     now = _now()
     meta = json.dumps(metadata or {})
     if custom_id is not None:
+        org_clause = "org_id IS NULL" if org_id is None else "org_id = ?"
+        org_params: tuple[Any, ...] = () if org_id is None else (org_id,)
         row = db.execute(
-            "SELECT id FROM documents WHERE container_tag = ? AND custom_id = ?",
-            (container_tag, custom_id),
+            f"SELECT id FROM documents WHERE container_tag = ? AND custom_id = ? AND {org_clause}",
+            (container_tag, custom_id, *org_params),
         ).fetchone()
         if row is not None:
             db.execute(
                 "UPDATE documents SET content = ?, status = 'queued', updated_at = ?, metadata = ?, dreamed_at = NULL,"
-                " expires_at = ? WHERE id = ?",
-                (content, now, meta, expires_at, row["id"]),
+                " expires_at = ?, org_id = ? WHERE id = ?",
+                (content, now, meta, expires_at, org_id, row["id"]),
             )
             db.execute("DELETE FROM chunks WHERE document_id = ?", (row["id"],))
             db.commit()
@@ -158,9 +200,30 @@ def create_document(
     doc_id = uuid.uuid4().hex
     db.execute(
         "INSERT INTO documents(id, container_tag, custom_id, content, status, created_at, updated_at, metadata,"
-        " expires_at) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
-        (doc_id, container_tag, custom_id, content, now, now, meta, expires_at),
+        " expires_at, org_id) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)",
+        (doc_id, container_tag, custom_id, content, now, now, meta, expires_at, org_id),
     )
+    db.commit()
+    return get_document(db, doc_id)
+
+
+def update_document(
+    db: sqlite3.Connection,
+    doc_id: str,
+    *,
+    content: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """In-place content/metadata replacement: re-queues, drops chunks, clears dream state."""
+    doc = get_document(db, doc_id)
+    new_content = content if content is not None else doc["content"]
+    new_meta = json.dumps(metadata if metadata is not None else doc.get("metadata") or {})
+    db.execute(
+        "UPDATE documents SET content = ?, metadata = ?, status = 'queued', updated_at = ?, dreamed_at = NULL"
+        " WHERE id = ?",
+        (new_content, new_meta, _now(), doc_id),
+    )
+    db.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
     db.commit()
     return get_document(db, doc_id)
 
@@ -206,24 +269,33 @@ def fts_query(query: str) -> str | None:
 
 
 def keyword_search(
-    db: sqlite3.Connection, query: str, *, container_tag: str | None = None, limit: int = 10
+    db: sqlite3.Connection,
+    query: str,
+    *,
+    container_tag: str | None = None,
+    org_id: str | None = None,
+    limit: int = 10,
 ) -> list[dict[str, Any]]:
     match = fts_query(query)
     if match is None:
         return []
-    if container_tag is None:
-        rows = db.execute(
-            "SELECT c.id, c.document_id, c.text, rank FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid"
-            " WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?",
-            (match, limit),
-        ).fetchall()
-    else:
-        rows = db.execute(
-            "SELECT c.id, c.document_id, c.text, rank FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid"
-            " JOIN documents d ON d.id = c.document_id WHERE chunks_fts MATCH ? AND d.container_tag = ?"
-            " ORDER BY rank LIMIT ?",
-            (match, container_tag, limit),
-        ).fetchall()
+    joins = " FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid"
+    conditions = ["chunks_fts MATCH ?"]
+    params: list[Any] = [match]
+    if container_tag is not None or org_id is not None:
+        joins += " JOIN documents d ON d.id = c.document_id"
+    if container_tag is not None:
+        conditions.append("d.container_tag = ?")
+        params.append(container_tag)
+    if org_id is not None:
+        conditions.append("d.org_id = ?")
+        params.append(org_id)
+    params.append(limit)
+    rows = db.execute(
+        f"SELECT c.id, c.document_id, c.text, rank{joins}"
+        f" WHERE {' AND '.join(conditions)} ORDER BY rank LIMIT ?",
+        params,
+    ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -231,22 +303,26 @@ def _hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def create_api_key(db: sqlite3.Connection, *, container_tag: str | None = None) -> str:
+def create_api_key(
+    db: sqlite3.Connection, *, container_tag: str | None = None, org_id: str | None = None
+) -> str:
     raw = "mm_" + secrets.token_urlsafe(32)
     db.execute(
-        "INSERT INTO api_keys(key_hash, container_tag, created_at) VALUES (?, ?, ?)",
-        (_hash_key(raw), container_tag, _now()),
+        "INSERT INTO api_keys(key_hash, container_tag, created_at, org_id) VALUES (?, ?, ?, ?)",
+        (_hash_key(raw), container_tag, _now(), org_id),
     )
     db.commit()
     return raw
 
 
 def lookup_key(db: sqlite3.Connection, raw: str) -> dict[str, Any] | None:
-    """Return the key row (container_tag None = wildcard), None if unknown/revoked."""
+    """Return the key row (container_tag/org_id None = wildcard/default), None if unknown/revoked."""
     h = _hash_key(raw)
     if db.execute("SELECT 1 FROM revoked_keys WHERE key_hash = ?", (h,)).fetchone() is not None:
         return None
-    row = db.execute("SELECT container_tag FROM api_keys WHERE key_hash = ?", (h,)).fetchone()
+    row = db.execute(
+        "SELECT container_tag, org_id FROM api_keys WHERE key_hash = ?", (h,)
+    ).fetchone()
     if row is None:
         return None
     return dict(row)
@@ -277,10 +353,17 @@ def prune_expired(conn: sqlite3.Connection) -> dict[str, int]:
     return {"facts": facts, "documents": docs}
 
 
-def purge_tag(db: sqlite3.Connection, container_tag: str) -> dict[str, int]:
-    """Delete everything scoped to a tag. Returns per-table counts."""
-    facts = db.execute("DELETE FROM facts WHERE container_tag = ?", (container_tag,)).rowcount
-    docs = db.execute("DELETE FROM documents WHERE container_tag = ?", (container_tag,)).rowcount
-    keys = db.execute("DELETE FROM api_keys WHERE container_tag = ?", (container_tag,)).rowcount
+def purge_tag(
+    db: sqlite3.Connection, container_tag: str, *, org_id: str | None = None
+) -> dict[str, int]:
+    """Delete everything in a tag, optionally limited to one organization."""
+    where = "container_tag = ?"
+    params: tuple[Any, ...] = (container_tag,)
+    if org_id is not None:
+        where += " AND org_id = ?"
+        params += (org_id,)
+    facts = db.execute(f"DELETE FROM facts WHERE {where}", params).rowcount
+    docs = db.execute(f"DELETE FROM documents WHERE {where}", params).rowcount
+    keys = db.execute(f"DELETE FROM api_keys WHERE {where}", params).rowcount
     db.commit()
     return {"facts": facts, "documents": docs, "keys": keys}

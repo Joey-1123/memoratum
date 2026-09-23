@@ -72,6 +72,7 @@ def _dispatch(
                     "document_id": doc["id"],
                     "mode": payload.get("dreaming", "dynamic"),
                     "container_tag": doc["container_tag"],
+                    "org_id": doc.get("org_id"),
                 },
             )
         return {"document_id": doc["id"], "status": doc["status"]}
@@ -86,6 +87,7 @@ def _dispatch(
             llm,
             mode=payload.get("mode", "dynamic"),
             container_tag=payload.get("container_tag"),
+            org_id=payload.get("org_id"),
         )
         return {"calls": calls}
     if kind == "backfill":
@@ -96,6 +98,7 @@ def _dispatch(
             embedder,
             "warmup",
             container_tag=payload["container_tag"],
+            org_id=payload.get("org_id"),
             limit=1,
             search_mode="memories",
         )

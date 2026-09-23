@@ -36,6 +36,7 @@ class DocumentIn(BaseModel):
     dreaming: Literal["dynamic", "instant"] = "dynamic"
     metadata: dict[str, Any] | None = None
     expires_at: float | None = None
+    org_id: str | None = None
 
 
 class SearchIn(BaseModel):
@@ -47,6 +48,7 @@ class SearchIn(BaseModel):
     filters: dict[str, Any] | None = None
     rerank: bool = False
     rewriteQuery: bool = False
+    org_id: str | None = None
 
 
 def _error(
@@ -59,6 +61,12 @@ def _error(
 
 class KeyIn(BaseModel):
     containerTag: str | None = None
+    org_id: str | None = None
+
+
+class DocPatch(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=500_000)
+    metadata: dict[str, Any] | None = None
 
 
 class FactIn(BaseModel):
@@ -70,11 +78,14 @@ class FactIn(BaseModel):
     supersede: bool = True
     skipEmbedding: bool = False
     expires_at: float | None = None
+    memory_type: str = "semantic"
+    org_id: str | None = None
 
 
 class ImportIn(BaseModel):
     graph_dir: str = Field(min_length=1)
     tag: str = Field(min_length=1, max_length=128)
+    org_id: str | None = None
 
 
 def _is_admin(authorization: str | None, settings: Settings) -> bool:
@@ -189,8 +200,8 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             "/dashboard", StaticFiles(directory=settings.dashboard_dir, html=True), name="dashboard"
         )
 
-    def scope_of(authorization: str | None, conn: sqlite3.Connection) -> str | None | bool:
-        """Admin key -> True; known key -> its scope (None = wildcard); else False."""
+    def scope_of(authorization: str | None, conn: sqlite3.Connection) -> dict | bool:
+        """Admin key -> True; known key -> its scope (container_tag, org_id); else False."""
         if not authorization or not authorization.startswith("Bearer "):
             return False
         raw = authorization[len("Bearer ") :]
@@ -199,30 +210,56 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         row = db.lookup_key(conn, raw)
         if row is None:
             return False
-        return row["container_tag"]
+        return {"container_tag": row["container_tag"], "org_id": row["org_id"]}
 
     def credential_ok(authorization: str | None, conn: sqlite3.Connection) -> bool:
         return scope_of(authorization, conn) is not False
 
-    def may_access(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> bool:
+    def may_access(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        container_tag: str,
+        org_id: str | None = None,
+    ) -> bool:
         scope = scope_of(authorization, conn)
-        return scope is True or scope is None or scope == container_tag
+        if scope is True or scope is None:
+            return True
+        if scope is False:
+            return False
+        scope_tag = scope.get("container_tag")
+        if scope_tag is not None and scope_tag != container_tag:
+            return False
+        scope_org = scope.get("org_id")
+        return scope_org is None or org_id == scope_org
 
-    def authorize(authorization: str | None, conn: sqlite3.Connection, container_tag: str) -> None:
+    def authorize(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        container_tag: str,
+        org_id: str | None = None,
+    ) -> str | None:
         if not settings.auth_enabled:
-            return
+            return org_id
         if not credential_ok(authorization, conn):
             raise HTTPException(status_code=401, detail="UNAUTHORIZED")
-        if not may_access(authorization, conn, container_tag):
+        effective_org = org_id
+        scope = scope_of(authorization, conn)
+        if isinstance(scope, dict) and scope.get("org_id") is not None and org_id is None:
+            effective_org = scope["org_id"]
+        if not may_access(authorization, conn, container_tag, effective_org):
             raise HTTPException(status_code=403, detail="FORBIDDEN")
+        return effective_org
 
     def _authorized(authorization: str | None, conn: sqlite3.Connection) -> bool:
         return credential_ok(authorization, conn)
 
     def _may_access(
-        authorization: str | None, conn: sqlite3.Connection, container_tag: str
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        container_tag: str,
+        org_id: str | None = None,
     ) -> bool:
-        return may_access(authorization, conn, container_tag)
+        return may_access(authorization, conn, container_tag, org_id)
 
     def _job_tag(conn: sqlite3.Connection, job: dict[str, Any]) -> str | None:
         payload = job.get("payload") or {}
@@ -233,6 +270,16 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 return None
         tag = payload.get("container_tag")
         return tag if isinstance(tag, str) else None
+
+    def _job_org(conn: sqlite3.Connection, job: dict[str, Any]) -> str | None:
+        payload = job.get("payload") or {}
+        if payload.get("document_id"):
+            try:
+                return db.get_document(conn, payload["document_id"]).get("org_id")
+            except KeyError:
+                return None
+        org_id = payload.get("org_id")
+        return org_id if isinstance(org_id, str) else None
 
     @app.exception_handler(HTTPException)
     async def _http_errors(_req: Request, exc: HTTPException):
@@ -246,7 +293,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     def add_document(
         doc: DocumentIn, conn: DbConn, authorization: str | None = Header(default=None)
     ):
-        authorize(authorization, conn, doc.containerTag)
+        org_id = authorize(authorization, conn, doc.containerTag, doc.org_id)
         created = db.create_document(
             conn,
             container_tag=doc.containerTag,
@@ -254,6 +301,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             custom_id=doc.customId,
             metadata=doc.metadata,
             expires_at=doc.expires_at,
+            org_id=org_id,
         )
         job_id = jobs.enqueue(
             conn,
@@ -262,6 +310,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 "document_id": created["id"],
                 "dreaming": doc.dreaming,
                 "container_tag": doc.containerTag,
+                "org_id": org_id,
             },
         )
         return {"id": created["id"], "status": "queued", "job_id": job_id}
@@ -274,13 +323,77 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             doc = db.get_document(conn, doc_id)
         except KeyError:
             return _error("NOT_FOUND", "document not found", 404)
-        if settings.auth_enabled and not _may_access(authorization, conn, doc["container_tag"]):
+        if settings.auth_enabled and not _may_access(
+            authorization, conn, doc["container_tag"], doc.get("org_id")
+        ):
             return _error("NOT_FOUND", "document not found", 404)
         return {"id": doc["id"], "containerTag": doc["container_tag"], "status": doc["status"]}
 
+    @app.patch("/v3/documents/{doc_id}")
+    def update_document(
+        doc_id: str, patch: DocPatch, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        try:
+            doc = db.get_document(conn, doc_id)
+        except KeyError:
+            return _error("NOT_FOUND", "document not found", 404)
+        if settings.auth_enabled:
+            if not _authorized(authorization, conn):
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            if not _may_access(authorization, conn, doc["container_tag"], doc.get("org_id")):
+                return _error("NOT_FOUND", "document not found", 404)
+        updated = db.update_document(conn, doc_id, content=patch.content, metadata=patch.metadata)
+        job_id = jobs.enqueue(
+            conn,
+            kind="ingest",
+            payload={
+                "document_id": updated["id"],
+                "container_tag": updated["container_tag"],
+                "org_id": updated.get("org_id"),
+            },
+        )
+        return {"id": updated["id"], "status": "queued", "job_id": job_id}
+
+    @app.get("/v3/documents")
+    def list_documents(
+        conn: DbConn,
+        containerTag: str = "default",
+        org_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        authorization: str | None = Header(default=None),
+    ):
+        org_id = authorize(authorization, conn, containerTag, org_id)
+        limit = max(1, min(limit, 100))
+        offset = max(0, offset)
+        where = "container_tag = ?"
+        params: tuple[Any, ...] = (containerTag,)
+        if org_id is not None:
+            where += " AND org_id = ?"
+            params += (org_id,)
+        total = conn.execute(
+            f"SELECT COUNT(*) AS n FROM documents WHERE {where}", params
+        ).fetchone()["n"]
+        rows = conn.execute(
+            f"SELECT id, container_tag, custom_id, status, created_at FROM documents WHERE {where} ORDER BY created_at LIMIT ? OFFSET ?",
+            params + (limit, offset),
+        ).fetchall()
+        return {
+            "documents": [
+                {
+                    "id": r["id"],
+                    "containerTag": r["container_tag"],
+                    "customId": r["custom_id"],
+                    "status": r["status"],
+                }
+                for r in rows
+            ],
+            "total": total,
+        }
+
     @app.post("/v4/search")
     def run_search(query: SearchIn, conn: DbConn, authorization: str | None = Header(default=None)):
-        authorize(authorization, conn, query.containerTag)
+        org_id = authorize(authorization, conn, query.containerTag, query.org_id)
         started = time.time()
         queries = (
             expand_query(app.state.llm, query.q)
@@ -293,6 +406,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 app.state.embedder,
                 q,
                 container_tag=query.containerTag,
+                org_id=org_id,
                 limit=query.limit,
                 threshold=query.threshold,
                 search_mode=query.searchMode,
@@ -309,20 +423,33 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     def get_profile(
         conn: DbConn,
         containerTag: str = "default",
+        org_id: str | None = None,
         authorization: str | None = Header(default=None),
     ):
-        authorize(authorization, conn, containerTag)
-        facts = list_facts(conn, container_tag=containerTag)[:20]
+        org_id = authorize(authorization, conn, containerTag, org_id)
+        facts = list_facts(conn, container_tag=containerTag, org_id=org_id)[:20]
+        doc_where = "container_tag = ?"
+        doc_params: tuple[Any, ...] = (containerTag,)
+        chunk_where = "d.container_tag = ?"
+        if org_id is not None:
+            doc_where += " AND org_id = ?"
+            chunk_where += " AND d.org_id = ?"
+            doc_params += (org_id,)
         docs = conn.execute(
-            "SELECT COUNT(*) AS n FROM documents WHERE container_tag = ?", (containerTag,)
+            f"SELECT COUNT(*) AS n FROM documents WHERE {doc_where}", doc_params
         ).fetchone()["n"]
         chunks = conn.execute(
-            "SELECT COUNT(*) AS n FROM chunks c JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?",
-            (containerTag,),
+            f"SELECT COUNT(*) AS n FROM chunks c JOIN documents d ON d.id = c.document_id"
+            f" WHERE {chunk_where}",
+            doc_params,
         ).fetchone()["n"]
+        fact_where = "container_tag = ? AND valid_to IS NULL"
+        fact_params: tuple[Any, ...] = (containerTag,)
+        if org_id is not None:
+            fact_where += " AND org_id = ?"
+            fact_params += (org_id,)
         nfacts = conn.execute(
-            "SELECT COUNT(*) AS n FROM facts WHERE container_tag = ? AND valid_to IS NULL",
-            (containerTag,),
+            f"SELECT COUNT(*) AS n FROM facts WHERE {fact_where}", fact_params
         ).fetchone()["n"]
         return {
             "containerTag": containerTag,
@@ -333,9 +460,13 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     @app.post("/v4/keys", status_code=201)
     def issue_key(body: KeyIn, conn: DbConn, authorization: str | None = Header(default=None)):
         if not settings.auth_enabled:
-            return {"key": db.create_api_key(conn, container_tag=body.containerTag)}
+            return {
+                "key": db.create_api_key(conn, container_tag=body.containerTag, org_id=body.org_id)
+            }
         if _is_admin(authorization, settings):
-            return {"key": db.create_api_key(conn, container_tag=body.containerTag)}
+            return {
+                "key": db.create_api_key(conn, container_tag=body.containerTag, org_id=body.org_id)
+            }
         if (
             authorization
             and authorization.startswith("Bearer ")
@@ -364,23 +495,26 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         if settings.auth_enabled:
             if not credential_ok(authorization, conn):
                 return _error("UNAUTHORIZED", "authentication required", 401)
-            if not may_access(authorization, conn, fact["container_tag"]):
+            if not may_access(authorization, conn, fact["container_tag"], fact.get("org_id")):
                 return _error("NOT_FOUND", "fact not found", 404)
         fact_store.delete_fact(conn, fact_id)
         return {"deleted": fact_id}
 
     @app.delete("/v4/tags/{tag}")
     def purge(tag: str, conn: DbConn, authorization: str | None = Header(default=None)):
-        if settings.auth_enabled:
-            if not credential_ok(authorization, conn):
-                return _error("UNAUTHORIZED", "authentication required", 401)
-            if not may_access(authorization, conn, tag):
+        if settings.auth_enabled and not credential_ok(authorization, conn):
+            return _error("UNAUTHORIZED", "authentication required", 401)
+        try:
+            org_id = authorize(authorization, conn, tag)
+        except HTTPException as exc:
+            if exc.status_code == 403:
                 return _error("NOT_FOUND", "tag not found", 404)
-        return db.purge_tag(conn, tag)
+            raise
+        return db.purge_tag(conn, tag, org_id=org_id)
 
     @app.post("/v4/facts", status_code=201)
     def create_fact(body: FactIn, conn: DbConn, authorization: str | None = Header(default=None)):
-        authorize(authorization, conn, body.containerTag)
+        org_id = authorize(authorization, conn, body.containerTag, body.org_id)
         fact = fact_store.add_fact(
             conn,
             container_tag=body.containerTag,
@@ -391,6 +525,8 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             metadata=body.metadata,
             supersede=body.supersede,
             expires_at=body.expires_at,
+            memory_type=body.memory_type,
+            org_id=org_id,
         )
         try:
             if not body.skipEmbedding:
@@ -408,6 +544,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             "predicate": fact["predicate"],
             "object": fact["object"],
             "containerTag": fact["container_tag"],
+            "memory_type": fact.get("memory_type", "semantic"),
         }
 
     @app.get("/v4/facts")
@@ -416,12 +553,18 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         containerTag: str,
         include_superseded: bool = False,
         limit: int = 100,
+        memory_type: str | None = None,
+        org_id: str | None = None,
         authorization: str | None = Header(default=None),
     ):
-        authorize(authorization, conn, containerTag)
-        facts = list_facts(conn, container_tag=containerTag, include_superseded=include_superseded)[
-            : max(limit, 0)
-        ]
+        org_id = authorize(authorization, conn, containerTag, org_id)
+        facts = list_facts(
+            conn,
+            container_tag=containerTag,
+            include_superseded=include_superseded,
+            memory_type=memory_type,
+            org_id=org_id,
+        )[: max(limit, 0)]
         return {
             "facts": [
                 {
@@ -431,6 +574,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                     "object": f["object"],
                     "document_id": f["document_id"],
                     "metadata": f["metadata"],
+                    "memory_type": f.get("memory_type", "semantic"),
                     "valid_from": f["valid_from"],
                     "valid_to": f["valid_to"],
                     "superseded_by": f["superseded_by"],
@@ -447,7 +591,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         # Server-local path by design (single-host tool). Any authenticated caller
         # may import, but only into tags they can write.
         slug = body.tag.removeprefix("graphify:")
-        authorize(authorization, conn, f"graphify:{slug}")
+        org_id = authorize(authorization, conn, f"graphify:{slug}", body.org_id)
         graph_path = os.path.join(os.path.abspath(body.graph_dir), "graph.json")
         if not os.path.isfile(graph_path):
             return _error("VALIDATION_ERROR", "graph_dir must contain graph.json", 422)
@@ -467,7 +611,7 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
                 pass
         from memoratum.bridge import sync_records
 
-        return sync_records(conn, graph, slug)
+        return sync_records(conn, graph, slug, org_id=org_id)
 
     @app.get("/v4/jobs/{job_id}")
     def get_job(job_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -478,7 +622,8 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             if not credential_ok(authorization, conn):
                 return _error("UNAUTHORIZED", "authentication required", 401)
             tag = _job_tag(conn, job)
-            if tag is None or not may_access(authorization, conn, tag):
+            org_id = _job_org(conn, job)
+            if tag is None or not may_access(authorization, conn, tag, org_id):
                 return _error("NOT_FOUND", "job not found", 404)
         return {
             "id": job["id"],
