@@ -70,7 +70,7 @@ export function ExportView({ tag }: { tag: string }) {
         Export <span className="mono muted">{tag}</span>
       </h2>
       <p className="muted">
-        Render the tag as Obsidian-style markdown notes (frontmatter carries the subject for re-import).
+        Render the tag as vault-style markdown notes (frontmatter carries the subject for re-import).
       </p>
       <button onClick={build}>Build notes</button>{" "}
       <button

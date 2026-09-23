@@ -6,16 +6,17 @@
   --color-accent: var(--interactive-accent);
 }
 
-/* Memoratum console theme — token architecture adapted from the official
- * Obsidian sample theme (https://github.com/obsidianmd/obsidian-sample-theme,
- * ISC-licensed) to Obsidian's public CSS variable scheme. `.theme-dark` is
- * default; `.theme-light` overrides. Applied on <html> with localStorage
- * persistence (theme choice only — never secrets). */
+/* Memoratum console theme. Token architecture follows a public note-app CSS
+ * variable scheme. `.theme-dark` is default; `.theme-light` overrides.
+ * Applied on <html> with localStorage persistence (theme choice only).
+ *
+ * Portions derived from a third-party sample theme, used under its
+ * ISC license. Copyright (C) 2020-2026 by Dynalist Inc. */
 
 /* ---- Shared scales (theme-independent) ---- */
 body {
   --radius-s: 4px;
-  --radius-m: 6px;
+  --radius-m: 8px;
   --radius-l: 10px;
   --input-radius: 6px;
   --tab-radius-active: 6px 6px 0 0;
@@ -37,26 +38,27 @@ body {
   --anim-duration-normal: 0.15s;
 }
 
-/* ---- Dark (default) ---- */
+/* ---- Dark (default): near-black canvas treatment ---- */
 .theme-dark body,
 body.theme-dark {
-  --background-primary: #0a0e14;
-  --background-primary-alt: #0d1219;
-  --background-secondary: #11161f;
-  --background-secondary-alt: #161d29;
-  --background-modifier-border: #232c3d;
-  --background-modifier-border-hover: #2e3a4f;
-  --background-modifier-form-field: #161d29;
-  --background-modifier-hover: #161d29;
-  --text-normal: #d7dee9;
-  --text-muted: #7d8899;
-  --text-faint: #525b6b;
+  --background-primary: #0a0a0a;
+  --background-primary-alt: #0d0e10;
+  --background-secondary: #191919;
+  --background-secondary-alt: #1a1c20;
+  --background-modifier-border: #212327;
+  --background-modifier-border-hover: rgba(255, 255, 255, 0.25);
+  --background-modifier-form-field: #1a1c20;
+  --background-modifier-hover: #1a1c20;
+  --text-normal: #ffffff;
+  --text-muted: #dadbdf;
+  --text-faint: #7d8187;
   --text-accent: #37c4d6;
   --text-accent-hover: #5fd6e3;
   --text-error: #d65c5c;
   --text-warning: #d6a437;
   --interactive-accent: #37c4d6;
   --interactive-accent-hover: #1d7d8a;
+  --pill-border: rgba(255, 255, 255, 0.25);
   --font-interface: "Inter", system-ui, -apple-system, sans-serif;
   --font-monospace: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   color-scheme: dark;
@@ -98,9 +100,18 @@ body {
   line-height: 1.5;
 }
 
-h1 { font-size: var(--h1-size); margin: 0 0 0.5rem; letter-spacing: 0.01em; }
-h2 { font-size: var(--h2-size); margin: 1rem 0 0.5rem; }
-h3 { font-size: var(--h3-size); margin: 0.75rem 0 0.25rem; }
+h1 { font-size: 2rem; font-weight: 400; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+h2 { font-size: var(--h2-size); font-weight: 400; margin: 1rem 0 0.5rem; }
+h3 { font-size: var(--h3-size); font-weight: 400; margin: 0.75rem 0 0.25rem; }
+
+/* Eyebrow: uppercase tracked mono for section labels */
+.eyebrow {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-normal);
+}
 
 a { color: var(--text-accent); }
 
@@ -116,11 +127,13 @@ button, input, select {
 button {
   cursor: pointer;
   min-height: 44px;
+  border-radius: 9999px;
+  border-color: var(--pill-border, var(--background-modifier-border));
   transition: border-color var(--anim-duration-normal) ease,
     background-color var(--anim-duration-normal) ease,
     transform var(--anim-duration-fast) ease;
 }
-button:hover { border-color: var(--background-modifier-border-hover); background: var(--background-modifier-hover); }
+button:hover { border-color: var(--pill-border, var(--background-modifier-border-hover)); background: var(--background-modifier-hover); }
 button:active { transform: scale(0.97); }
 button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible {
   outline: 2px solid var(--interactive-accent);
@@ -139,7 +152,7 @@ button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible
 .error { color: var(--text-error); }
 .num { font-variant-numeric: tabular-nums; }
 
-/* Obsidian-style shell */
+/* App shell */
 .shell {
   display: grid;
   grid-template-columns: 48px 260px 1fr 320px;
@@ -176,7 +189,7 @@ button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible
 .sidebar { overflow-y: auto; padding: var(--size-4-3); background: var(--background-secondary); }
 .sidebar.left { grid-area: left; border-right: 1px solid var(--background-modifier-border); }
 .sidebar.right { grid-area: right; border-left: 1px solid var(--background-modifier-border); }
-.sidebar h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.sidebar h2 { font-size: var(--font-ui-small); text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-normal); font-family: var(--font-monospace); font-weight: 400; }
 .center { grid-area: center; overflow-y: auto; padding: 1rem; max-width: 1100px; }
 .statusbar {
   grid-area: status;
