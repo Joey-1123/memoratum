@@ -5,7 +5,7 @@
 
 *Things to be remembered.* Self-hosted context infrastructure for AI agents — a free, open-source alternative to hosted memory APIs.
 
-Memoratum ingests documents, chat turns, and code, then serves them back as searched **chunks** (raw grounding), **memories** (extracted facts in a temporal graph), and **profiles** (always-on summaries) — all scoped by hard-isolation **container tags**. It speaks a Supermemory-compatible HTTP API, so existing clients switch with a one-line `baseURL` change.
+Memoratum ingests documents, chat turns, and code, then serves them back as searched **chunks** (raw grounding), **memories** (extracted facts in a temporal graph), and **profiles** (always-on summaries) — all scoped by hard-isolation **container tags**. It speaks a stable versioned HTTP API, so existing clients switch with a one-line `baseURL` change.
 
 ## Features
 

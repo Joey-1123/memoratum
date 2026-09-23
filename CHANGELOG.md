@@ -6,12 +6,12 @@
 ### Added
 - Memory orbit hero (ported orbiting-rings concept onto our tokens: particle
   globe core, 3 counter-rotating concept rings, lazy chunk) as the Tags
-  empty state; Tailwind v4 mapped to Obsidian variables
+  empty state; Tailwind v4 mapped to app theme variables
 
 ## [0.11.0] - 2026-09-23
 ### Changed
-- Dashboard theme rebuilt on Obsidian's variable architecture (sample-template
-  derived): full dark + light themes with toggle, size/radius/type scales
+- Dashboard theme rebuilt on a public note-app variable architecture, with
+  full dark + light themes, toggle, and size/radius/type scales
 
 ## [0.10.0] - 2026-09-23
 ### Changed
@@ -22,7 +22,7 @@
 
 ## [0.9.0] - 2026-09-23
 ### Added
-- Obsidian-style console shell: ribbon, explorer tree, note tabs, live
+- Console shell: ribbon, explorer tree, note tabs, live
   status bar, vault tag switcher
 - Note pane with wikilinks, backlinks, history, and hover preview cards
 - Graph selection opens notes; shared selection state across views
@@ -53,7 +53,7 @@
 - Dashboard console (Vite+React, served at `/dashboard`): tag cards, Sigma
   2D graph with Jarvis inspector (AI-view/relations/history/provenance),
   Three.js 3D presentation mode, time scrubber, command palette, search view,
-  graph import view, Obsidian-style vault export view
+  graph import view, vault export view
 - Server-side graph import endpoint (`POST /v4/import`) and fact
   write/list endpoints (`POST/GET /v4/facts`)
 - Embedding request batching; per-tag fact vector cache
@@ -93,7 +93,7 @@
 ## [0.1.0] - 2026-09-20
 ### Added
 - Phase 1 core: `POST /v3/documents`, `GET /v3/documents/{id}`, `POST /v4/search`
-  (Supermemory-compatible shapes), Bearer auth with container-scoped keys
+  (stable versioned shapes), Bearer auth with container-scoped keys
 - SQLite store (WAL, FTS5, forward-only migrations), customId idempotent upserts
 - Recursive + Markdown-aware chunking; embedder interface (deterministic hash
   offline default, OpenAI-compatible API provider)

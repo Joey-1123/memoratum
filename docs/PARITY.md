@@ -1,8 +1,8 @@
-# Memoratum — Supermemory parity spec
+# Memoratum — memory API parity spec
 
-Target: full functional parity with the hosted Supermemory API surface, self-hosted,
-AGPL-3.0. Derived from official docs (docs.supermemory.ai) and the `opencode-supermemory`
-client source. Phase-gated: each phase lands tested and runnable before the next begins.
+Target: full functional parity with a stable versioned memory API surface, self-hosted,
+AGPL-3.0. Derived from public memory-API documentation and an existing open-source
+client implementation. Phase-gated: each phase lands tested and runnable before the next begins.
 
 ## API surface (parity targets)
 
