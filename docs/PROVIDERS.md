@@ -17,6 +17,10 @@ model, dreaming and query expansion remain disabled.
 | `MEMORATUM_EMBEDDINGS_MODEL` | Embedding model identifier | empty |
 | `MEMORATUM_EMBEDDINGS_DIMS` | Optional expected vector width | `0` (auto) |
 | `MEMORATUM_EMBEDDINGS_KEY` | Embedding credential, when required | empty |
+| `MEMORATUM_RERANKER` | `heuristic`, `crossencoder`, `cohere`, or `voyage` | `heuristic` |
+| `MEMORATUM_RERANKER_MODEL` | Reranker model identifier | provider default |
+| `MEMORATUM_RERANKER_ENDPOINT` | Optional reranker endpoint override | provider default |
+| `MEMORATUM_RERANKER_KEY` | Reranker credential, when required | empty |
 
 Install local embeddings with `uv sync --extra embeddings`. The local adapter
 loads its model lazily on the first batch, so application startup does not
@@ -25,7 +29,8 @@ trigger a model download.
 The built-in adapter sends only the model, system/user messages, and temperature
 to the configured endpoint. Provider adapters share the same `complete` contract,
 so dreaming, query expansion, and future provider additions do not change the
-worker or API layers.
+worker or API layers. Reranking uses the same bounded HTTP pattern, restores
+provider result order, and leaves the deterministic heuristic as the default.
 
 Implementation references:
 
@@ -33,3 +38,5 @@ Implementation references:
 - https://docs.litellm.ai/docs/embedding/supported_embedding
 - https://docs.litellm.ai/docs/providers/openai_compatible
 - https://qdrant.github.io/fastembed/
+- https://docs.cohere.com/reference/rerank
+- https://docs.voyageai.com/docs/reranker

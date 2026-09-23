@@ -190,6 +190,8 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
     app.state.reranker = build_reranker(
         os.environ.get("MEMORATUM_RERANKER", "heuristic"),
         os.environ.get("MEMORATUM_RERANKER_MODEL", ""),
+        endpoint=os.environ.get("MEMORATUM_RERANKER_ENDPOINT", ""),
+        api_key=os.environ.get("MEMORATUM_RERANKER_KEY", ""),
     )
     app.state.llm = (
         build_chat(
