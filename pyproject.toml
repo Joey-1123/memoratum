@@ -15,6 +15,9 @@ dependencies = [
 llm = [
     "litellm>=1.102.1,<2",
 ]
+embeddings = [
+    "fastembed>=0.8.1,<1",
+]
 
 [dependency-groups]
 dev = [
