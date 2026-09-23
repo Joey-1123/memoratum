@@ -1,0 +1,13 @@
+[
+  {
+    "question_id": "smoke-q1",
+    "question": "self-hosted service",
+    "question_type": "single_hop",
+    "haystack_session_ids": ["session-1", "session-2"],
+    "haystack_sessions": [
+      [{"role": "user", "content": "The project uses SQLite for local storage."}],
+      [{"role": "assistant", "content": "The user decided to keep the service self-hosted."}]
+    ],
+    "answer_session_ids": ["session-2"]
+  }
+]

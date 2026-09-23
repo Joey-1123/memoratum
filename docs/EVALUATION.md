@@ -48,6 +48,17 @@ uv run python -m memoratum.eval_mc10 \
   --out-json eval/locomo-mc10.json
 ```
 
+Compare result JSON files locally without uploading them:
+
+```bash
+uv run python -m memoratum.eval_compare eval/longmemeval.json eval/locomo-mc10.json \
+  --out-md eval/RESULTS.md
+```
+
+A small scheduled workflow runs both harnesses against committed synthetic
+fixtures. Full benchmark files remain local and are never fetched or uploaded by
+the default CI job.
+
 References:
 
 - https://github.com/xiaowu0162/LongMemEval

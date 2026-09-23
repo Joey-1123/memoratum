@@ -130,6 +130,11 @@ def evaluate(
     picked = sample_records(normalized, n=n, seed=seed)
     embedder = embedder or build_embedder()
     factory = vector_store_factory or (lambda conn: SQLiteVectorStore(conn))
+    store_label = (
+        "sqlite"
+        if vector_store_factory is None
+        else getattr(vector_store_factory, "__name__", type(vector_store_factory).__name__)
+    )
     out: dict[str, Any] = {
         "dataset": dataset_name,
         "manifest": {
@@ -140,6 +145,7 @@ def evaluate(
             "ks": ks,
             "modes": modes,
             "embedder": _embedder_label(embedder),
+            "vector_store": store_label,
             "data_sha256": dataset_hash or records_sha256(picked),
         },
         "questions": [],
