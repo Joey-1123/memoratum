@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 from memoratum import db, jobs
 from memoratum import facts as fact_store
 from memoratum.config import Settings
-from memoratum.embeddings import ApiEmbedder, Embedder, HashEmbedder
+from memoratum.embeddings import Embedder
+from memoratum.embeddings import build_embedder as build_provider_embedder
 from memoratum.facts import list_facts
 from memoratum.llm import build_chat
 from memoratum.rerank import build_reranker
@@ -98,18 +99,13 @@ def _is_admin(authorization: str | None, settings: Settings) -> bool:
 
 
 def build_embedder(settings: Settings) -> Embedder:
-    if (
-        settings.embeddings_provider == "api"
-        and settings.embeddings_endpoint
-        and settings.embeddings_model
-    ):
-        return ApiEmbedder(
-            endpoint=settings.embeddings_endpoint,
-            model=settings.embeddings_model,
-            api_key=os.environ.get("MEMORATUM_EMBEDDINGS_KEY", ""),
-            dims=settings.embeddings_dims or 0,
-        )
-    return HashEmbedder()
+    return build_provider_embedder(
+        settings.embeddings_provider,
+        endpoint=settings.embeddings_endpoint,
+        model=settings.embeddings_model,
+        api_key=os.environ.get("MEMORATUM_EMBEDDINGS_KEY", ""),
+        dims=settings.embeddings_dims,
+    )
 
 
 # Serializes requests: each gets its own connection, but dependency setup and
