@@ -92,6 +92,7 @@ def search(
     query: str,
     *,
     container_tag: str,
+    org_id: str | None = None,
     limit: int = 10,
     threshold: float = 0.0,
     keyword_limit: int = 50,
@@ -109,11 +110,18 @@ def search(
     texts: dict[str, str] = {}
     kinds: dict[str, str] = {}
     stamped: dict[str, float] = {}
+    now = time.time()
     if want_chunks:
+        doc_where = "d.container_tag = ? AND (d.expires_at IS NULL OR d.expires_at > ?)"
+        doc_params: tuple[Any, ...] = (container_tag, now)
+        if org_id is not None:
+            doc_where += " AND d.org_id = ?"
+            doc_params += (org_id,)
         rows = conn.execute(
             "SELECT c.id, c.text, c.embedding, c.created_at, d.metadata FROM chunks c"
-            " JOIN documents d ON d.id = c.document_id WHERE d.container_tag = ?",
-            (container_tag,),
+            " JOIN documents d ON d.id = c.document_id"
+            f" WHERE {doc_where}",
+            doc_params,
         ).fetchall()
         for r in rows:
             if not _matches(json.loads(r["metadata"] or "{}")):
@@ -124,7 +132,9 @@ def search(
             stamped[key] = r["created_at"]
     fact_list: list[dict[str, Any]] = []
     if want_facts:
-        fact_list = [f for f in list_facts(conn, container_tag) if _matches(f["metadata"])]
+        fact_list = [
+            f for f in list_facts(conn, container_tag, org_id=org_id) if _matches(f["metadata"])
+        ]
         for f in fact_list:
             key = f"mem_{f['id']}"
             texts[key] = _fact_text(f)
@@ -162,7 +172,9 @@ def search(
 
     kw_ranked: list[tuple[str, float]] = []
     if want_chunks:
-        for r in db.keyword_search(conn, query, container_tag=container_tag, limit=keyword_limit):
+        for r in db.keyword_search(
+            conn, query, container_tag=container_tag, org_id=org_id, limit=keyword_limit
+        ):
             kw_ranked.append((f"chunk_{r['id']}", 1.0))
     if want_facts:
         scored = sorted(

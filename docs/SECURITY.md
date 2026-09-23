@@ -11,8 +11,9 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
 ## Trust boundaries
 
 - **HTTP API**: Bearer-gated when configured; scoped keys are confined to one
-  `containerTag` (403 outside, 401 for unknown). Document fetch returns uniform
-  404 for missing-or-forbidden so IDs can't be probed across tags.
+  `containerTag` and, when supplied, one `org_id` (403 outside, 401 for unknown).
+  Document fetch returns uniform 404 for missing-or-forbidden so IDs can't be
+  probed across scopes.
 - **MCP server (stdio)**: no auth by design — local-process trust only. Do not
   expose it over a network transport.
 - **LLM contexts**: indexed content is untrusted. Dreaming extracts facts from
