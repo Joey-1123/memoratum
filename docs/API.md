@@ -126,9 +126,12 @@ these routes:
 - `GET /v1/memories/` with `user_id`, `agent_id`, `app_id`, or `run_id` → the
   scoped fact list.
 
-Entity IDs become isolated `mem0:<entity>:<value>` container tags. Unsupported
-Mem0 inference, update, organization, and webhook features are intentionally
-not emulated; use the native v3/v4 routes for those capabilities.
+Entity IDs become isolated `mem0:<entity>:<value>` container tags. The exact
+versioned request/response rules, capability matrix, and regression fixtures are
+specified in [`MEM0_COMPATIBILITY.md`](MEM0_COMPATIBILITY.md). Unsupported
+Mem0 update, history, bulk, organization, webhook, and managed-billing features
+are intentionally not emulated; use the native v3/v4 routes for those
+capabilities.
 
 ## `GET /health` → 200
 

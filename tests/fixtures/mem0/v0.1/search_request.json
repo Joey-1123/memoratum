@@ -1,0 +1,6 @@
+{
+  "query": "local memories",
+  "filters": {"user_id": "contract-user"},
+  "top_k": 5,
+  "threshold": 0.0
+}

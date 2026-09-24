@@ -1,0 +1,8 @@
+{
+  "event_id": "fixture-event",
+  "status": "SUCCEEDED",
+  "results": {
+    "document_id": "fixture-document",
+    "status": "done"
+  }
+}

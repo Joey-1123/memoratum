@@ -1,0 +1,5 @@
+{
+  "query": "SDK contract",
+  "filters": {"user_id": "sdk-user"},
+  "top_k": 3
+}

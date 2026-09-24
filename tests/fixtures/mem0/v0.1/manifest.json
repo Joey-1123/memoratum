@@ -1,0 +1,4 @@
+{
+  "contract": "mem0-self-hosted-v0.1",
+  "fixtures": ["add_request.json", "add_response.json", "event_response.json", "search_request.json", "search_response.json", "list_query.json", "list_response.json", "error_response.json", "sdk_add_request.json", "sdk_search_request.json"]
+}

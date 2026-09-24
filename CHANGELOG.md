@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Versioned `mem0-self-hosted-v0.1` compatibility contract, capability matrix,
+  and request/response/error fixtures with official Python and TypeScript SDK
+  contract probes for the supported local routes.
 
 ## [0.34.2] - 2026-09-24
 ### Changed

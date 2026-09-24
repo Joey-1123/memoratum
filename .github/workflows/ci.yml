@@ -11,6 +11,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --group dev
       - run: uv run python scripts/check_no_telemetry.py
+      - run: MEM0_TELEMETRY=false uv run pytest tests/test_mem0_official_sdk.py -q
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q

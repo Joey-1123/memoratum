@@ -1,0 +1,7 @@
+{
+  "messages": [
+    {"role": "user", "content": "The contract profile keeps memories local."}
+  ],
+  "user_id": "contract-user",
+  "metadata": {"source": "contract-fixture"}
+}

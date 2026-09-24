@@ -534,6 +534,22 @@ def create_app(
     @app.post("/v1/memories/")
     def mem0_add(body: Mem0AddIn, conn: DbConn, authorization: str | None = Header(default=None)):
         values = body.model_dump()
+        if body.containerTag is not None and any(
+            values.get(key) is not None for key in ("user_id", "agent_id", "app_id", "run_id")
+        ):
+            return _error(
+                "VALIDATION_ERROR",
+                "containerTag cannot be combined with an entity id",
+                422,
+            )
+        if body.containerTag is not None and (
+            not body.containerTag.startswith("mem0:") or body.containerTag.count(":") < 2
+        ):
+            return _error(
+                "VALIDATION_ERROR",
+                "containerTag must identify a mem0 entity",
+                422,
+            )
         tag = body.containerTag or _mem0_entity_tag(values)
         if tag is None:
             return _error(
