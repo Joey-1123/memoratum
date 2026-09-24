@@ -26,7 +26,7 @@ from memoratum.auth import IdentityProvider, token_fingerprint
 from memoratum.config import Settings
 from memoratum.embeddings import Embedder
 from memoratum.embeddings import build_embedder as build_provider_embedder
-from memoratum.facts import list_facts
+from memoratum.facts import count_facts, list_facts
 from memoratum.llm import build_chat
 from memoratum.rerank import build_reranker
 from memoratum.search import expand_query, merge_hits, pack_vector, search
@@ -1123,18 +1123,22 @@ def create_app(
         containerTag: str,
         include_superseded: bool = False,
         limit: int = 100,
+        offset: int = 0,
         memory_type: str | None = None,
         org_id: str | None = None,
         authorization: str | None = Header(default=None),
     ):
         org_id = authorize(authorization, conn, containerTag, org_id)
+        page_limit = max(1, min(limit, 500))
         facts = list_facts(
             conn,
             container_tag=containerTag,
             include_superseded=include_superseded,
             memory_type=memory_type,
             org_id=org_id,
-        )[: max(limit, 0)]
+            limit=page_limit,
+            offset=max(0, offset),
+        )
         return {
             "facts": [
                 {
@@ -1151,7 +1155,13 @@ def create_app(
                 }
                 for f in facts
             ],
-            "total": len(facts),
+            "total": count_facts(
+                conn,
+                container_tag=containerTag,
+                include_superseded=include_superseded,
+                memory_type=memory_type,
+                org_id=org_id,
+            ),
         }
 
     @app.post("/v4/import")

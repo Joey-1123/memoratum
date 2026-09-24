@@ -139,3 +139,22 @@ def test_reassert_revives_superseded_fact() -> None:
     assert revived["valid_to"] is None
     assert "Tencent" in [f["object"] for f in list_facts(conn, "u1")]
     conn.close()
+
+
+def test_list_facts_supports_limit_and_offset() -> None:
+    from memoratum.facts import add_fact, count_facts, list_facts
+
+    conn = _db()
+    for index in range(3):
+        add_fact(
+            conn,
+            container_tag="u1",
+            subject=f"s{index}",
+            predicate="knows",
+            object=str(index),
+            document_id=None,
+        )
+    assert len(list_facts(conn, "u1", limit=2)) == 2
+    assert [fact["subject"] for fact in list_facts(conn, "u1", limit=2, offset=2)] == ["s2"]
+    assert count_facts(conn, "u1") == 3
+    conn.close()

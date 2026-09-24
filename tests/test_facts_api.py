@@ -54,3 +54,31 @@ def test_list_facts_with_filters_and_history() -> None:
     assert other.json()["total"] == 1
     missing = c.get("/v4/facts")
     assert missing.status_code == 422
+
+
+def test_list_facts_offset_returns_stable_page_and_total() -> None:
+    from memoratum import db
+    from memoratum.config import Settings
+    from memoratum.facts import add_fact
+
+    c = _client()
+    conn = db.connect(Settings.load().db_path)
+    try:
+        for index in range(3):
+            add_fact(
+                conn,
+                container_tag="paged",
+                subject=f"s{index}",
+                predicate="knows",
+                object=str(index),
+                document_id=None,
+                supersede=False,
+            )
+    finally:
+        conn.close()
+    first = c.get("/v4/facts", params={"containerTag": "paged", "limit": 2, "offset": 0})
+    second = c.get("/v4/facts", params={"containerTag": "paged", "limit": 2, "offset": 2})
+    assert first.status_code == second.status_code == 200
+    assert first.json()["total"] == second.json()["total"] == 3
+    assert len(first.json()["facts"]) == 2
+    assert len(second.json()["facts"]) == 1

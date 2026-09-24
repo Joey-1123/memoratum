@@ -111,6 +111,8 @@ def list_facts(
     filters: dict[str, Any] | None = None,
     memory_type: str | None = None,
     org_id: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     now = time.time()
     params: list[Any] = [container_tag]
@@ -124,7 +126,11 @@ def list_facts(
     if org_id is not None:
         where += " AND org_id = ?"
         params.append(org_id)
-    rows = conn.execute(f"SELECT * FROM facts WHERE {where} ORDER BY created_at", params).fetchall()
+    query = f"SELECT * FROM facts WHERE {where} ORDER BY created_at"
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params += (max(0, limit), max(0, offset))
+    rows = conn.execute(query, params).fetchall()
     out = []
     for r in rows:
         fact = dict(r)
@@ -132,3 +138,29 @@ def list_facts(
         if _matches(fact["metadata"], filters):
             out.append(fact)
     return out
+
+
+def count_facts(
+    conn: sqlite3.Connection,
+    container_tag: str,
+    *,
+    include_superseded: bool = False,
+    memory_type: str | None = None,
+    org_id: str | None = None,
+) -> int:
+    """Count facts using the same visibility scope as list_facts."""
+    now = time.time()
+    params: list[Any] = [container_tag]
+    where = "container_tag = ?"
+    if not include_superseded:
+        where += " AND valid_to IS NULL AND (expires_at IS NULL OR expires_at > ?)"
+        params.append(now)
+    if memory_type is not None:
+        where += " AND memory_type = ?"
+        params.append(memory_type)
+    if org_id is not None:
+        where += " AND org_id = ?"
+        params.append(org_id)
+    return int(
+        conn.execute(f"SELECT COUNT(*) AS n FROM facts WHERE {where}", params).fetchone()["n"]
+    )
