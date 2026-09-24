@@ -196,7 +196,9 @@ def main() -> None:
         [
             f"# LoCoMo retrieval — source={args.source} n={result['n']}",
             "",
-            result["aggregate"].__repr__(),
+            "```json",
+            json.dumps(result["aggregate"], indent=2, ensure_ascii=False),
+            "```",
         ]
     )
     print(report)
