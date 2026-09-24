@@ -14,7 +14,7 @@ Memoratum ingests documents, chat turns, and code, then serves them back as sear
 - **Dreaming** — LLM fact extraction into a temporal graph (`instant` per-doc or `dynamic` per-tag); contradictions supersede, history is kept, and true deletion exists (`DELETE` endpoints)
 - **Auth** — admin key plus container-scoped keys with wildcard support, first-boot keygen, revocation list, uniform 404s against ID probing
 - **Profiles** — per-tag fact sample + document/chunk/fact stats
-- **Clients** — Python SDK, TypeScript SDK, OpenCode plugin, MCP server
+- **Clients** — Python SDK, TypeScript SDK, OpenCode plugin, MCP server, and a documented Mem0-compatible route shim
 - **Governance** — local audit trail and per-key usage views, plus expiring read-only document share links
 - **Eval harness** — LongMemEval-S, LoCoMo, and LoCoMo-MC10 local runners (see `docs/EVALUATION.md`)
 
