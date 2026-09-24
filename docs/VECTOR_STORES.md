@@ -17,7 +17,10 @@ Install optional backends with `uv sync --extra qdrant`,
 expects the `vector` extension to be available in the target database.
 
 The adapters use explicit vectors and scope metadata, so the embedding provider
-remains independent from the vector backend.
+remains independent from the vector backend. Deleting a document or purging a
+tag removes local vector points as part of the same lifecycle operation;
+external backends receive the corresponding scoped delete. Re-ingestion
+replaces the old chunk points before the new index is searched.
 
 Configure the active index with `MEMORATUM_VECTOR_STORE` (`sqlite`, `qdrant`,
 `chroma`, `pgvector`, or `memory`), `MEMORATUM_VECTOR_STORE_ENDPOINT`,
