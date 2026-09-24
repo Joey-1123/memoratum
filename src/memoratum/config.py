@@ -30,6 +30,9 @@ class Settings:
     vector_store_path: str
     vector_store_collection: str
     vector_store_dims: int
+    oidc_issuer: str
+    oidc_audience: str
+    oidc_jwks_url: str
     dashboard_dir: str
 
     @classmethod
@@ -57,6 +60,9 @@ class Settings:
             vector_store_path=_get("MEMORATUM_VECTOR_STORE_PATH", ""),
             vector_store_collection=_get("MEMORATUM_VECTOR_STORE_COLLECTION", "memoratum"),
             vector_store_dims=vector_dims,
+            oidc_issuer=_get("MEMORATUM_OIDC_ISSUER", ""),
+            oidc_audience=_get("MEMORATUM_OIDC_AUDIENCE", ""),
+            oidc_jwks_url=_get("MEMORATUM_OIDC_JWKS_URL", ""),
             dashboard_dir=_get(
                 "MEMORATUM_DASHBOARD_DIR",
                 os.path.join(
