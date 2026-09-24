@@ -31,7 +31,14 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
   `DELETE /v4/memories/{id}`, `DELETE /v4/tags/{tag}`, and key revocation via
   `POST /v4/keys/revoke` — use these for secret spills and erasure requests.
 
-## Backups
+## Telemetry boundary
+
+Application, client, and dashboard source is checked in CI by
+`scripts/check_no_telemetry.py`. The guard rejects analytics SDKs, telemetry
+exporters, and known event endpoints. Local audit events and usage counters
+are explicitly accounting records stored in SQLite; they are not telemetry and
+never leave the process.
+
 
 The entire state is one SQLite file (`memoratum.db` in `MEMORATUM_DATA_DIR`,
 WAL mode). Back it up hot with:
