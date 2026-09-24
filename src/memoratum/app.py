@@ -77,6 +77,31 @@ class ShareIn(BaseModel):
     expires_in: int = Field(default=7 * 24 * 60 * 60, ge=60, le=365 * 24 * 60 * 60)
 
 
+class Mem0Message(BaseModel):
+    role: Literal["user", "assistant", "system"] = "user"
+    content: str = Field(min_length=1, max_length=100_000)
+
+
+class Mem0AddIn(BaseModel):
+    messages: list[Mem0Message] = Field(min_length=1, max_length=500)
+    user_id: str | None = None
+    agent_id: str | None = None
+    app_id: str | None = None
+    run_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    infer: bool = True
+    containerTag: str | None = None
+
+
+class Mem0SearchIn(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    top_k: int = Field(default=10, ge=1, le=100)
+    threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    rerank: bool = False
+    show_expired: bool = False
+
+
 class FactIn(BaseModel):
     subject: str = Field(min_length=1)
     predicate: str = Field(min_length=1)
@@ -103,6 +128,28 @@ def _is_admin(authorization: str | None, settings: Settings) -> bool:
         and authorization.startswith("Bearer ")
         and hmac.compare_digest(authorization[len("Bearer ") :], settings.api_key)
     )
+
+
+def _compat_auth_header(authorization: str | None) -> str | None:
+    if authorization and authorization.startswith("Token "):
+        return "Bearer " + authorization[len("Token ") :]
+    return authorization
+
+
+def _mem0_entity_tag(values: dict[str, Any]) -> str | None:
+    for key in ("user_id", "agent_id", "app_id", "run_id"):
+        value = values.get(key)
+        if isinstance(value, str) and value.strip():
+            return f"mem0:{key}:{value}"
+    for key in ("AND", "OR"):
+        nested = values.get(key)
+        if isinstance(nested, list):
+            for item in nested:
+                if isinstance(item, dict):
+                    found = _mem0_entity_tag(item)
+                    if found:
+                        return found
+    return None
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -453,6 +500,147 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             metadata={"job_id": job_id},
         )
         return {"id": created["id"], "status": "queued", "job_id": job_id}
+
+    @app.post("/v3/memories/add/")
+    @app.post("/v1/memories/")
+    def mem0_add(body: Mem0AddIn, conn: DbConn, authorization: str | None = Header(default=None)):
+        values = body.model_dump()
+        tag = body.containerTag or _mem0_entity_tag(values)
+        if tag is None:
+            return _error(
+                "VALIDATION_ERROR",
+                "one of user_id, agent_id, app_id, or run_id is required",
+                422,
+            )
+        auth = _compat_auth_header(authorization)
+        org_id = authorize(
+            auth,
+            conn,
+            tag,
+            operation="document",
+            input_chars=sum(len(m.content) for m in body.messages),
+        )
+        content = "\n".join(f"{message.role}: {message.content}" for message in body.messages)
+        document = db.create_document(
+            conn,
+            container_tag=tag,
+            content=content,
+            metadata=body.metadata,
+            org_id=org_id,
+        )
+        job_id = jobs.enqueue(
+            conn,
+            kind="ingest",
+            payload={
+                "document_id": document["id"],
+                "dreaming": "dynamic",
+                "container_tag": tag,
+                "org_id": org_id,
+            },
+        )
+        audit(
+            auth,
+            conn,
+            container_tag=tag,
+            org_id=org_id,
+            action="mem0.add",
+            resource_type="document",
+            resource_id=document["id"],
+            metadata={"job_id": job_id, "infer": body.infer},
+        )
+        return {"event_id": job_id, "status": "PENDING"}
+
+    @app.get("/v1/event/{event_id}/")
+    def mem0_event(event_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        job = jobs.get(conn, event_id)
+        if job is None:
+            return _error("NOT_FOUND", "event not found", 404)
+        auth = _compat_auth_header(authorization)
+        if settings.auth_enabled and not credential_ok(auth, conn):
+            return _error("UNAUTHORIZED", "authentication required", 401)
+        tag = _job_tag(conn, job)
+        org_id = _job_org(conn, job)
+        if settings.auth_enabled and (tag is None or not may_access(auth, conn, tag, org_id)):
+            return _error("NOT_FOUND", "event not found", 404)
+        status = {
+            "queued": "PENDING",
+            "running": "PENDING",
+            "done": "SUCCEEDED",
+            "failed": "FAILED",
+        }.get(job["status"], "PENDING")
+        return {"event_id": event_id, "status": status, "results": job.get("result", {})}
+
+    @app.post("/v3/memories/search/")
+    @app.post("/v1/memories/search/")
+    def mem0_search(
+        body: Mem0SearchIn, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        tag = _mem0_entity_tag(body.filters)
+        if tag is None:
+            return _error(
+                "VALIDATION_ERROR",
+                "filters must include user_id, agent_id, app_id, or run_id",
+                422,
+            )
+        auth = _compat_auth_header(authorization)
+        org_id = authorize(auth, conn, tag, operation="search", input_chars=len(body.query))
+        vector_store = app.state.vector_store
+        if vector_store is None and vector_provider in {"", "sqlite", "local"}:
+            vector_store = build_vector_store(settings, conn)
+        hits = search(
+            conn,
+            app.state.embedder,
+            body.query,
+            container_tag=tag,
+            org_id=org_id,
+            limit=body.top_k,
+            threshold=body.threshold,
+            search_mode="hybrid",
+            rerank=body.rerank,
+            reranker=app.state.reranker,
+            vector_store=vector_store,
+        )
+        return {
+            "results": [
+                {
+                    "id": hit["id"],
+                    "memory": hit.get("memory", hit.get("chunk", "")),
+                    "score": hit.get("similarity", 0.0),
+                    "metadata": {},
+                }
+                for hit in hits
+            ]
+        }
+
+    @app.get("/v1/memories/")
+    def mem0_list(
+        conn: DbConn,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+        run_id: str | None = None,
+        limit: int = 100,
+        authorization: str | None = Header(default=None),
+    ):
+        tag = _mem0_entity_tag(
+            {"user_id": user_id, "agent_id": agent_id, "app_id": app_id, "run_id": run_id}
+        )
+        if tag is None:
+            return _error("VALIDATION_ERROR", "an entity id is required", 422)
+        auth = _compat_auth_header(authorization)
+        org_id = authorize(auth, conn, tag, operation="request")
+        facts = list_facts(conn, tag, org_id=org_id)[: max(1, min(limit, 100))]
+        return {
+            "results": [
+                {
+                    "id": fact["id"],
+                    "memory": f"{fact['subject']} {fact['predicate']} {fact['object']}",
+                    "metadata": fact["metadata"],
+                    "created_at": fact["created_at"],
+                }
+                for fact in facts
+            ]
+        }
 
     @app.get("/v3/documents/{doc_id}")
     def get_document(doc_id: str, conn: DbConn, authorization: str | None = Header(default=None)):

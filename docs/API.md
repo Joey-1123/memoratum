@@ -114,6 +114,22 @@ revoked, unknown, and deleted-document tokens all return the same 404 shape.
 The response contains document content and timestamps, never API keys or
 metadata.
 
+## Mem0-compatible routes
+
+For client migrations, the server accepts `Authorization: Token <key>` and maps
+these routes:
+
+- `POST /v3/memories/add/` (also `/v1/memories/`) → `{event_id, status}`;
+  poll `GET /v1/event/{event_id}/`.
+- `POST /v3/memories/search/` (also `/v1/memories/search/`) with entity filters
+  → `{results: [{id, memory, score, metadata}]}`.
+- `GET /v1/memories/` with `user_id`, `agent_id`, `app_id`, or `run_id` → the
+  scoped fact list.
+
+Entity IDs become isolated `mem0:<entity>:<value>` container tags. Unsupported
+Mem0 inference, update, organization, and webhook features are intentionally
+not emulated; use the native v3/v4 routes for those capabilities.
+
 ## `GET /health` → 200
 
 `{ok: true}`. Unauthenticated by design (load-balancer checks).
