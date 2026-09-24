@@ -31,7 +31,19 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
   `DELETE /v4/memories/{id}`, `DELETE /v4/tags/{tag}`, and key revocation via
   `POST /v4/keys/revoke` — use these for secret spills and erasure requests.
 
-## Telemetry boundary
+## Audit gates
+
+The scheduled `security-audit` workflow runs the local no-telemetry guard,
+`pip-audit` against the locked Python environment, and a high-severity npm
+audit for the dashboard. Run the same checks locally with:
+
+```sh
+uv run python scripts/check_no_telemetry.py
+uvx pip-audit --local
+npm ci --prefix dashboard
+npm audit --prefix dashboard --audit-level=high
+```
+
 
 Application, client, and dashboard source is checked in CI by
 `scripts/check_no_telemetry.py`. The guard rejects analytics SDKs, telemetry

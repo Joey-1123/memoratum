@@ -107,6 +107,7 @@ eval/            → LongMemEval-S reports (generated, committed as evidence)
 ```sh
 uv run pytest -q          # full suite
 uv run python scripts/check_no_telemetry.py  # privacy guard
+uvx pip-audit --local     # dependency audit
 uv run ruff check .       # lint
 uv run ruff format .      # format
 ```
