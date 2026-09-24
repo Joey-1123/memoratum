@@ -186,6 +186,19 @@ _MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_vector_scope ON vector_points(container_tag, org_id);
     CREATE INDEX IF NOT EXISTS idx_vector_created ON vector_points(created_at DESC);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS share_links(
+      id TEXT PRIMARY KEY,
+      token_hash TEXT UNIQUE NOT NULL,
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      created_by TEXT,
+      created_at REAL NOT NULL,
+      expires_at REAL NOT NULL,
+      revoked_at REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_share_document ON share_links(document_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_share_expiry ON share_links(expires_at, revoked_at);
+    """,
 )
 
 
@@ -281,6 +294,46 @@ def get_document(db: sqlite3.Connection, doc_id: str) -> dict[str, Any]:
     doc = dict(row)
     doc["metadata"] = json.loads(doc.get("metadata") or "{}")
     return doc
+
+
+def create_share_link(
+    db: sqlite3.Connection,
+    *,
+    token_hash: str,
+    document_id: str,
+    created_by: str | None,
+    expires_at: float,
+) -> dict[str, Any]:
+    link_id = uuid.uuid4().hex
+    db.execute(
+        "INSERT INTO share_links(id, token_hash, document_id, created_by, created_at, expires_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (link_id, token_hash, document_id, created_by, _now(), expires_at),
+    )
+    db.commit()
+    link = get_share_link(db, link_id)
+    if link is None:
+        raise RuntimeError("share link creation failed")
+    return link
+
+
+def get_share_link(db: sqlite3.Connection, link_id: str) -> dict[str, Any] | None:
+    row = db.execute("SELECT * FROM share_links WHERE id = ?", (link_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_share_link_by_token(db: sqlite3.Connection, token_hash: str) -> dict[str, Any] | None:
+    row = db.execute("SELECT * FROM share_links WHERE token_hash = ?", (token_hash,)).fetchone()
+    return dict(row) if row else None
+
+
+def revoke_share_link(db: sqlite3.Connection, link_id: str) -> bool:
+    cur = db.execute(
+        "UPDATE share_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        (_now(), link_id),
+    )
+    db.commit()
+    return cur.rowcount > 0
 
 
 def set_status(db: sqlite3.Connection, doc_id: str, status: str) -> None:

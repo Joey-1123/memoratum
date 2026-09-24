@@ -10,6 +10,7 @@ import hmac
 import json
 import math
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -69,6 +70,11 @@ class KeyIn(BaseModel):
 class DocPatch(BaseModel):
     content: str | None = Field(default=None, min_length=1, max_length=500_000)
     metadata: dict[str, Any] | None = None
+
+
+class ShareIn(BaseModel):
+    document_id: str = Field(min_length=1, max_length=128)
+    expires_in: int = Field(default=7 * 24 * 60 * 60, ge=60, le=365 * 24 * 60 * 60)
 
 
 class FactIn(BaseModel):
@@ -467,6 +473,115 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
             org_id=doc.get("org_id"),
         )
         return {"id": doc["id"], "containerTag": doc["container_tag"], "status": doc["status"]}
+
+    def _active_share_link(conn: sqlite3.Connection, link: dict[str, Any] | None) -> bool:
+        return bool(
+            link
+            and link.get("revoked_at") is None
+            and float(link.get("expires_at") or 0) > time.time()
+        )
+
+    @app.post("/v4/share-links", status_code=201)
+    def create_share_link(
+        body: ShareIn, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        try:
+            document = db.get_document(conn, body.document_id)
+        except KeyError:
+            return _error("NOT_FOUND", "document not found", 404)
+        if settings.auth_enabled and not _authorized(authorization, conn):
+            return _error("UNAUTHORIZED", "authentication required", 401)
+        if settings.auth_enabled and not _may_access(
+            authorization, conn, document["container_tag"], document.get("org_id")
+        ):
+            return _error("NOT_FOUND", "document not found", 404)
+        org_id = authorize(
+            authorization,
+            conn,
+            document["container_tag"],
+            document.get("org_id"),
+            operation="request",
+        )
+        actor_kind, key_hash = actor(authorization, conn)
+        token = "share_" + secrets.token_urlsafe(32)
+        link = db.create_share_link(
+            conn,
+            token_hash=db.hash_key(token),
+            document_id=document["id"],
+            created_by=key_hash,
+            expires_at=time.time() + body.expires_in,
+        )
+        audit(
+            authorization,
+            conn,
+            container_tag=document["container_tag"],
+            org_id=org_id,
+            action="share.created",
+            resource_type="share_link",
+            resource_id=link["id"],
+            metadata={"actor_kind": actor_kind},
+        )
+        return {
+            "id": link["id"],
+            "token": token,
+            "url": f"/v1/share/{token}",
+            "expiresAt": link["expires_at"],
+        }
+
+    @app.delete("/v4/share-links/{link_id}")
+    def revoke_share_link(
+        link_id: str, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        link = db.get_share_link(conn, link_id)
+        if link is None:
+            return _error("NOT_FOUND", "share link not found", 404)
+        try:
+            document = db.get_document(conn, link["document_id"])
+        except KeyError:
+            return _error("NOT_FOUND", "share link not found", 404)
+        if settings.auth_enabled and not _authorized(authorization, conn):
+            return _error("UNAUTHORIZED", "authentication required", 401)
+        if settings.auth_enabled and not _may_access(
+            authorization, conn, document["container_tag"], document.get("org_id")
+        ):
+            return _error("NOT_FOUND", "share link not found", 404)
+        org_id = authorize(
+            authorization,
+            conn,
+            document["container_tag"],
+            document.get("org_id"),
+            operation="request",
+        )
+        revoked = db.revoke_share_link(conn, link_id)
+        audit(
+            authorization,
+            conn,
+            container_tag=document["container_tag"],
+            org_id=org_id,
+            action="share.revoked",
+            resource_type="share_link",
+            resource_id=link_id,
+            outcome="succeeded" if revoked else "not_found",
+        )
+        return {"id": link_id, "revoked": revoked}
+
+    @app.get("/v1/share/{token}")
+    def read_share(token: str, conn: DbConn):
+        link = db.get_share_link_by_token(conn, db.hash_key(token))
+        if not _active_share_link(conn, link):
+            return _error("NOT_FOUND", "share link not found", 404)
+        assert link is not None
+        try:
+            document = db.get_document(conn, link["document_id"])
+        except KeyError:
+            return _error("NOT_FOUND", "share link not found", 404)
+        return {
+            "id": document["id"],
+            "containerTag": document["container_tag"],
+            "content": document["content"],
+            "createdAt": document["created_at"],
+            "expiresAt": link["expires_at"],
+        }
 
     @app.patch("/v3/documents/{doc_id}")
     def update_document(
