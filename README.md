@@ -16,6 +16,7 @@ Memoratum ingests documents, chat turns, and code, then serves them back as sear
 - **Profiles** — per-tag fact sample + document/chunk/fact stats
 - **Clients** — Python SDK, TypeScript SDK, OpenCode plugin, MCP server, and a documented Mem0-compatible route shim
 - **Governance** — local audit trail and per-key usage views, plus expiring read-only document share links
+- **Operations** — SQLite backup/restore helper and small-deployment HA guidance
 - **Eval harness** — LongMemEval-S, LoCoMo, and LoCoMo-MC10 local runners (see `docs/EVALUATION.md`)
 
 ## Installation
@@ -96,7 +97,7 @@ src/memoratum/   → app.py (routes), db.py (SQLite/FTS5/migrations),
 tests/           → pytest suite (one file per module, red-first)
 clients/         → ts/ SDK, opencode/ plugin
 dashboard/       → Vite+React console (served at /dashboard)
-docs/            → PARITY.md (build spec), API.md, ARCHITECTURE.md, SECURITY.md
+docs/            → PARITY.md (build spec), API.md, ARCHITECTURE.md, SECURITY.md, OPERATIONS.md
 eval/            → LongMemEval-S reports (generated, committed as evidence)
 ```
 
