@@ -62,7 +62,7 @@ Same `(subject, predicate, object)` re-asserts (reviving a superseded row) inste
 
 ## `GET /v4/facts?containerTag=` → 200 | 422
 
-`{facts: [...full rows...], total}` with optional `include_superseded=true`, `memory_type`, `org_id`, and `limit` (default 100). `containerTag` required (422 when missing). Powers diff-sync clients.
+`{facts: [...full rows...], total}` with optional `include_superseded=true`, `memory_type`, `org_id`, `limit` (default 100, capped at 500), and `offset`. `containerTag` required (422 when missing). Powers diff-sync clients.
 
 ## `GET /v4/profile?containerTag=` → 200
 
