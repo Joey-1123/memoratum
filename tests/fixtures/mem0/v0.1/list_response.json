@@ -1,0 +1,10 @@
+{
+  "results": [
+    {
+      "id": "fixture-memory",
+      "memory": "The contract profile keeps memories local.",
+      "metadata": {},
+      "created_at": 0.0
+    }
+  ]
+}

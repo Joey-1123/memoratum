@@ -94,11 +94,13 @@ Vite dev proxy forwards `/v3`+`/v4` to `:6767`.
 src/memoratum/   → app.py (routes), db.py (SQLite/FTS5/migrations),
                    ingest.py, dreaming.py, facts.py, search.py,
                    chunking.py, embeddings.py, client.py, mcp.py,
-                   config.py, eval_longmemeval.py, eval_metrics.py
+                   config.py, eval_longmemeval.py, eval_metrics.py,
+                    mem0_contract.py
 tests/           → pytest suite (one file per module, red-first)
 clients/         → ts/ SDK, opencode/ plugin
 dashboard/       → Vite+React console (served at /dashboard)
-docs/            → PARITY.md (build spec), API.md, ARCHITECTURE.md, SECURITY.md, OPERATIONS.md, OIDC.md, DOGFOOD.md
+docs/            → PARITY.md (build spec), API.md, MEM0_COMPATIBILITY.md,
+                    ARCHITECTURE.md, SECURITY.md, OPERATIONS.md, OIDC.md, DOGFOOD.md
 eval/            → LongMemEval-S reports (generated, committed as evidence)
 ```
 

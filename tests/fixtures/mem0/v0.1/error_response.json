@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "filters must include user_id, agent_id, app_id, or run_id"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "messages": [{"role": "user", "content": "SDK contract write."}],
+  "user_id": "sdk-user",
+  "metadata": {"source": "sdk-contract"}
+}

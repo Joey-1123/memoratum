@@ -33,6 +33,7 @@ dev = [
     "pytest>=8",
     "ruff>=0.8",
     "httpx>=0.28",
+    "mem0ai==2.2.0",
 ]
 
 [build-system]
