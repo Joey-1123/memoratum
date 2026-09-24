@@ -266,6 +266,14 @@ def create_app(
     app.state.vector_store = (
         None if vector_provider in {"", "sqlite", "local"} else build_vector_store(settings)
     )
+
+    def vector_store_for(conn: sqlite3.Connection):
+        if app.state.vector_store is not None:
+            return app.state.vector_store
+        if vector_provider in {"", "sqlite", "local"}:
+            return build_vector_store(settings, conn)
+        return None
+
     _ensure_boot_key(settings)
     dashboard_index = os.path.join(settings.dashboard_dir, "index.html")
     if os.path.exists(dashboard_index):
@@ -605,9 +613,7 @@ def create_app(
             )
         auth = _compat_auth_header(authorization)
         org_id = authorize(auth, conn, tag, operation="search", input_chars=len(body.query))
-        vector_store = app.state.vector_store
-        if vector_store is None and vector_provider in {"", "sqlite", "local"}:
-            vector_store = build_vector_store(settings, conn)
+        vector_store = vector_store_for(conn)
         hits = search(
             conn,
             app.state.embedder,
@@ -813,6 +819,14 @@ def create_app(
             operation="document",
             input_chars=len(patch.content or doc["content"]),
         )
+        old_chunk_ids = [
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM chunks WHERE document_id = ?", (doc_id,)
+            ).fetchall()
+        ]
+        if old_chunk_ids:
+            vector_store_for(conn).delete(ids=old_chunk_ids)
         updated = db.update_document(conn, doc_id, content=patch.content, metadata=patch.metadata)
         job_id = jobs.enqueue(
             conn,
@@ -888,9 +902,7 @@ def create_app(
             if query.rewriteQuery and app.state.llm is not None
             else [query.q]
         )
-        vector_store = app.state.vector_store
-        if vector_store is None and vector_provider in {"", "sqlite", "local"}:
-            vector_store = build_vector_store(settings, conn)
+        vector_store = vector_store_for(conn)
         batches = [
             search(
                 conn,
@@ -1040,6 +1052,7 @@ def create_app(
             if exc.status_code == 403:
                 return _error("NOT_FOUND", "tag not found", 404)
             raise
+        vector_store_for(conn).delete(container_tag=tag, org_id=org_id)
         counts = db.purge_tag(conn, tag, org_id=org_id)
         audit(
             authorization,

@@ -445,8 +445,15 @@ def revoke_key(db: sqlite3.Connection, raw: str) -> bool:
 
 
 def prune_expired(conn: sqlite3.Connection) -> dict[str, int]:
-    """Hard-delete expired documents (chunks cascade) and facts. Returns counts."""
+    """Hard-delete expired documents (chunks cascade), vectors, and facts."""
     now = time.time()
+    conn.execute(
+        "DELETE FROM vector_points WHERE id IN ("
+        "SELECT c.id FROM chunks c JOIN documents d ON d.id = c.document_id"
+        " WHERE d.expires_at IS NOT NULL AND d.expires_at <= ?"
+        ")",
+        (now,),
+    )
     facts = conn.execute(
         "DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
     ).rowcount
@@ -467,6 +474,7 @@ def purge_tag(
         where += " AND org_id = ?"
         params += (org_id,)
     facts = db.execute(f"DELETE FROM facts WHERE {where}", params).rowcount
+    db.execute(f"DELETE FROM vector_points WHERE {where}", params)
     docs = db.execute(f"DELETE FROM documents WHERE {where}", params).rowcount
     keys = db.execute(f"DELETE FROM api_keys WHERE {where}", params).rowcount
     db.commit()
