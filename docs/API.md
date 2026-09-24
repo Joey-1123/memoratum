@@ -100,6 +100,20 @@ or IP addresses.
 Administrator-only cumulative counters for each local key fingerprint and
 scope: requests, searches, document writes, fact writes, and input characters.
 
+## `POST /v4/share-links` → 201
+
+Body `{document_id: string, expires_in?: 60..31536000}`. Creates a read-only,
+single-document link and returns `{id, token, url, expiresAt}` once. Only an
+actor who can read the document may create or revoke its links; tokens are
+stored hashed and can be revoked with `DELETE /v4/share-links/{id}`.
+
+## `GET /v1/share/{token}` → 200 | 404
+
+Public, unauthenticated read-only access to the shared document. Expired,
+revoked, unknown, and deleted-document tokens all return the same 404 shape.
+The response contains document content and timestamps, never API keys or
+metadata.
+
 ## `GET /health` → 200
 
 `{ok: true}`. Unauthenticated by design (load-balancer checks).
