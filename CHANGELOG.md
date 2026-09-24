@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-09-24
+### Added
+- Fact pagination with exact totals and short-lived dashboard request caching.
+- Scheduled Python and dashboard dependency security audits.
+- Local dogfood evidence for repository docs and Ollama embeddings.
+### Changed
+- Package metadata and lockfile now track the v0.33.0 release.
+
 ## [0.30.0] - 2026-09-24
 ### Added
 - Provider-neutral LLM, embedding, reranker, and vector-store adapters with

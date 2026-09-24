@@ -98,7 +98,7 @@ src/memoratum/   → app.py (routes), db.py (SQLite/FTS5/migrations),
 tests/           → pytest suite (one file per module, red-first)
 clients/         → ts/ SDK, opencode/ plugin
 dashboard/       → Vite+React console (served at /dashboard)
-docs/            → PARITY.md (build spec), API.md, ARCHITECTURE.md, SECURITY.md, OPERATIONS.md, OIDC.md
+docs/            → PARITY.md (build spec), API.md, ARCHITECTURE.md, SECURITY.md, OPERATIONS.md, OIDC.md, DOGFOOD.md
 eval/            → LongMemEval-S reports (generated, committed as evidence)
 ```
 
