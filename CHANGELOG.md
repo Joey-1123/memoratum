@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.34.2] - 2026-09-24
+### Changed
+- Align package and lockfile metadata with the final release tag.
+
 ## [0.34.0] - 2026-09-24
 ### Changed
 - Polished LoCoMo report output and synchronized package metadata with the
