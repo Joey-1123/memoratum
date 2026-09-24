@@ -28,3 +28,30 @@ export interface GraphFact {
   valid_to: number | null;
   superseded_by: string | null;
 }
+
+export interface AuditEvent {
+  id: string;
+  createdAt: number;
+  actorKind: string;
+  actorKeyFingerprint: string | null;
+  containerTag: string | null;
+  orgId: string | null;
+  action: string;
+  resourceType: string | null;
+  resourceId: string | null;
+  outcome: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface UsageCounter {
+  keyFingerprint: string;
+  containerTag: string | null;
+  orgId: string | null;
+  requests: number;
+  searches: number;
+  documentWrites: number;
+  factWrites: number;
+  inputChars: number;
+  createdAt: number;
+  updatedAt: number;
+}

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ActivityIcon } from "./icons";
 import { ExportIcon } from "./icons";
 import { GraphIcon } from "./icons";
 import { ImportIcon } from "./icons";
@@ -12,6 +13,7 @@ const RIBBON = [
   { id: "search", label: "Search", Icon: SearchIcon },
   { id: "import", label: "Import", Icon: ImportIcon },
   { id: "export", label: "Export", Icon: ExportIcon },
+  { id: "governance", label: "Governance", Icon: ActivityIcon },
 ] as const;
 
 export function Shell({
@@ -23,7 +25,7 @@ export function Shell({
   right,
 }: {
   view: string;
-  onView: (v: "tags" | "graph" | "search" | "import" | "export") => void;
+  onView: (v: "tags" | "graph" | "search" | "import" | "export" | "governance") => void;
   status: ServerStatus;
   left: ReactNode;
   children: ReactNode;
