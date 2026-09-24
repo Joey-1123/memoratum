@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-09-24
+### Changed
+- Polished LoCoMo report output and synchronized package metadata with the
+  final v0.34.0 release.
+
 ## [0.33.0] - 2026-09-24
 ### Added
 - Fact pagination with exact totals and short-lived dashboard request caching.
