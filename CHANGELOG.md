@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-24
+### Added
+- Provider-neutral LLM, embedding, reranker, and vector-store adapters with
+  optional local/gateway integrations and local fallbacks.
+- Scoped vector indexing during ingest, backend-aware search, and vector-point
+  lifecycle cleanup.
+- LongMemEval-S, LoCoMo, and LoCoMo-MC10 local evaluation harnesses with
+  deterministic manifests, result comparison, and scheduled smoke fixtures.
+- Revocable, expiring document share links; Mem0-compatible route shim;
+  administrator governance tables in the dashboard.
+- SQLite backup/restore CLI and an injectable OIDC identity-provider seam.
+### Security
+- CI now rejects application/client/dashboard telemetry and analytics code;
+  local audit and usage accounting remain explicitly local.
+### Fixed
+- Vector points are removed on purge, expiry, and re-index; OIDC identities
+  retain local scope and audit attribution.
+
 ## [0.12.0] - 2026-09-23
 ### Added
 - Memory orbit hero (ported orbiting-rings concept onto our tokens: particle
