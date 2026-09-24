@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from memoratum import db, jobs
 from memoratum import facts as fact_store
+from memoratum.auth import IdentityProvider, token_fingerprint
 from memoratum.config import Settings
 from memoratum.embeddings import Embedder
 from memoratum.embeddings import build_embedder as build_provider_embedder
@@ -211,7 +212,12 @@ def _is_loopback(ip: str) -> bool:
     return ip == "localhost" or ip.startswith("127.") or ip in ("::1", "::ffff:127.0.0.1")
 
 
-def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int | None = 120):
+def create_app(
+    settings: Settings | None = None,
+    *,
+    rate_limit_per_minute: int | None = 120,
+    identity_provider: IdentityProvider | None = None,
+):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
     app = FastAPI(title="Memoratum")
@@ -270,12 +276,25 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         )
 
     def scope_of(authorization: str | None, conn: sqlite3.Connection) -> dict | bool:
-        """Admin key -> True; known key -> its scope (container_tag, org_id); else False."""
-        if not authorization or not authorization.startswith("Bearer "):
+        """Resolve admin, local scoped key, or injected external identity."""
+        normalized = _compat_auth_header(authorization)
+        if not normalized or not normalized.startswith("Bearer "):
             return False
-        raw = authorization[len("Bearer ") :]
+        raw = normalized[len("Bearer ") :]
         if hmac.compare_digest(raw, settings.api_key):
             return True
+        if identity_provider is not None:
+            try:
+                identity = identity_provider.verify(raw)
+            except Exception:  # noqa: BLE001 — invalid external identity is unauthorized
+                identity = None
+            if identity is not None:
+                return {
+                    "key_hash": token_fingerprint(raw),
+                    "container_tag": identity.container_tag,
+                    "org_id": identity.org_id,
+                    "identity_subject": identity.subject,
+                }
         row = db.lookup_key(conn, raw)
         if row is None:
             return False
@@ -286,13 +305,15 @@ def create_app(settings: Settings | None = None, *, rate_limit_per_minute: int |
         }
 
     def actor_from_scope(authorization: str | None, scope: dict | bool) -> tuple[str, str | None]:
-        if not authorization or not authorization.startswith("Bearer "):
+        normalized = _compat_auth_header(authorization)
+        if not normalized or not normalized.startswith("Bearer "):
             return "anonymous", None
-        raw = authorization[len("Bearer ") :]
+        raw = normalized[len("Bearer ") :]
         if scope is True:
             return "admin", db.hash_key(raw)
         if isinstance(scope, dict):
-            return "key", scope.get("key_hash")
+            actor_kind = "oidc" if scope.get("identity_subject") else "key"
+            return actor_kind, scope.get("key_hash")
         return "anonymous", None
 
     def actor(authorization: str | None, conn: sqlite3.Connection) -> tuple[str, str | None]:

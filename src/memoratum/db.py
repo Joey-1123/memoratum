@@ -608,7 +608,7 @@ def append_audit_event(
     metadata: dict[str, Any] | None = None,
 ) -> str:
     """Append an accountability event without storing credentials or payloads."""
-    if actor_kind not in {"admin", "key", "anonymous"}:
+    if actor_kind not in {"admin", "key", "anonymous", "oidc"}:
         raise ValueError(f"unknown audit actor kind: {actor_kind}")
     event_id = uuid.uuid4().hex
     db.execute(
