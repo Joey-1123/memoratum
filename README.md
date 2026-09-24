@@ -15,7 +15,8 @@ Memoratum ingests documents, chat turns, and code, then serves them back as sear
 - **Auth** — admin key plus container-scoped keys with wildcard support, first-boot keygen, revocation list, uniform 404s against ID probing
 - **Profiles** — per-tag fact sample + document/chunk/fact stats
 - **Clients** — Python SDK, TypeScript SDK, OpenCode plugin, MCP server
-- **Eval harness** — LongMemEval-S retrieval scoring (see `eval/`)
+- **Governance** — local audit trail and per-key usage views, plus expiring read-only document share links
+- **Eval harness** — LongMemEval-S, LoCoMo, and LoCoMo-MC10 local runners (see `docs/EVALUATION.md`)
 
 ## Installation
 
@@ -82,7 +83,7 @@ Python SDK (`memoratum.client`), TypeScript SDK (`clients/ts`, `npm test`), Open
 `dashboard/` is a Vite+React console served at `/dashboard` once built (`npm run build`
 inside `dashboard/`; the server mounts `dashboard/dist` when present). Tags, interactive
 2D graph (Sigma) with per-node inspector, 3D presentation mode (Three.js toggle), validity
-time scrubber, command palette (`Ctrl+K`), search, graphify import, and vault export.
+time scrubber, command palette (`Ctrl+K`), search, graphify import, vault export, and local governance/accounting tables.
 Vite dev proxy forwards `/v3`+`/v4` to `:6767`.
 
 ## Project Structure

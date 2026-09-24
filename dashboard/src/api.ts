@@ -37,4 +37,12 @@ export const api = {
     request<{ facts: import("./types").GraphFact[]; total: number }>(
       `/v4/facts?containerTag=${encodeURIComponent(tag)}&limit=${limit}`
     ),
+  audit: (limit = 50, offset = 0) =>
+    request<{ events: import("./types").AuditEvent[]; total: number }>(
+      `/v4/audit?limit=${limit}&offset=${offset}`
+    ),
+  usage: (limit = 50, offset = 0) =>
+    request<{ usage: import("./types").UsageCounter[]; total: number }>(
+      `/v4/usage?limit=${limit}&offset=${offset}`
+    ),
 };

@@ -58,6 +58,14 @@ export function ImportIcon({ label }: { label: string }) {
   );
 }
 
+export function ActivityIcon({ label }: { label: string }) {
+  return (
+    <Frame label={label}>
+      <path d="M3 16.5h14M4.5 14V9.5M8 14V5.5M11.5 14v-3M15 14V3.5" />
+    </Frame>
+  );
+}
+
 export function ExportIcon({ label }: { label: string }) {
   return (
     <Frame label={label}>

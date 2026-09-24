@@ -9,12 +9,13 @@ import { ThemeToggle } from "./shell/ThemeToggle";
 import { useServerStatus } from "./shell/useServerStatus";
 import { ExportView } from "./views/ExportView";
 import { GraphPanel } from "./views/Inspector";
+import { GovernanceView } from "./views/GovernanceView";
 import { ImportView } from "./views/ImportView";
 import { NotePane } from "./views/NotePane";
 import { SearchView } from "./views/SearchView";
 import { TagsView } from "./views/TagsView";
 
-type View = "tags" | "graph" | "search" | "import" | "export" | "note";
+type View = "tags" | "graph" | "search" | "import" | "export" | "governance" | "note";
 
 export function App() {
   const [view, setView] = useState<View>("tags");
@@ -50,6 +51,7 @@ export function App() {
           { id: "search", label: "Go to Search", run: () => setView("search") },
           { id: "import", label: "Go to Import", run: () => setView("import") },
           { id: "export", label: "Go to Export", run: () => setView("export") },
+          { id: "governance", label: "Go to Governance", run: () => setView("governance") },
         ]}
       />
       <Shell
@@ -128,6 +130,7 @@ export function App() {
             />
           )}
           {view === "export" && <ExportView key={`e-${tag}`} tag={tag} />}
+          {view === "governance" && <GovernanceView />}
           {view === "note" && activeNote && (
             <NotePane
               key={`${tag}:${activeNote}`}
