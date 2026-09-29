@@ -131,3 +131,31 @@ def test_project_scoped_keys_isolate_memory_reads() -> None:
         ).json()["results"]
         == []
     )
+    assert (
+        client.get(
+            "/v1/memories/",
+            headers=other_headers,
+            params={"user_id": "alice"},
+        ).json()["results"]
+        == []
+    )
+
+
+def test_project_scoped_key_cannot_write_to_another_tag() -> None:
+    client = _client()
+    project_id = client.post(
+        "/api/v1/orgs/organizations/local-org/projects/",
+        headers=_admin(),
+        json={"name": "Bound"},
+    ).json()["id"]
+    key = client.post(
+        "/v4/keys",
+        headers=_admin(),
+        json={"containerTag": "mem0:user_id:alice", "project_id": project_id},
+    ).json()["key"]
+    response = client.post(
+        "/v3/memories/add/",
+        headers={"Authorization": f"Bearer {key}"},
+        json={"messages": [{"role": "user", "content": "nope"}], "user_id": "bob"},
+    )
+    assert response.status_code == 403

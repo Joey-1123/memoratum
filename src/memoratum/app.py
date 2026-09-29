@@ -664,13 +664,16 @@ def create_app(
                 return _error("NOT_FOUND", "project not found", 404)
             org_id = str(project["org_id"])
         else:
-            org_id = authorize(
-                auth,
-                conn,
-                tag,
-                operation="document",
-                input_chars=sum(len(m.content) for m in body.messages),
-            )
+            org_id = None
+        org_id = authorize(
+            auth,
+            conn,
+            tag,
+            org_id,
+            project_id=project_id,
+            operation="document",
+            input_chars=sum(len(m.content) for m in body.messages),
+        )
         claim, claim_error = _begin_idempotency(
             auth,
             conn,
@@ -743,7 +746,13 @@ def create_app(
             return _error("UNAUTHORIZED", "authentication required", 401)
         tag = _job_tag(conn, job)
         org_id = _job_org(conn, job)
-        if settings.auth_enabled and (tag is None or not may_access(auth, conn, tag, org_id)):
+        project_id = (job.get("payload") or {}).get("project_id")
+        if settings.auth_enabled and (
+            tag is None
+            or not may_access(
+                auth, conn, tag, org_id, project_id if isinstance(project_id, str) else None
+            )
+        ):
             return _error("NOT_FOUND", "event not found", 404)
         status = {
             "queued": "PENDING",
@@ -1521,9 +1530,16 @@ def create_app(
         if tag is None:
             return _error("VALIDATION_ERROR", "an entity id is required", 422)
         auth = _compat_auth_header(authorization)
-        org_id = authorize(auth, conn, tag, operation="request")
+        scope = scope_of(auth, conn)
+        project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        org_id = authorize(auth, conn, tag, project_id=project_id, operation="request")
         memories = db.list_memories(
-            conn, tag, org_id=org_id, show_expired=False, limit=max(1, min(limit, 100))
+            conn,
+            tag,
+            org_id=org_id,
+            project_id=project_id,
+            show_expired=False,
+            limit=max(1, min(limit, 100)),
         )
         return {
             "results": [_memory_response(memory) for memory in memories],
@@ -1549,9 +1565,13 @@ def create_app(
         if page < 1 or not 1 <= page_size <= 200:
             return _error("VALIDATION_ERROR", "invalid pagination", 422)
         auth = _compat_auth_header(authorization)
-        org_id = authorize(auth, conn, tag, operation="request")
+        scope = scope_of(auth, conn)
+        project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        org_id = authorize(auth, conn, tag, project_id=project_id, operation="request")
         show_expired = bool(body.get("show_expired", False))
-        all_memories = db.list_memories(conn, tag, org_id=org_id, show_expired=show_expired)
+        all_memories = db.list_memories(
+            conn, tag, org_id=org_id, project_id=project_id, show_expired=show_expired
+        )
         start = (page - 1) * page_size
         page_items = all_memories[start : start + page_size]
         return {
