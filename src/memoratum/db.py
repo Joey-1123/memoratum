@@ -283,6 +283,9 @@ _MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX IF NOT EXISTS idx_idempotency_expiry ON idempotency_keys(expires_at);
     """,
+    """
+    ALTER TABLE memories ADD COLUMN event_at REAL;
+    """,
 )
 
 
@@ -543,6 +546,148 @@ def get_memory(db: sqlite3.Connection, memory_id: str) -> dict[str, Any]:
     if row is None:
         raise KeyError(memory_id)
     return _decode_memory(row)
+
+
+_UNSET = object()
+
+
+def update_memory(
+    conn: sqlite3.Connection,
+    memory_id: str,
+    *,
+    text: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    timestamp: float | None = None,
+    expires_at: Any = _UNSET,
+    actor_key_hash: str | None = None,
+) -> dict[str, Any]:
+    """Update one active memory and append an UPDATE event without committing."""
+    current = get_memory(conn, memory_id)
+    if current["state"] == "deleted":
+        raise KeyError(memory_id)
+    new_text = current["text"] if text is None else text
+    if not isinstance(new_text, str) or not new_text.strip():
+        raise ValueError("memory text must be non-empty")
+    new_metadata = clean_memory_metadata({**current["metadata"], **(metadata or {})})
+    new_expires = current.get("expires_at") if expires_at is _UNSET else expires_at
+    event_at = current.get("event_at") if timestamp is None else timestamp
+    version = int(current["version"]) + 1
+    conn.execute(
+        "UPDATE memories SET text = ?, metadata = ?, expires_at = ?, event_at = ?,"
+        " version = ?, updated_at = ? WHERE id = ?",
+        (
+            new_text,
+            json.dumps(new_metadata, separators=(",", ":")),
+            new_expires,
+            event_at,
+            version,
+            _now(),
+            memory_id,
+        ),
+    )
+    append_memory_history(
+        conn,
+        memory_id=memory_id,
+        event="UPDATE",
+        version=version,
+        old_text=current["text"],
+        new_text=new_text,
+        metadata=new_metadata,
+        actor_key_hash=actor_key_hash,
+    )
+    return get_memory(conn, memory_id)
+
+
+def linked_memory_ids(conn: sqlite3.Connection, memory_id: str) -> list[str]:
+    """Return older canonical memories superseded by the given fact, transitively."""
+    memory = get_memory(conn, memory_id)
+    fact_id = memory.get("fact_id")
+    if not fact_id:
+        return []
+    seen: set[str] = set()
+    frontier = [fact_id]
+    while frontier:
+        current = frontier.pop()
+        rows = conn.execute(
+            "SELECT id FROM facts WHERE superseded_by = ? ORDER BY created_at DESC",
+            (current,),
+        ).fetchall()
+        for row in rows:
+            older_fact = str(row["id"])
+            linked = conn.execute(
+                "SELECT id FROM memories WHERE fact_id = ? AND state != 'deleted'",
+                (older_fact,),
+            ).fetchone()
+            if linked is not None and str(linked["id"]) not in seen:
+                seen.add(str(linked["id"]))
+                frontier.append(older_fact)
+    return sorted(seen)
+
+
+def soft_delete_memory(
+    conn: sqlite3.Connection,
+    memory_id: str,
+    *,
+    actor_key_hash: str | None = None,
+    delete_linked: bool = False,
+) -> dict[str, Any]:
+    """Mark a memory deleted and append a redacted tombstone without committing."""
+    memory = get_memory(conn, memory_id)
+    if memory["state"] == "deleted":
+        return {"memory_id": memory_id, "deleted": False, "cascade_count": 0}
+    targets = [memory_id]
+    if delete_linked:
+        targets.extend(linked_memory_ids(conn, memory_id))
+    now = _now()
+    for target in targets:
+        row = get_memory(conn, target)
+        version = int(row["version"]) + 1
+        conn.execute(
+            "UPDATE memories SET state = 'deleted', version = ?, updated_at = ? WHERE id = ?",
+            (version, now, target),
+        )
+        append_memory_history(
+            conn,
+            memory_id=target,
+            event="DELETE",
+            version=version,
+            old_text=None,
+            new_text=None,
+            metadata={},
+            actor_key_hash=actor_key_hash,
+            content_hash=hashlib.sha256(row["text"].encode()).hexdigest(),
+        )
+    return {
+        "memory_id": memory_id,
+        "deleted": True,
+        "cascade_count": len(targets) - 1,
+        "deleted_ids": targets,
+    }
+
+
+def list_all_memories(
+    conn: sqlite3.Connection,
+    *,
+    org_id: str | None = None,
+    include_deleted: bool = False,
+    show_expired: bool = False,
+) -> list[dict[str, Any]]:
+    """List canonical memories across tags for an authorized administrative filter."""
+    where: list[str] = []
+    params: list[Any] = []
+    if org_id is not None:
+        where.append("org_id = ?")
+        params.append(org_id)
+    if not include_deleted:
+        where.append("state != 'deleted'")
+    if not show_expired:
+        where.append("(expires_at IS NULL OR expires_at > ?)")
+        params.append(_now())
+    clause = f" WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"SELECT * FROM memories{clause} ORDER BY created_at, id", params
+    ).fetchall()
+    return [_decode_memory(row) for row in rows]
 
 
 def list_memories(

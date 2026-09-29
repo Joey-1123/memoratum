@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 import math
@@ -777,6 +776,69 @@ def create_app(
             ),
         }
 
+    def _validate_batch_items(items: Any, *, update: bool) -> JSONResponse | None:
+        if not isinstance(items, list) or not items or len(items) > 1000:
+            return _error("VALIDATION_ERROR", "memories must contain 1-1000 items", 422)
+        allowed = {"memory_id", "text", "metadata"} if update else {"memory_id"}
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                return _error("VALIDATION_ERROR", f"memories[{index}] must be an object", 422)
+            unknown = set(item) - allowed
+            if unknown:
+                return _error(
+                    "VALIDATION_ERROR",
+                    f"memories[{index}] contains unsupported fields",
+                    422,
+                )
+            memory_id = item.get("memory_id")
+            if not isinstance(memory_id, str) or not memory_id.strip():
+                return _error("VALIDATION_ERROR", f"memories[{index}].memory_id is required", 422)
+            if update:
+                if "text" not in item and "metadata" not in item:
+                    return _error(
+                        "VALIDATION_ERROR",
+                        f"memories[{index}] must include text or metadata",
+                        422,
+                    )
+                if "text" in item and (
+                    not isinstance(item["text"], str) or not item["text"].strip()
+                ):
+                    return _error(
+                        "VALIDATION_ERROR", f"memories[{index}].text must be non-empty", 422
+                    )
+                if "metadata" in item and not isinstance(item["metadata"], dict):
+                    return _error(
+                        "VALIDATION_ERROR", f"memories[{index}].metadata must be an object", 422
+                    )
+        return None
+
+    def _expiration_timestamp(value: Any) -> float | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("expiration_date must be YYYY-MM-DD")
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC).timestamp() + 86399
+        except ValueError as exc:
+            raise ValueError("expiration_date must be YYYY-MM-DD") from exc
+
+    def _event_timestamp(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                try:
+                    return datetime.fromisoformat(value).timestamp()
+                except ValueError as exc:
+                    raise ValueError(
+                        "timestamp must be a Unix timestamp or ISO-8601 string"
+                    ) from exc
+        raise ValueError("timestamp must be a Unix timestamp or ISO-8601 string")
+
     def _get_memory_or_error(
         memory_id: str,
         conn: sqlite3.Connection,
@@ -797,6 +859,177 @@ def create_app(
             if not may_access(auth, conn, memory["container_tag"], memory.get("org_id")):
                 return None, _error("NOT_FOUND", "memory not found", 404)
         return memory, None
+
+    @app.put("/v1/batch/")
+    def mem0_batch_update(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        items = body.get("memories") if isinstance(body, dict) else None
+        validation = _validate_batch_items(items, update=True)
+        if validation is not None:
+            return validation
+        assert isinstance(items, list)
+        auth = _compat_auth_header(authorization)
+        resolved: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        seen: set[str] = set()
+        for item in items:
+            memory_id = str(item["memory_id"])
+            if memory_id in seen:
+                return _error("VALIDATION_ERROR", "duplicate memory_id in batch", 422)
+            seen.add(memory_id)
+            memory, error = _get_memory_or_error(memory_id, conn, authorization)
+            if error is not None:
+                return error
+            assert memory is not None
+            resolved.append((item, memory))
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for item, _ in resolved:
+                db.update_memory(
+                    conn,
+                    str(item["memory_id"]),
+                    text=item.get("text"),
+                    metadata=item.get("metadata"),
+                    actor_key_hash=actor(auth, conn)[1],
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        for item, memory in resolved:
+            job_id = jobs.enqueue(
+                conn,
+                kind="reindex_memory",
+                payload={
+                    "memory_id": str(item["memory_id"]),
+                    "container_tag": memory["container_tag"],
+                    "org_id": memory.get("org_id"),
+                },
+            )
+            audit(
+                auth,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                action="memory.batch_updated",
+                resource_type="memory",
+                resource_id=str(item["memory_id"]),
+                metadata={"job_id": job_id},
+            )
+        meter(auth, conn, container_tag=None, org_id=None, operation="request")
+        return {"message": f"Successfully updated {len(resolved)} memories"}
+
+    @app.delete("/v1/batch/")
+    def mem0_batch_delete(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        items = body.get("memories") if isinstance(body, dict) else None
+        validation = _validate_batch_items(items, update=False)
+        if validation is not None:
+            return validation
+        assert isinstance(items, list)
+        auth = _compat_auth_header(authorization)
+        resolved: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            memory_id = str(item["memory_id"])
+            if memory_id in seen:
+                return _error("VALIDATION_ERROR", "duplicate memory_id in batch", 422)
+            seen.add(memory_id)
+            memory, error = _get_memory_or_error(memory_id, conn, authorization)
+            if error is not None:
+                return error
+            assert memory is not None
+            resolved.append(memory)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            deleted_ids: list[str] = []
+            for memory in resolved:
+                result = db.soft_delete_memory(
+                    conn, memory["id"], actor_key_hash=actor(auth, conn)[1]
+                )
+                if result["deleted"]:
+                    deleted_ids.append(memory["id"])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if deleted_ids:
+            vector_store_for(conn).delete(ids=deleted_ids)
+        for memory in resolved:
+            audit(
+                auth,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                action="memory.batch_deleted",
+                resource_type="memory",
+                resource_id=memory["id"],
+            )
+        meter(auth, conn, container_tag=None, org_id=None, operation="request")
+        return {"message": f"Successfully deleted {len(deleted_ids)} memories"}
+
+    @app.delete("/v1/memories/")
+    def mem0_delete_all(
+        conn: DbConn,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+        run_id: str | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        filters = {
+            key: value
+            for key, value in (
+                ("user_id", user_id),
+                ("agent_id", agent_id),
+                ("app_id", app_id),
+                ("run_id", run_id),
+            )
+            if value is not None
+        }
+        if not filters:
+            return _error(
+                "VALIDATION_ERROR",
+                "at least one user_id, agent_id, app_id, or run_id filter is required",
+                422,
+            )
+        wildcard = any(value == "*" for value in filters.values())
+        auth = _compat_auth_header(authorization)
+        if wildcard and settings.auth_enabled and not _is_admin(auth, settings):
+            return _error("FORBIDDEN", "an administrative key is required for wildcard delete", 403)
+        exact_tag = _mem0_entity_tag(filters) if not wildcard else None
+        org_id: str | None = None
+        if exact_tag is not None:
+            org_id = authorize(auth, conn, exact_tag, operation="request")
+        elif settings.auth_enabled:
+            scope = scope_of(auth, conn)
+            if scope is False:
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            if isinstance(scope, dict):
+                org_id = scope.get("org_id")
+        payload: dict[str, Any] = {"filters": filters, "org_id": org_id}
+        if exact_tag is not None:
+            payload["container_tag"] = exact_tag
+        event_id = jobs.enqueue(conn, kind="delete_all_memories", payload=payload)
+        audit(
+            auth,
+            conn,
+            container_tag=exact_tag,
+            org_id=org_id,
+            action="memory.delete_all_queued",
+            resource_type="memory_scope",
+            resource_id=None,
+            metadata={"event_id": event_id, "filters": filters},
+        )
+        return {
+            "message": "Delete in progress. This may take some time.",
+            "event_id": event_id,
+        }
 
     @app.get("/v1/memories/{memory_id}/")
     def mem0_get(memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -848,63 +1081,54 @@ def create_app(
         try:
             old_text = memory["text"]
             new_text = body.get("text", old_text)
-            metadata = db.clean_memory_metadata(
-                {**memory["metadata"], **(body.get("metadata") or {})}
-            )
             expires_at = memory.get("expires_at")
             if "expiration_date" in body:
-                value = body["expiration_date"]
-                if value is None:
-                    expires_at = None
-                else:
-                    try:
-                        expires_at = (
-                            datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
-                            + 86399
-                        )
-                    except (TypeError, ValueError):
-                        return _error("VALIDATION_ERROR", "expiration_date must be YYYY-MM-DD", 422)
-            version = int(memory["version"]) + 1
-            conn.execute(
-                "UPDATE memories SET text = ?, metadata = ?, expires_at = ?, version = ?,"
-                " updated_at = ? WHERE id = ?",
-                (
-                    new_text,
-                    json.dumps(metadata, separators=(",", ":")),
-                    expires_at,
-                    version,
-                    time.time(),
-                    memory_id,
-                ),
-            )
-            db.append_memory_history(
+                expires_at = _expiration_timestamp(body["expiration_date"])
+            timestamp = _event_timestamp(body.get("timestamp")) if "timestamp" in body else None
+            db.update_memory(
                 conn,
-                memory_id=memory_id,
-                event="UPDATE",
-                version=version,
-                old_text=old_text,
-                new_text=new_text,
-                metadata=metadata,
+                memory_id,
+                text=new_text if "text" in body else None,
+                metadata=body.get("metadata"),
+                timestamp=timestamp,
+                expires_at=expires_at if "expiration_date" in body else db._UNSET,
                 actor_key_hash=actor(auth, conn)[1],
             )
             conn.commit()
-            updated = db.get_memory(conn, memory_id)
-            audit(
-                auth,
-                conn,
-                container_tag=updated["container_tag"],
-                org_id=updated.get("org_id"),
-                action="memory.updated",
-                resource_type="memory",
-                resource_id=memory_id,
-            )
-            response = _memory_response(updated)
-            _finish_idempotency(conn, claim, response=response)
-            return response
+        except (TypeError, ValueError) as exc:
+            conn.rollback()
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            return _error("VALIDATION_ERROR", str(exc), 422)
         except Exception:
+            conn.rollback()
             if claim is not None and claim.status == "claimed":
                 db.release_idempotency(conn, scope=claim.scope, key=claim.key)
             raise
+        updated = db.get_memory(conn, memory_id)
+        job_id = jobs.enqueue(
+            conn,
+            kind="reindex_memory",
+            payload={
+                "memory_id": memory_id,
+                "container_tag": updated["container_tag"],
+                "org_id": updated.get("org_id"),
+            },
+        )
+        audit(
+            auth,
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            action="memory.updated",
+            resource_type="memory",
+            resource_id=memory_id,
+            metadata={"job_id": job_id},
+        )
+        response = _memory_response(updated)
+        response["job_id"] = job_id
+        _finish_idempotency(conn, claim, response=response, job_id=job_id)
+        return response
 
     @app.delete("/v1/memories/{memory_id}/")
     def mem0_delete(
@@ -912,40 +1136,54 @@ def create_app(
         conn: DbConn,
         authorization: str | None = Header(default=None),
         delete_linked: bool = False,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ):
         memory, error = _get_memory_or_error(memory_id, conn, authorization)
         if error is not None:
             return error
         assert memory is not None
-        old_text = memory["text"]
-        version = int(memory["version"]) + 1
-        conn.execute(
-            "UPDATE memories SET state = 'deleted', version = ?, updated_at = ? WHERE id = ?",
-            (version, time.time(), memory_id),
-        )
-        db.append_memory_history(
+        auth = _compat_auth_header(authorization)
+        claim, claim_error = _begin_idempotency(
+            auth,
             conn,
-            memory_id=memory_id,
-            event="DELETE",
-            version=version,
-            old_text=None,
-            new_text=None,
-            metadata={},
-            actor_key_hash=actor(authorization, conn)[1],
-            content_hash=hashlib.sha256(old_text.encode()).hexdigest(),
+            idempotency_key,
+            operation="mem0.delete",
+            payload={"memory_id": memory_id, "delete_linked": delete_linked},
         )
-        conn.commit()
-        vector_store_for(conn).delete(ids=[memory_id])
+        if claim_error is not None:
+            return claim_error
+        if claim is not None and claim.status == "replay":
+            return claim.response
+        try:
+            result = db.soft_delete_memory(
+                conn,
+                memory_id,
+                actor_key_hash=actor(auth, conn)[1],
+                delete_linked=delete_linked,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            raise
+        vector_store_for(conn).delete(ids=result["deleted_ids"])
         audit(
-            authorization,
+            auth,
             conn,
             container_tag=memory["container_tag"],
             org_id=memory.get("org_id"),
             action="memory.deleted",
             resource_type="memory",
             resource_id=memory_id,
+            metadata={"cascade_count": result["cascade_count"]},
         )
-        return {"message": "Memory deleted successfully!"}
+        response = {
+            "message": "Memory deleted successfully!",
+            "cascade_count": result["cascade_count"],
+        }
+        _finish_idempotency(conn, claim, response=response)
+        return response
 
     @app.get("/v1/memories/{memory_id}/history/")
     def mem0_history(

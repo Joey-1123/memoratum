@@ -105,6 +105,60 @@ def _dispatch(
             org_id=payload.get("org_id"),
         )
         return {"calls": calls}
+    if kind == "delete_all_memories":
+        filters = payload.get("filters") or {}
+        memories = db.list_all_memories(conn, org_id=payload.get("org_id"), show_expired=True)
+        selected = []
+        for memory in memories:
+            tag = memory["container_tag"]
+            for key, value in filters.items():
+                prefix = f"mem0:{key}:"
+                if not tag.startswith(prefix):
+                    break
+                if value != "*" and tag != f"{prefix}{value}":
+                    break
+            else:
+                selected.append(memory)
+        deleted_ids: list[str] = []
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for memory in selected:
+                result = db.soft_delete_memory(conn, memory["id"])
+                if result["deleted"]:
+                    deleted_ids.append(memory["id"])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if deleted_ids and vector_store is not None:
+            vector_store.delete(ids=deleted_ids)
+        return {"deleted": len(deleted_ids), "memory_ids": deleted_ids}
+    if kind == "reindex_memory":
+        memory = db.get_memory(conn, payload["memory_id"])
+        if memory["state"] == "deleted":
+            if vector_store is not None:
+                vector_store.delete(ids=[memory["id"]])
+            return {"memory_id": memory["id"], "status": "deleted"}
+        if vector_store is None:
+            return {"memory_id": memory["id"], "status": "skipped"}
+        from memoratum.vectorstore import VectorRecord
+
+        vector = embedder.embed([memory["text"]])[0]
+        vector_store.upsert(
+            [
+                VectorRecord(
+                    id=memory["id"],
+                    vector=vector,
+                    text=memory["text"],
+                    kind="memory",
+                    container_tag=memory["container_tag"],
+                    org_id=memory.get("org_id"),
+                    metadata=memory["metadata"],
+                    created_at=memory["created_at"],
+                )
+            ]
+        )
+        return {"memory_id": memory["id"], "status": "indexed"}
     if kind == "backfill":
         from memoratum.search import search
 

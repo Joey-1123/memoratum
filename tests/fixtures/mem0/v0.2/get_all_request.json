@@ -1,0 +1,4 @@
+{
+  "filters": {"user_id": "contract-user"},
+  "show_expired": false
+}

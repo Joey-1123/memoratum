@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-CONTRACT_VERSION = "mem0-self-hosted-v0.1"
+CONTRACT_VERSION = "mem0-self-hosted-v0.2"
 ENTITY_FIELDS = ("user_id", "agent_id", "app_id", "run_id")
 CAPABILITY_STATUSES = {"supported", "partial", "planned", "out_of_scope"}
 
@@ -55,39 +55,39 @@ CAPABILITIES: tuple[dict[str, str], ...] = (
     },
     {
         "name": "get_memory",
-        "status": "planned",
-        "routes": "—",
-        "notes": "Not implemented by this compatibility profile.",
-    },
-    {
-        "name": "delete_all_memories",
-        "status": "planned",
-        "routes": "—",
-        "notes": "Not implemented by this compatibility profile.",
+        "status": "supported",
+        "routes": "GET /v1/memories/{memory_id}/",
+        "notes": "Canonical scoped memory lookup.",
     },
     {
         "name": "update_memory",
-        "status": "planned",
-        "routes": "—",
-        "notes": "Not implemented by this compatibility profile.",
+        "status": "supported",
+        "routes": "PUT /v1/memories/{memory_id}/",
+        "notes": "Partial text, metadata, timestamp, and expiration updates.",
     },
     {
         "name": "delete_memory",
-        "status": "planned",
-        "routes": "—",
-        "notes": "Not implemented by this compatibility profile.",
+        "status": "supported",
+        "routes": "DELETE /v1/memories/{memory_id}/",
+        "notes": "Redacted tombstone history and provider cleanup.",
+    },
+    {
+        "name": "delete_all_memories",
+        "status": "supported",
+        "routes": "DELETE /v1/memories/",
+        "notes": "Explicit entity filters only; returns an asynchronous event_id.",
     },
     {
         "name": "history",
-        "status": "planned",
-        "routes": "—",
-        "notes": "Not implemented by this compatibility profile.",
+        "status": "supported",
+        "routes": "GET /v1/memories/{memory_id}/history/",
+        "notes": "List-shaped append-only local history.",
     },
     {
         "name": "bulk_operations",
-        "status": "planned",
-        "routes": "—",
-        "notes": "Not implemented by this compatibility profile.",
+        "status": "supported",
+        "routes": "PUT /v1/batch/; DELETE /v1/batch/",
+        "notes": "Atomic batches up to 1000 items.",
     },
     {
         "name": "managed_billing",
@@ -175,6 +175,55 @@ def validate_search_request(payload: Any) -> dict[str, Any]:
     return values
 
 
+def validate_update_request(payload: Any) -> dict[str, Any]:
+    values = _require_mapping(payload, "update request")
+    allowed = {"text", "metadata", "timestamp", "expiration_date"}
+    if not values or set(values) - allowed:
+        raise ValueError("update must contain only text, metadata, timestamp, or expiration_date")
+    if "text" in values:
+        _require_text(values["text"], "text")
+    if "metadata" in values and not isinstance(values["metadata"], dict):
+        raise ValueError("metadata must be an object")
+    if "expiration_date" in values and values["expiration_date"] is not None:
+        value = values["expiration_date"]
+        if not isinstance(value, str) or len(value) != 10 or value[4] != "-" or value[7] != "-":
+            raise ValueError("expiration_date must be YYYY-MM-DD")
+    return values
+
+
+def validate_batch_request(payload: Any, *, update: bool) -> dict[str, Any]:
+    values = _require_mapping(payload, "batch request")
+    items = values.get("memories")
+    if not isinstance(items, list) or not items:
+        raise ValueError("memories must be a non-empty list")
+    if len(items) > 1000:
+        raise ValueError("a batch may contain at most 1000 memories")
+    allowed = {"memory_id", "text", "metadata"} if update else {"memory_id"}
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        item = _require_mapping(item, f"memories[{index}]")
+        if set(item) - allowed:
+            raise ValueError(f"memories[{index}] contains unsupported fields")
+        memory_id = _require_text(item.get("memory_id"), f"memories[{index}].memory_id")
+        if memory_id in seen:
+            raise ValueError("memory_id values must be unique within a batch")
+        seen.add(memory_id)
+        if update:
+            if "text" not in item and "metadata" not in item:
+                raise ValueError(f"memories[{index}] must include text or metadata")
+            if "text" in item:
+                _require_text(item["text"], f"memories[{index}].text")
+            if "metadata" in item and not isinstance(item["metadata"], dict):
+                raise ValueError(f"memories[{index}].metadata must be an object")
+    return values
+
+
+def validate_get_all_request(payload: Any) -> dict[str, Any]:
+    values = _require_mapping(payload, "get-all request")
+    _entity_scope(_require_mapping(values.get("filters"), "filters"))
+    return values
+
+
 def validate_list_query(payload: Any) -> dict[str, Any]:
     values = _require_mapping(payload, "list query")
     _entity_scope(values)
@@ -184,8 +233,15 @@ def validate_list_query(payload: Any) -> dict[str, Any]:
     return values
 
 
-def validate_response(payload: Any, *, kind: str) -> dict[str, Any]:
+def validate_response(payload: Any, *, kind: str) -> dict[str, Any] | list[Any]:
     """Validate the stable response envelope used by the local profile."""
+    if kind == "history":
+        if not isinstance(payload, list):
+            raise TypeError("history response must be a list")
+        for index, item in enumerate(payload):
+            entry = _require_mapping(item, f"history[{index}]")
+            _require_text(entry.get("event"), f"history[{index}].event")
+        return payload
     values = _require_mapping(payload, f"{kind} response")
     if kind == "add":
         _require_text(values.get("event_id"), "event_id")
@@ -201,6 +257,28 @@ def validate_response(payload: Any, *, kind: str) -> dict[str, Any]:
         if not isinstance(results, list):
             raise ValueError("list response results must be a list")
         _validate_result_items(results, require_created_at=True)
+    elif kind in {"get", "update"}:
+        _require_text(values.get("id"), "id")
+        _require_text(values.get("memory"), "memory")
+        if "metadata" in values and not isinstance(values["metadata"], dict):
+            raise ValueError("metadata must be an object")
+    elif kind == "delete":
+        _require_text(values.get("message"), "message")
+    elif kind == "delete_all":
+        _require_text(values.get("message"), "message")
+        _require_text(values.get("event_id"), "event_id")
+    elif kind == "batch":
+        _require_text(values.get("message"), "message")
+    elif kind == "get_all":
+        _validate_result_items(values.get("results"), require_created_at=True)
+        for key in ("count", "next", "previous"):
+            if key not in values:
+                raise ValueError(f"get-all response must contain {key}")
+    elif kind == "ping":
+        if values.get("status") != "ok":
+            raise ValueError("ping response status must be ok")
+        _require_text(values.get("org_id"), "org_id")
+        _require_text(values.get("project_id"), "project_id")
     elif kind == "event":
         if values.get("status") not in {"PENDING", "SUCCEEDED", "FAILED"}:
             raise ValueError("event response status is invalid")
@@ -227,5 +305,5 @@ def _validate_result_items(results: list[Any], *, require_created_at: bool) -> N
             raise ValueError(f"results[{index}].score must be numeric")
         if "metadata" in item and not isinstance(item["metadata"], dict):
             raise ValueError(f"results[{index}].metadata must be an object")
-        if require_created_at and not isinstance(item.get("created_at"), (int, float)):
-            raise ValueError(f"results[{index}].created_at must be numeric")
+        if require_created_at and not isinstance(item.get("created_at"), (int, float, str)):
+            raise ValueError(f"results[{index}].created_at must be numeric or ISO-8601")

@@ -1,0 +1,5 @@
+{
+  "messages": [{"role": "user", "content": "I moved to Paris."}],
+  "user_id": "contract-user",
+  "metadata": {"source": "v0.2"}
+}
