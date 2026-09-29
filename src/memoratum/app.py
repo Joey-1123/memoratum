@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import math
@@ -14,6 +15,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -663,6 +665,199 @@ def create_app(
             ]
         }
 
+    def _memory_response(memory: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": memory["id"],
+            "memory": memory["text"],
+            "metadata": memory["metadata"],
+            "created_at": memory["created_at"],
+            "updated_at": memory["updated_at"],
+            "version": memory["version"],
+            "expiration_date": (
+                time.strftime("%Y-%m-%d", time.gmtime(memory["expires_at"]))
+                if memory.get("expires_at") is not None
+                else None
+            ),
+        }
+
+    def _memory_history_response(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "memory_id": row["memory_id"],
+            "old_memory": row["old_text"],
+            "new_memory": row["new_text"],
+            "event": row["event"],
+            "metadata": row["metadata"],
+            "version": row["version"],
+            "created_at": row["created_at"],
+            "updated_at": row.get("updated_at") or row["created_at"],
+            **(
+                {"content_hash": row["content_hash"]} if row.get("content_hash") is not None else {}
+            ),
+        }
+
+    def _get_memory_or_error(
+        memory_id: str,
+        conn: sqlite3.Connection,
+        authorization: str | None,
+        *,
+        include_deleted: bool = False,
+    ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+        try:
+            memory = db.get_memory(conn, memory_id)
+        except KeyError:
+            return None, _error("NOT_FOUND", "memory not found", 404)
+        if memory["state"] == "deleted" and not include_deleted:
+            return None, _error("NOT_FOUND", "memory not found", 404)
+        if settings.auth_enabled:
+            auth = _compat_auth_header(authorization)
+            if not credential_ok(auth, conn):
+                return None, _error("UNAUTHORIZED", "authentication required", 401)
+            if not may_access(auth, conn, memory["container_tag"], memory.get("org_id")):
+                return None, _error("NOT_FOUND", "memory not found", 404)
+        return memory, None
+
+    @app.get("/v1/memories/{memory_id}/")
+    def mem0_get(memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        meter(
+            authorization, conn, container_tag=memory["container_tag"], org_id=memory.get("org_id")
+        )
+        return _memory_response(memory)
+
+    @app.put("/v1/memories/{memory_id}/")
+    def mem0_update(
+        memory_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        allowed = {"text", "metadata", "timestamp", "expiration_date"}
+        unknown = set(body) - allowed
+        if unknown or not body:
+            return _error(
+                "VALIDATION_ERROR",
+                "provide at least one of text, metadata, timestamp, or expiration_date",
+                422,
+            )
+        if "text" in body and (not isinstance(body["text"], str) or not body["text"].strip()):
+            return _error("VALIDATION_ERROR", "text must be non-empty", 422)
+        if "metadata" in body and not isinstance(body["metadata"], dict):
+            return _error("VALIDATION_ERROR", "metadata must be an object", 422)
+        old_text = memory["text"]
+        new_text = body.get("text", old_text)
+        metadata = db.clean_memory_metadata({**memory["metadata"], **(body.get("metadata") or {})})
+        expires_at = memory.get("expires_at")
+        if "expiration_date" in body:
+            value = body["expiration_date"]
+            if value is None:
+                expires_at = None
+            else:
+                try:
+                    expires_at = (
+                        datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC).timestamp() + 86399
+                    )
+                except (TypeError, ValueError):
+                    return _error("VALIDATION_ERROR", "expiration_date must be YYYY-MM-DD", 422)
+        version = int(memory["version"]) + 1
+        conn.execute(
+            "UPDATE memories SET text = ?, metadata = ?, expires_at = ?, version = ?, updated_at = ?"
+            " WHERE id = ?",
+            (
+                new_text,
+                json.dumps(metadata, separators=(",", ":")),
+                expires_at,
+                version,
+                time.time(),
+                memory_id,
+            ),
+        )
+        db.append_memory_history(
+            conn,
+            memory_id=memory_id,
+            event="UPDATE",
+            version=version,
+            old_text=old_text,
+            new_text=new_text,
+            metadata=metadata,
+            actor_key_hash=actor(authorization, conn)[1],
+        )
+        conn.commit()
+        updated = db.get_memory(conn, memory_id)
+        audit(
+            authorization,
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            action="memory.updated",
+            resource_type="memory",
+            resource_id=memory_id,
+        )
+        return _memory_response(updated)
+
+    @app.delete("/v1/memories/{memory_id}/")
+    def mem0_delete(
+        memory_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        delete_linked: bool = False,
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        old_text = memory["text"]
+        version = int(memory["version"]) + 1
+        conn.execute(
+            "UPDATE memories SET state = 'deleted', version = ?, updated_at = ? WHERE id = ?",
+            (version, time.time(), memory_id),
+        )
+        db.append_memory_history(
+            conn,
+            memory_id=memory_id,
+            event="DELETE",
+            version=version,
+            old_text=None,
+            new_text=None,
+            metadata={},
+            actor_key_hash=actor(authorization, conn)[1],
+            content_hash=hashlib.sha256(old_text.encode()).hexdigest(),
+        )
+        conn.commit()
+        vector_store_for(conn).delete(ids=[memory_id])
+        audit(
+            authorization,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            action="memory.deleted",
+            resource_type="memory",
+            resource_id=memory_id,
+        )
+        return {"message": "Memory deleted successfully!"}
+
+    @app.get("/v1/memories/{memory_id}/history/")
+    def mem0_history(
+        memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization, include_deleted=True)
+        if error is not None:
+            return error
+        assert memory is not None
+        return [
+            _memory_history_response(row)
+            for row in db.list_memory_history(
+                conn, memory_id, container_tag=memory["container_tag"]
+            )
+        ]
+
     @app.get("/v1/memories/")
     def mem0_list(
         conn: DbConn,
@@ -684,16 +879,39 @@ def create_app(
             conn, tag, org_id=org_id, show_expired=False, limit=max(1, min(limit, 100))
         )
         return {
-            "results": [
-                {
-                    "id": memory["id"],
-                    "memory": memory["text"],
-                    "metadata": memory["metadata"],
-                    "created_at": memory["created_at"],
-                    "updated_at": memory["updated_at"],
-                }
-                for memory in memories
-            ]
+            "results": [_memory_response(memory) for memory in memories],
+            "count": len(memories),
+            "next": None,
+            "previous": None,
+        }
+
+    @app.post("/v3/memories/")
+    def mem0_get_all(
+        body: dict[str, Any],
+        conn: DbConn,
+        page: int = 1,
+        page_size: int = 100,
+        authorization: str | None = Header(default=None),
+    ):
+        filters = body.get("filters")
+        if not isinstance(filters, dict):
+            return _error("VALIDATION_ERROR", "filters must be an object", 422)
+        tag = _mem0_entity_tag(filters)
+        if tag is None:
+            return _error("VALIDATION_ERROR", "an entity id is required", 422)
+        if page < 1 or not 1 <= page_size <= 200:
+            return _error("VALIDATION_ERROR", "invalid pagination", 422)
+        auth = _compat_auth_header(authorization)
+        org_id = authorize(auth, conn, tag, operation="request")
+        show_expired = bool(body.get("show_expired", False))
+        all_memories = db.list_memories(conn, tag, org_id=org_id, show_expired=show_expired)
+        start = (page - 1) * page_size
+        page_items = all_memories[start : start + page_size]
+        return {
+            "count": len(all_memories),
+            "next": page + 1 if start + page_size < len(all_memories) else None,
+            "previous": page - 1 if page > 1 else None,
+            "results": [_memory_response(memory) for memory in page_items],
         }
 
     @app.get("/v3/documents/{doc_id}")

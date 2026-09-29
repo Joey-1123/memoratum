@@ -229,6 +229,45 @@ _MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX IF NOT EXISTS idx_memory_history ON memory_history(memory_id, created_at);
     """,
+    """
+    ALTER TABLE memory_history ADD COLUMN content_hash TEXT;
+    ALTER TABLE memory_history ADD COLUMN updated_at REAL;
+    INSERT OR IGNORE INTO memories(
+      id, container_tag, text, metadata, org_id, document_id, fact_id, expires_at,
+      version, state, created_at, updated_at
+    )
+    SELECT
+      'mem_' || f.id,
+      f.container_tag,
+      trim(f.subject || ' ' || f.predicate || ' ' || f.object),
+      COALESCE(f.metadata, '{}'),
+      f.org_id,
+      f.document_id,
+      f.id,
+      f.expires_at,
+      1,
+      'active',
+      f.created_at,
+      f.created_at
+    FROM facts AS f;
+    INSERT OR IGNORE INTO memory_history(
+      id, memory_id, event, old_text, new_text, metadata, version, actor_key_hash, created_at,
+      content_hash, updated_at
+    )
+    SELECT
+      'mh_' || f.id,
+      'mem_' || f.id,
+      'ADD',
+      NULL,
+      trim(f.subject || ' ' || f.predicate || ' ' || f.object),
+      COALESCE(f.metadata, '{}'),
+      1,
+      NULL,
+      f.created_at,
+      NULL,
+      f.created_at
+    FROM facts AS f;
+    """,
 )
 
 
@@ -345,6 +384,16 @@ def create_share_link(
     if link is None:
         raise RuntimeError("share link creation failed")
     return link
+
+
+_MEMORY_IDENTITY_KEYS = frozenset({"user_id", "agent_id", "app_id", "run_id", "actor_id"})
+
+
+def clean_memory_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Remove identity/scope keys that callers cannot smuggle through metadata."""
+    return {
+        key: value for key, value in (metadata or {}).items() if key not in _MEMORY_IDENTITY_KEYS
+    }
 
 
 def _decode_memory(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -518,14 +567,21 @@ def append_memory_history(
     new_text: str | None = None,
     metadata: dict[str, Any] | None = None,
     actor_key_hash: str | None = None,
+    content_hash: str | None = None,
 ) -> str:
     if event not in {"ADD", "UPDATE", "DELETE"}:
         raise ValueError(f"unknown memory history event: {event}")
+    if content_hash is None:
+        source_text = new_text if new_text is not None else old_text
+        content_hash = (
+            hashlib.sha256(source_text.encode()).hexdigest() if source_text is not None else None
+        )
     history_id = uuid.uuid4().hex
     db.execute(
         "INSERT INTO memory_history("
-        "id, memory_id, event, old_text, new_text, metadata, version, actor_key_hash, created_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "id, memory_id, event, old_text, new_text, metadata, version, actor_key_hash, created_at,"
+        " content_hash, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             history_id,
             memory_id,
@@ -535,6 +591,8 @@ def append_memory_history(
             json.dumps(metadata or {}, separators=(",", ":")),
             version,
             actor_key_hash,
+            _now(),
+            content_hash,
             _now(),
         ),
     )
@@ -556,7 +614,7 @@ def list_memory_history(
         params.append(container_tag)
     query = (
         "SELECT id, memory_id, event, old_text, new_text, metadata, version,"
-        " actor_key_hash, created_at FROM memory_history"
+        " actor_key_hash, created_at, content_hash, updated_at FROM memory_history"
         f" WHERE {' AND '.join(where)} ORDER BY created_at, id"
     )
     if limit is not None:
