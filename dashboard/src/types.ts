@@ -55,3 +55,49 @@ export interface UsageCounter {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface MemoryRecord {
+  id: string;
+  memory: string;
+  metadata: Record<string, unknown>;
+  created_at: number;
+  updated_at: number;
+  version: number;
+  expiration_date: string | null;
+}
+
+export interface MemoryPage {
+  count: number;
+  next: number | null;
+  previous: number | null;
+  results: MemoryRecord[];
+}
+
+export interface MemoryHistoryEntry {
+  id: string;
+  memory_id: string;
+  old_memory: string | null;
+  new_memory: string | null;
+  event: string;
+  metadata: Record<string, unknown>;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  content_hash?: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  event_id: string;
+  webhook_id: string;
+  project_id: string;
+  event_type: string;
+  memory_id: string | null;
+  status: string;
+  attempts: number;
+  next_attempt_at: number | null;
+  last_error: string | null;
+  response_status: number | null;
+  created_at: number;
+  updated_at: number;
+}

@@ -3,8 +3,10 @@ import { ActivityIcon } from "./icons";
 import { ExportIcon } from "./icons";
 import { GraphIcon } from "./icons";
 import { ImportIcon } from "./icons";
+import { MemoryIcon } from "./icons";
 import { SearchIcon } from "./icons";
 import { TagsIcon } from "./icons";
+import { WebhookIcon } from "./icons";
 import type { ServerStatus } from "./useServerStatus";
 
 const RIBBON = [
@@ -13,6 +15,8 @@ const RIBBON = [
   { id: "search", label: "Search", Icon: SearchIcon },
   { id: "import", label: "Import", Icon: ImportIcon },
   { id: "export", label: "Export", Icon: ExportIcon },
+  { id: "memories", label: "Memories", Icon: MemoryIcon },
+  { id: "webhooks", label: "Webhooks", Icon: WebhookIcon },
   { id: "governance", label: "Governance", Icon: ActivityIcon },
 ] as const;
 
@@ -25,7 +29,7 @@ export function Shell({
   right,
 }: {
   view: string;
-  onView: (v: "tags" | "graph" | "search" | "import" | "export" | "governance") => void;
+  onView: (v: "tags" | "graph" | "search" | "import" | "export" | "memories" | "webhooks" | "governance") => void;
   status: ServerStatus;
   left: ReactNode;
   children: ReactNode;

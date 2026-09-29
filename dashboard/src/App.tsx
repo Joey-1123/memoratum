@@ -11,11 +11,13 @@ import { ExportView } from "./views/ExportView";
 import { GraphPanel } from "./views/Inspector";
 import { GovernanceView } from "./views/GovernanceView";
 import { ImportView } from "./views/ImportView";
+import { MemoryLifecycleView } from "./views/MemoryLifecycleView";
 import { NotePane } from "./views/NotePane";
 import { SearchView } from "./views/SearchView";
 import { TagsView } from "./views/TagsView";
+import { WebhookDeliveryView } from "./views/WebhookDeliveryView";
 
-type View = "tags" | "graph" | "search" | "import" | "export" | "governance" | "note";
+type View = "tags" | "graph" | "search" | "import" | "export" | "memories" | "webhooks" | "governance" | "note";
 
 export function App() {
   const [view, setView] = useState<View>("tags");
@@ -51,6 +53,8 @@ export function App() {
           { id: "search", label: "Go to Search", run: () => setView("search") },
           { id: "import", label: "Go to Import", run: () => setView("import") },
           { id: "export", label: "Go to Export", run: () => setView("export") },
+          { id: "memories", label: "Go to Memories", run: () => setView("memories") },
+          { id: "webhooks", label: "Go to Webhooks", run: () => setView("webhooks") },
           { id: "governance", label: "Go to Governance", run: () => setView("governance") },
         ]}
       />
@@ -130,6 +134,8 @@ export function App() {
             />
           )}
           {view === "export" && <ExportView key={`e-${tag}`} tag={tag} />}
+          {view === "memories" && <MemoryLifecycleView onChanged={() => setKeyEpoch((n) => n + 1)} />}
+          {view === "webhooks" && <WebhookDeliveryView />}
           {view === "governance" && <GovernanceView />}
           {view === "note" && activeNote && (
             <NotePane

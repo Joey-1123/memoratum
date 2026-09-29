@@ -87,4 +87,36 @@ export const api = {
     request<{ usage: import("./types").UsageCounter[]; total: number }>(
       `/v4/usage?limit=${limit}&offset=${offset}`
     ),
+  memoryPage: (filters: Record<string, string>, page = 1, pageSize = 50) =>
+    request<import("./types").MemoryPage>(
+      `/v3/memories/?page=${page}&page_size=${pageSize}`,
+      { method: "POST", body: JSON.stringify({ filters }) },
+    ),
+  memory: (memoryID: string) =>
+    request<import("./types").MemoryRecord>(
+      `/v1/memories/${encodeURIComponent(memoryID)}/`
+    ),
+  updateMemory: (memoryID: string, body: Record<string, unknown>) =>
+    request<import("./types").MemoryRecord>(
+      `/v1/memories/${encodeURIComponent(memoryID)}/`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  deleteMemory: (memoryID: string) =>
+    request<{ message: string; cascade_count: number }>(
+      `/v1/memories/${encodeURIComponent(memoryID)}/`,
+      { method: "DELETE" },
+    ),
+  memoryHistory: (memoryID: string) =>
+    request<import("./types").MemoryHistoryEntry[]>(
+      `/v1/memories/${encodeURIComponent(memoryID)}/history/`
+    ),
+  webhookDeliveries: (projectID: string) =>
+    request<{ deliveries: import("./types").WebhookDelivery[] }>(
+      `/v4/projects/${encodeURIComponent(projectID)}/webhooks/deliveries`
+    ),
+  replayWebhookDelivery: (deliveryID: string) =>
+    request<{ id: string; status: string; replayed: boolean }>(
+      `/v4/webhooks/deliveries/${encodeURIComponent(deliveryID)}/replay`,
+      { method: "POST" },
+    ),
 };

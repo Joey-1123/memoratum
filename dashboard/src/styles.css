@@ -151,6 +151,27 @@ button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible
 .mono { font-family: var(--font-monospace); font-size: var(--font-ui-small); }
 .error { color: var(--text-error); }
 .num { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.view-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+.toolbar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.75rem 0; }
+.toolbar input { min-width: 16rem; }
+.empty-state { padding: 2rem 1rem; text-align: center; color: var(--text-muted); border: 1px dashed var(--background-modifier-border); border-radius: var(--radius-m); }
+.table-wrap { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td { text-align: left; padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--background-modifier-border); vertical-align: top; }
+.data-table tr.selected { background: var(--background-secondary-alt); }
+.data-table tr:hover { background: var(--background-secondary-alt); }
+.link-button { border: 0; background: none; color: var(--text-accent); padding: 0; min-height: unset; text-align: left; }
+.link-button:hover { background: none; text-decoration: underline; }
+.pagination, .actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.75rem; }
+.detail-card { margin-top: 1rem; }
+.detail-card textarea { width: 100%; resize: vertical; }
+.history-list { padding-left: 1.25rem; }
+.status { font-family: var(--font-monospace); font-size: var(--font-ui-small); }
+.status-succeeded { color: var(--text-accent); }
+.status-dead, .status-failed { color: var(--text-error); }
+.status-queued { color: var(--text-warning); }
+.danger-button { color: var(--text-error); }
 
 /* App shell */
 .shell {
