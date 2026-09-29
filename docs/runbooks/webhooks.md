@@ -17,7 +17,12 @@ Content-Type: application/json
 ```
 
 The response includes `secret` exactly once. Store it in the receiver's
-secret manager; subsequent list/get responses never include it. Rotate with:
+secret manager; subsequent list/get responses never include it. Secrets are
+encrypted at rest with Fernet. Set `MEMORATUM_WEBHOOK_ENCRYPTION_KEY` to a
+comma-separated Fernet key list for managed key rotation; otherwise Memoratum
+creates a mode-600 `.webhook-encryption-key` in `MEMORATUM_DATA_DIR`. Pause or
+resume an endpoint with `{"is_active": false|true}` on the update route. Rotate
+with:
 
 ```http
 POST /v4/webhooks/{webhook_id}/rotate-secret

@@ -15,8 +15,9 @@ optional `org_id`/`project_id` scope. Error shape everywhere:
 | `dreaming` | `"dynamic"` \| `"instant"` | no | default `"dynamic"`; skipped entirely when no LLM is configured |
 | `metadata` | object \| null | no | stored as JSON, usable in `filters` |
 | `org_id` | string \| null | no | optional organization scope; scoped keys may only use their own value |
+| `project_id` | string \| null | no | optional project scope; project-bound keys may only use their own value |
 
-Response: `{"id": "<hex>", "status": "done"|"failed"}` (ingest runs inline).
+Response: `{"id": "<hex>", "status": "queued", "job_id": "<job-id>"}`. Ingest and dreaming run asynchronously in the local worker; poll `GET /v4/jobs/{job_id}` or the document route.
 
 ## `GET /v3/documents/{id}` → 200 | 404
 
@@ -47,7 +48,43 @@ the response contains `documents` and `total` for pagination.
 
 Response: `{results: [{id, memory?|chunk, similarity}], timing: <ms>, total: <n>}`.
 
-## `POST /v4/facts` → 201
+## Native memory lifecycle
+
+The native `/v4` lifecycle uses the same canonical `mem_<uuid>` records as the
+compatibility routes:
+
+- `POST /v4/memories` — create a memory with `text`, `containerTag`, optional
+  `metadata`, `expires_at`, `org_id`, and `project_id`; returns the record and a
+  reindex `job_id`.
+- `GET /v4/memories/{memory_id}` — retrieve one scoped record.
+- `PUT|PATCH /v4/memories/{memory_id}` — partial text/metadata/timestamp/
+  expiration update; returns the new version and reindex job.
+- `DELETE /v4/memories/{memory_id}` — soft-delete with a redacted tombstone and
+  vector cleanup. Legacy fact IDs are resolved during the migration window.
+- `GET /v4/memories/{memory_id}/history` — append-only local history.
+- `DELETE /v4/memories?user_id=...` — explicit-filter asynchronous delete-all.
+
+Cross-scope IDs return the same 404 shape as missing IDs. Updates cannot change
+`containerTag`, organization, or project through metadata.
+
+## Native asynchronous bulk
+
+`POST /v4/memories/bulk` (aliases: `/v4/memories/batch`, `/v4/jobs/bulk`)
+accepts 1–1000 unique operations and returns `202`:
+
+```json
+{"containerTag":"mem0:user_id:alice","operations":[
+  {"memory_id":"mem_...","action":"update","text":"new text"},
+  {"memory_id":"mem_...","action":"delete"}
+]}
+```
+
+Poll the returned job. Its `result` contains `total`, `completed`, `failed`, and
+per-item `status`/`error` fields. SQLite mutations are committed per item so a
+provider failure cannot roll back already-authoritative work; failed vector
+work is reindexed by a follow-up job. Compatibility `PUT/DELETE /v1/batch/`
+remain synchronous and atomic.
+
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
@@ -70,7 +107,7 @@ Same `(subject, predicate, object)` re-asserts (reviving a superseded row) inste
 
 ## `POST /v4/keys` → 201
 
-Body `{containerTag: string|null, org_id: string|null, project_id: string|null}` (null values are wildcards). Open mode or admin → `{key: "mm_..."}` (shown once); known non-admin key → 403; otherwise 401.
+Body `{containerTag: string|null, org_id: string|null, project_id: string|null, role: "OWNER"|"READER"}`. New keys default to `READER`; project data mutations and management require an explicitly project-bound `OWNER` key. Open mode or admin → `{key: "mm_..."}` (shown once); known non-admin key → 403; otherwise 401.
 
 ## `POST /v4/keys/revoke` → 200
 
@@ -82,12 +119,21 @@ Hard-deletes one fact. Missing or out-of-scope → 404; bad credentials → 401.
 
 ## `DELETE /v4/tags/{tag}` → 200
 
-Purges the tag's documents (chunks cascade), facts, and keys. Admin or a scoped key for that tag; otherwise 401/404 (uniform). Idempotent — returns `{facts, documents, keys}` counts (zeros when empty).
+Purges the tag's memories, documents (chunks cascade), facts, vectors, and related webhook event payloads within the caller's project/organization scope. A legacy tag-only key can purge only rows with no organization/project. It does not revoke API keys. Admin or a scoped key for that tag; otherwise 401/404 (uniform). Idempotent — returns `{memories, facts, documents, keys}` counts (keys is always `0`; revocation is explicit).
+
+## Categorization
+
+`POST /v4/memories/{memory_id}/categorize` (also available at the `/v1` alias)
+with `{"category":"preference"}` updates the category metadata, appends
+history, emits `memory_categorize`, and returns a reindex `job_id`.
 
 ## `GET /v4/jobs/{id}` → 200 | 404
 
 `{id, kind, status, attempts, result, error}`. Requires valid credentials;
-out-of-scope jobs read as 404 (tag resolved from the payload's document or tag).
+out-of-scope jobs read as 404 (tag/project resolved from the payload or source
+record). `POST /v4/jobs/{id}/cancel` cancels queued jobs; project owners/admins
+may cancel, ingest cancellation also marks the document cancelled, and a queued
+project purge cancellation clears the project's deletion flag.
 
 ## `GET /v4/audit?containerTag=&org_id=&limit=&offset=` → 200 | 401 | 403
 
@@ -143,19 +189,24 @@ intentionally out of scope.
 
 `GET /v1/ping/` returns the seeded `org_id` and `project_id`. Local project and
 member management is available under
-`/api/v1/orgs/organizations/{org_id}/projects/`.
+`/api/v1/orgs/organizations/{org_id}/projects/`. Project deletion is an
+asynchronous `202` job; the project is marked deleting immediately, writes are
+rejected while the job runs, and the default `local-project` cannot be deleted.
+When auth is disabled, local management routes are intentionally open like the
+rest of the self-hosted instance.
 
-Webhook management is opt-in and project-scoped:
+Webhook management is opt-in and project-scoped. `PUT` accepts `name`, `url`,
+`event_types`, and `is_active`; inactive endpoints receive no new deliveries.
+Create/rotate return the signing secret once, while list/get responses redact
+it. Secrets are encrypted at rest in SQLite. Delivery uses HMAC-SHA256
+signatures, bounded response reads, at-least-once retry, and local delivery
+history. See [`runbooks/webhooks.md`](runbooks/webhooks.md).
 
 - `POST/GET /api/v1/webhooks/projects/{project_id}/`
 - `GET/PUT/DELETE /api/v1/webhooks/{webhook_id}/`
 - `POST /v4/webhooks/{webhook_id}/rotate-secret`
 - `GET /v4/projects/{project_id}/webhooks/deliveries`
 - `POST /v4/webhooks/deliveries/{delivery_id}/replay`
-
-Create returns the signing secret once; list/get responses redact it. Delivery
-uses HMAC-SHA256 signatures, bounded response reads, at-least-once retry, and
-local delivery history. See [`runbooks/webhooks.md`](runbooks/webhooks.md).
 
 ## `GET /health` → 200
 

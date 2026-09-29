@@ -31,7 +31,7 @@ def _key(client: TestClient, project_id: str, tag: str = "mem0:user_id:alice") -
     response = client.post(
         "/v4/keys",
         headers=_admin(),
-        json={"containerTag": tag, "project_id": project_id},
+        json={"containerTag": tag, "project_id": project_id, "role": "OWNER"},
     )
     assert response.status_code == 201, response.text
     return {"Authorization": f"Bearer {response.json()['key']}"}

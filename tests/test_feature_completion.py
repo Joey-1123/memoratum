@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 from fastapi.testclient import TestClient
 
 
@@ -66,7 +64,7 @@ def test_categorize_memory_records_category_and_event(tmp_path, monkeypatch) -> 
     key = client.post(
         "/v4/keys",
         headers=_admin(),
-        json={"containerTag": "mem0:user_id:alice", "project_id": project_id},
+        json={"containerTag": "mem0:user_id:alice", "project_id": project_id, "role": "OWNER"},
     ).json()["key"]
     headers = {"Authorization": f"Bearer {key}"}
     added = client.post(
@@ -100,6 +98,33 @@ def test_categorize_memory_records_category_and_event(tmp_path, monkeypatch) -> 
     ).fetchone()
     assert event is not None and event["event_type"] == "memory_categorize"
     conn.close()
+
+
+def test_native_memory_lifecycle_aliases_work(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    created = client.post(
+        "/v4/memories",
+        headers=_admin(),
+        json={
+            "text": "native memory",
+            "containerTag": "mem0:user_id:alice",
+            "metadata": {"kind": "note"},
+        },
+    )
+    assert created.status_code == 201, created.text
+    memory_id = created.json()["id"]
+    assert client.get(f"/v4/memories/{memory_id}", headers=_admin()).status_code == 200
+    updated = client.patch(
+        f"/v4/memories/{memory_id}",
+        headers=_admin(),
+        json={"text": "native updated"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["memory"] == "native updated"
+    assert client.get(f"/v4/memories/{memory_id}/history", headers=_admin()).status_code == 200
+    deleted = client.delete(f"/v4/memories/{memory_id}", headers=_admin())
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == memory_id
 
 
 def test_native_bulk_job_reports_per_item_progress(tmp_path, monkeypatch) -> None:
@@ -297,7 +322,3 @@ def test_pgvector_migration_and_score_index_are_real() -> None:
     assert any(
         "ADD COLUMN IF NOT EXISTS project_id" in query for query in connection.cursor_obj.queries
     )
-
-
-# Keep a real timestamp import used by the test module's type checkers.
-_ = time

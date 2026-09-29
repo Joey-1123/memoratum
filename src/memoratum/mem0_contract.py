@@ -84,6 +84,24 @@ CAPABILITIES: tuple[dict[str, str], ...] = (
         "notes": "List-shaped append-only local history.",
     },
     {
+        "name": "native_memory_lifecycle",
+        "status": "supported",
+        "routes": "POST/GET/PATCH/DELETE /v4/memories; /v4/memories/{memory_id}/history",
+        "notes": "Canonical IDs, scoped mutations, reindex jobs, and redacted tombstones.",
+    },
+    {
+        "name": "memory_categorization",
+        "status": "supported",
+        "routes": "POST /v4/memories/{memory_id}/categorize",
+        "notes": "Category metadata update with memory_categorize event.",
+    },
+    {
+        "name": "native_async_bulk",
+        "status": "supported",
+        "routes": "POST /v4/memories/bulk; /v4/memories/batch; /v4/jobs/bulk",
+        "notes": "Bounded per-item progress with durable worker results.",
+    },
+    {
         "name": "bulk_operations",
         "status": "supported",
         "routes": "PUT /v1/batch/; DELETE /v1/batch/",

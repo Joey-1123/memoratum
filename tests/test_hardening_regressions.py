@@ -198,7 +198,7 @@ def test_project_usage_and_audit_are_filterable(tmp_path, monkeypatch) -> None:
     key = client.post(
         "/v4/keys",
         headers=_admin(),
-        json={"containerTag": "mem0:user_id:alice", "project_id": project},
+        json={"containerTag": "mem0:user_id:alice", "project_id": project, "role": "OWNER"},
     ).json()["key"]
     headers = {"Authorization": f"Bearer {key}"}
     assert (

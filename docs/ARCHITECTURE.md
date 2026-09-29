@@ -72,7 +72,8 @@ workers). Requests are serialized on a process-wide lock because dependency
 setup and endpoint bodies run on different worker threads — single-process
 ceiling; HA needs a real DB server. Auth: env admin key, DB scoped/wildcard keys, revocation list;
 401 for unknown credentials, 403 for out-of-scope writes, uniform 404 for
-missing-or-forbidden reads. Dreaming + ingest run inline in the request path
+missing-or-forbidden reads. Ingest, dreaming, reindexing, webhook delivery, and
+native bulk work are durable SQLite jobs processed by `memoratum.worker`.
 (no background queue yet — see ceilings in `SECURITY.md`).
 
 ## Clients

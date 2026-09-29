@@ -681,6 +681,9 @@ def create_app(
         doc: DocumentIn, conn: DbConn, authorization: str | None = Header(default=None)
     ):
         project_id = effective_project(authorization, conn, doc.project_id)
+        denied = require_project_write(authorization, conn, project_id)
+        if denied is not None:
+            return denied
         org_id = authorize(
             authorization,
             conn,
@@ -741,6 +744,9 @@ def create_app(
             return _error("VALIDATION_ERROR", "metadata must be an object", 422)
         auth = _compat_auth_header(authorization)
         project_id = effective_project(auth, conn, body.get("project_id"))
+        denied = require_project_write(auth, conn, project_id)
+        if denied is not None:
+            return denied
         org_id = authorize(
             auth,
             conn,
@@ -824,6 +830,9 @@ def create_app(
             )
         auth = _compat_auth_header(authorization)
         project_id = effective_project(auth, conn, None)
+        denied = require_project_write(auth, conn, project_id)
+        if denied is not None:
+            return denied
         if project_id is not None:
             project = conn.execute(
                 "SELECT org_id FROM projects WHERE id = ?", (project_id,)
@@ -1167,6 +1176,9 @@ def create_app(
         assert normalized is not None
         auth = _compat_auth_header(authorization)
         project_id = effective_project(auth, conn, body.get("project_id"))
+        denied = require_project_write(auth, conn, project_id)
+        if denied is not None:
+            return denied
         container_tag = body.get("containerTag", body.get("container_tag", "default"))
         if not isinstance(container_tag, str) or not container_tag.strip():
             return _error("VALIDATION_ERROR", "containerTag must be a non-empty string", 422)
@@ -1417,6 +1429,9 @@ def create_app(
         payload: dict[str, Any] = {"filters": filters, "org_id": org_id, "project_id": None}
         if isinstance(scope, dict):
             payload["project_id"] = scope.get("project_id")
+        denied = require_project_write(auth, conn, payload["project_id"])
+        if denied is not None:
+            return denied
         if exact_tag is not None:
             payload["container_tag"] = exact_tag
         event_id = jobs.enqueue(conn, kind="delete_all_memories", payload=payload)
@@ -1517,6 +1532,19 @@ def create_app(
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def require_project_write(
+        authorization: str | None, conn: sqlite3.Connection, project_id: str | None
+    ) -> JSONResponse | None:
+        """Require a verified project owner for data mutations."""
+        if project_id is None:
+            return None
+        row = conn.execute("SELECT org_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        return _project_scope_error(
+            authorization, conn, str(row["org_id"]), project_id, owner_only=True
+        )
 
     def _webhook_project(authorization: str | None, conn: sqlite3.Connection, project_id: str):
         row = conn.execute("SELECT org_id FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -2035,6 +2063,9 @@ def create_app(
         if error is not None:
             return error
         assert memory is not None
+        denied = require_project_write(authorization, conn, memory.get("project_id"))
+        if denied is not None:
+            return denied
         allowed = {"text", "metadata", "timestamp", "expiration_date"}
         unknown = set(body) - allowed
         if unknown or not body:
@@ -2126,6 +2157,9 @@ def create_app(
         if error is not None:
             return error
         assert memory is not None
+        denied = require_project_write(authorization, conn, memory.get("project_id"))
+        if denied is not None:
+            return denied
         category = body.get("category", body.get("memory_type"))
         if not isinstance(category, str) or not category.strip():
             return _error("VALIDATION_ERROR", "category is required", 422)
@@ -2186,6 +2220,9 @@ def create_app(
         if error is not None:
             return error
         assert memory is not None
+        denied = require_project_write(authorization, conn, memory.get("project_id"))
+        if denied is not None:
+            return denied
         memory_id = str(memory["id"])
         auth = _compat_auth_header(authorization)
         claim, claim_error = _begin_idempotency(
@@ -2389,6 +2426,9 @@ def create_app(
             project_id=document.get("project_id"),
             operation="request",
         )
+        denied = require_project_write(authorization, conn, document.get("project_id"))
+        if denied is not None:
+            return denied
         actor_kind, key_hash = actor(authorization, conn)
         token = "share_" + secrets.token_urlsafe(32)
         link = db.create_share_link(
@@ -2445,6 +2485,9 @@ def create_app(
             project_id=document.get("project_id"),
             operation="request",
         )
+        denied = require_project_write(authorization, conn, document.get("project_id"))
+        if denied is not None:
+            return denied
         revoked = db.revoke_share_link(conn, link_id)
         audit(
             authorization,
@@ -2496,6 +2539,9 @@ def create_app(
                 doc.get("project_id"),
             ):
                 return _error("NOT_FOUND", "document not found", 404)
+        denied = require_project_write(authorization, conn, doc.get("project_id"))
+        if denied is not None:
+            return denied
         meter(
             authorization,
             conn,
@@ -2773,6 +2819,9 @@ def create_app(
                     memory.get("project_id"),
                 ):
                     return _error("NOT_FOUND", "fact not found", 404)
+            denied = require_project_write(authorization, conn, memory.get("project_id"))
+            if denied is not None:
+                return denied
             result = db.soft_delete_memory(
                 conn, str(memory["id"]), actor_key_hash=actor(authorization, conn)[1]
             )
@@ -2813,6 +2862,9 @@ def create_app(
         # Native fact deletion must remove the canonical projection and its
         # vectors as well as the legacy fact row. Keep the tombstone/history
         # semantics of the memory lifecycle route.
+        denied = require_project_write(authorization, conn, fact.get("project_id"))
+        if denied is not None:
+            return denied
         memory = db.resolve_memory_reference(conn, fact_id)
         deleted_memory_ids: list[str] = []
         if memory is not None:
@@ -2854,7 +2906,12 @@ def create_app(
         try:
             project_id = effective_project(authorization, conn, None)
             org_id = authorize(authorization, conn, tag, project_id=project_id)
-            if org_id is None and project_id is None and not _is_admin(authorization, settings):
+            if (
+                org_id is None
+                and project_id is None
+                and settings.auth_enabled
+                and not _is_admin(authorization, settings)
+            ):
                 legacy_only = True
             else:
                 legacy_only = False
@@ -2887,6 +2944,9 @@ def create_app(
     @app.post("/v4/facts", status_code=201)
     def create_fact(body: FactIn, conn: DbConn, authorization: str | None = Header(default=None)):
         project_id = effective_project(authorization, conn, body.project_id)
+        denied = require_project_write(authorization, conn, project_id)
+        if denied is not None:
+            return denied
         org_id = authorize(
             authorization,
             conn,
@@ -2998,6 +3058,9 @@ def create_app(
         # may import, but only into tags they can write.
         slug = body.tag.removeprefix("graphify:")
         project_id = effective_project(authorization, conn, body.project_id)
+        denied = require_project_write(authorization, conn, project_id)
+        if denied is not None:
+            return denied
         org_id = authorize(
             authorization,
             conn,

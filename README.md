@@ -55,7 +55,7 @@ curl -X POST localhost:6767/v4/search \
 ## Auth
 
 - No `MEMORATUM_API_KEY` set → the first boot mints a wildcard admin key and prints it **once** on stdout. `MEMORATUM_API_KEY` pins a fixed admin key instead.
-- Scoped keys are bound to one tag: `POST /v4/keys {"containerTag": "proj-a"}` (admin) → `{key: "mm_..."}`. Outside its tag → 403; unknown/missing credentials → 401; missing-or-forbidden documents read as 404.
+- Scoped keys are bound to one tag and, when supplied, one organization/project: `POST /v4/keys {"containerTag":"proj-a","project_id":"project-...","role":"OWNER"}` (admin) → `{key: "mm_..."}`. New keys default to `READER`; project management requires an explicitly bound `OWNER` key. Outside scope → 403; unknown/missing credentials → 401; missing-or-forbidden documents read as 404.
 - Revoke with `POST /v4/keys/revoke {"key": "..."}` (admin). Keys are stored as SHA-256 hashes.
 
 ## Dreaming
@@ -75,6 +75,7 @@ Point `MEMORATUM_LLM_ENDPOINT` / `MEMORATUM_LLM_MODEL` at any OpenAI-compatible 
 | `MEMORATUM_EMBEDDINGS_PROVIDER` | `hash` | `hash` (offline dev) or `api` |
 | `MEMORATUM_EMBEDDINGS_ENDPOINT/MODEL/KEY` | — | OpenAI-compatible endpoint |
 | `MEMORATUM_LLM_ENDPOINT/MODEL/KEY` | — | Chat endpoint for dreaming |
+| `MEMORATUM_WEBHOOK_ENCRYPTION_KEY` | generated local key file | Fernet key(s) for webhook secrets at rest |
 
 ## Clients
 

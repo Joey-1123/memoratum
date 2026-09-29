@@ -1,6 +1,6 @@
 # Implementation Plan: Mem0 self-hosted operation parity
 
-**Status:** FINAL — research complete; ready for implementation
+**Status:** IMPLEMENTED LOCALLY — self-hosted scope shipped; release handoff remains
 
 ## Overview
 
@@ -98,7 +98,9 @@ Do not drop or rename old columns in the same release. Backfill canonical memory
 
 ## Build order and PR slices
 
-Each slice is implemented on a short-lived branch, tested, committed atomically, opened as a PR, reviewed/fixed/re-reviewed, merged, and tagged before the next slice begins.
+Each slice is implemented on a short-lived branch, tested, and committed
+atomically. In this workspace the local commits are complete; GitHub PR,
+review, merge, and tag operations are intentionally left to the release owner.
 
 1. **Contract and identity foundation** — capability map approval, v0.2 fixtures, canonical memory schema, public IDs, idempotency, and event result shape.
 2. **Single-memory lifecycle** — get/update/delete/delete-all/history/expiration with vector cleanup and local audit/usage.

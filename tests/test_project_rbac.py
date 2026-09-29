@@ -67,6 +67,14 @@ def test_reader_key_can_read_but_cannot_manage_project_or_webhooks(tmp_path, mon
         == 403
     )
     assert client.get(f"/api/v1/webhooks/projects/{project_id}/", headers=reader).status_code == 403
+    assert (
+        client.post(
+            "/v3/documents",
+            headers=reader,
+            json={"containerTag": "mem0:user_id:alice", "content": "forbidden"},
+        ).status_code
+        == 403
+    )
 
 
 def test_project_key_cannot_be_issued_for_unknown_or_mismatched_project(

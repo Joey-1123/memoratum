@@ -24,6 +24,9 @@ or control-plane feature.
 | Delete all in an entity scope | Supported | `DELETE /v1/memories/` |
 | Memory history | Supported | `GET /v1/memories/{memory_id}/history/` |
 | Atomic batch update/delete | Supported | `PUT /v1/batch/`, `DELETE /v1/batch/` |
+| Native memory lifecycle | Supported | `POST/GET/PATCH/DELETE /v4/memories...` |
+| Categorization event | Supported | `POST /v4/memories/{id}/categorize` |
+| Native async bulk | Supported | `POST /v4/memories/bulk` (per-item job progress) |
 | Ping and project/member routes | Supported | `GET /v1/ping/`, `/api/v1/orgs/...` |
 | Project webhooks | Supported | `/api/v1/webhooks/...` |
 | Managed billing, quotas, invitations | Out of scope | — |
@@ -39,8 +42,9 @@ Authentication accepts `Authorization: Token <key>` and the native
 identify exactly one supported entity scope: `user_id`, `agent_id`, `app_id`,
 or `run_id`. The ID is encoded as `mem0:<entity>:<value>`. Project-scoped keys
 additionally restrict reads, writes, events, and webhook management to their
-project. Missing, malformed, and cross-scope IDs do not reveal another scope's
-data.
+project. New keys default to `READER`; data mutations, project management, and
+destructive project operations require an explicit project-bound `OWNER` role. Missing,
+malformed, and cross-scope IDs do not reveal another scope's data.
 
 ## Canonical memory lifecycle
 
@@ -66,8 +70,10 @@ are projected into canonical memories during the worker dream step.
 
 Batches contain 1–1000 unique items, validate every item before writing, and
 commit atomically for SQLite. The response is message-style, for example
-`{"message":"Successfully updated 1 memories"}`. Large native jobs and
-reindexing remain asynchronous in the local worker.
+`{"message":"Successfully updated 1 memories"}`. Native large jobs use
+`POST /v4/memories/bulk` (aliases `/v4/memories/batch` and `/v4/jobs/bulk`),
+return a job ID, and expose per-item progress in the job result. Reindexing
+remains asynchronous in the local worker.
 
 ## Organizations, projects, and members
 
@@ -94,10 +100,12 @@ POST /api/v1/webhooks/projects/{project_id}/
 ```
 
 The create response returns the signing secret once. List/get responses redact
-it. Supported events are `memory_add`, `memory_update`, `memory_delete`,
-`memory_categorize`, and the documented ingest-job events. The local outbox and
-worker provide at-least-once delivery, stable delivery IDs, HMAC-SHA256
-signatures, exponential retry, dead-letter state, and authorized replay.
+it, and the stored value is encrypted at rest. `PUT` accepts `is_active` to
+pause/resume delivery. Supported events are `memory_add`, `memory_update`,
+`memory_delete`, `memory_categorize`, and the documented ingest-job events. The
+local outbox and worker provide at-least-once delivery, stable delivery IDs,
+HMAC-SHA256 signatures, exponential retry, dead-letter state, and authorized
+replay.
 
 Webhook URLs require HTTPS and reject private, loopback, link-local,
 multicast, reserved, and metadata addresses after DNS resolution. Redirects are

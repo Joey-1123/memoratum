@@ -4,6 +4,19 @@ Target: full functional parity with a stable versioned memory API surface, self-
 AGPL-3.0. Derived from public memory-API documentation and an existing open-source
 client implementation. Phase-gated: each phase lands tested and runnable before the next begins.
 
+## Current shipped self-hosted profile
+
+The local profile now ships canonical `mem_<uuid>` lifecycle routes, native
+asynchronous bulk jobs with per-item progress, project/organization isolation,
+encrypted opt-in webhooks, and provider-neutral vector adapters. SQLite remains
+the default and the worker is durable. Hosted billing, quotas, invitations, and
+a remote control plane remain out of scope.
+
+Legacy external vector records without a project payload fail closed for
+project-scoped queries. Rebuild provider payloads from authoritative SQLite
+with `python scripts/reindex_vectors.py` before enabling a new project against
+an old external index.
+
 ## API surface (parity targets)
 
 - `POST /v3/documents` — `{content, containerTag, customId?, dreaming?}` → async ingest,

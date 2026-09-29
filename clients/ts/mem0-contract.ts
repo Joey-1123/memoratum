@@ -339,7 +339,7 @@ export class Mem0CompatClient {
 
   updateWebhook(
     webhookID: string,
-    input: Partial<Pick<Mem0Webhook, "name" | "url" | "event_types">>,
+    input: Partial<Pick<Mem0Webhook, "name" | "url" | "event_types" | "is_active">>,
   ): Promise<{ message: string; webhook: Mem0Webhook }> {
     return this.request(`/api/v1/webhooks/${encodeURIComponent(webhookID)}/`, {
       method: "PUT",
@@ -357,7 +357,7 @@ export class Mem0CompatClient {
     });
   }
 
-  replayWebhookDelivery(deliveryID: string): Promise<{ id: string; status: string; replayed: boolean }> {
+  replayWebhookDelivery(deliveryID: string): Promise<{ id: string; status: string; replayed: boolean; job_id?: string }> {
     return this.request(`/v4/webhooks/deliveries/${encodeURIComponent(deliveryID)}/replay`, {
       method: "POST",
     });

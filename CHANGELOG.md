@@ -1,10 +1,39 @@
 # Changelog
 
-## [Unreleased]
+## [0.35.0] - 2026-09-30
 ### Added
-- Versioned `mem0-self-hosted-v0.1` compatibility contract, capability matrix,
-  and request/response/error fixtures with official Python and TypeScript SDK
-  contract probes for the supported local routes.
+- Canonical `mem_<uuid>` lifecycle across native and Mem0-compatible routes,
+  including native create/get/update/delete/history, categorization, and
+  project-scoped asynchronous bulk jobs with per-item progress.
+- Local organization/project/member isolation, durable project deletion jobs,
+  job cancellation, and explicit `READER`/`OWNER` project roles.
+- Encrypted webhook secret storage with Fernet key rotation support, webhook
+  activation controls, and complete memory/ingest event coverage.
+- Provider-neutral project scope for SQLite, Qdrant, Chroma, and pgvector,
+  including additive project-column migration, legacy SQLite vector backfill, and
+  the `scripts/reindex_vectors.py` operator rebuild command.
+
+### Changed
+- Project management is fail-closed: tag-only keys cannot become control-plane
+  credentials, OIDC identities require a local membership row, and project
+  writes are blocked while deletion is in progress.
+- Open mode now permits local project/management routes consistently with the
+  documented no-auth default.
+- Search, batch operations, audit, and usage accounting now preserve canonical
+  IDs and project scope.
+
+### Fixed
+- Webhook replay no longer steals running delivery jobs, duplicate retry jobs
+  are coalesced, and transaction handling is safe for nested callers.
+- Expired/dangling project rows, metadata identity smuggling, PgVector result
+  indices, and partial ingest failures are handled without corrupting state.
+
+### Verification
+- The full Python test suite, Ruff, the dependency-free TypeScript probe, dashboard
+  build, and the no-telemetry guard pass locally. GitHub release operations are
+  not performed from this workspace.
+
+## [Unreleased]
 
 ## [0.34.2] - 2026-09-24
 ### Changed

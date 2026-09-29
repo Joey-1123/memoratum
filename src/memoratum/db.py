@@ -469,6 +469,20 @@ _MIGRATIONS: tuple[str, ...] = (
     SET project_id = (SELECT f.project_id FROM facts f WHERE f.id = vector_points.id)
     WHERE project_id IS NULL
       AND EXISTS (SELECT 1 FROM facts f WHERE f.id = vector_points.id AND f.project_id IS NOT NULL);
+    UPDATE vector_points
+    SET org_id = (
+      SELECT d.org_id FROM chunks c JOIN documents d ON d.id = c.document_id
+      WHERE CAST(c.id AS TEXT) = vector_points.id
+    )
+    WHERE org_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE CAST(c.id AS TEXT) = vector_points.id AND d.org_id IS NOT NULL
+      );
+    UPDATE vector_points
+    SET org_id = (SELECT m.org_id FROM memories m WHERE m.id = vector_points.id)
+    WHERE org_id IS NULL
+      AND EXISTS (SELECT 1 FROM memories m WHERE m.id = vector_points.id AND m.org_id IS NOT NULL);
     """,
 )
 
@@ -1385,20 +1399,33 @@ def purge_project(
         return {"memories": 0, "facts": 0, "documents": 0, "keys": 0, "webhooks": 0}
     if org_id is not None and project["org_id"] != org_id:
         raise ValueError("project does not belong to org_id")
+    key_rows = conn.execute(
+        "SELECT key_hash FROM api_keys WHERE project_id = ?", (project_id,)
+    ).fetchall()
+    for key_row in key_rows:
+        conn.execute(
+            "DELETE FROM idempotency_keys WHERE scope = ?", (f"key:{key_row['key_hash']}",)
+        )
+        conn.execute("DELETE FROM revoked_keys WHERE key_hash = ?", (key_row["key_hash"],))
     memories = conn.execute("DELETE FROM memories WHERE project_id = ?", (project_id,)).rowcount
     facts = conn.execute("DELETE FROM facts WHERE project_id = ?", (project_id,)).rowcount
     conn.execute("DELETE FROM vector_points WHERE project_id = ?", (project_id,))
     documents = conn.execute("DELETE FROM documents WHERE project_id = ?", (project_id,)).rowcount
-    keys = conn.execute("DELETE FROM api_keys WHERE project_id = ?", (project_id,)).rowcount
+    keys = len(key_rows)
     webhooks = conn.execute("DELETE FROM webhooks WHERE project_id = ?", (project_id,)).rowcount
     conn.execute("DELETE FROM usage_counters WHERE project_id = ?", (project_id,))
     conn.execute("DELETE FROM audit_events WHERE project_id = ?", (project_id,))
-    if preserve_job_id is None:
-        conn.execute("DELETE FROM jobs WHERE project_id = ?", (project_id,))
-    else:
-        conn.execute(
-            "DELETE FROM jobs WHERE project_id = ? AND id != ?", (project_id, preserve_job_id)
-        )
+    job_rows = conn.execute("SELECT id, project_id, payload FROM jobs").fetchall()
+    for job_row in job_rows:
+        if job_row["id"] == preserve_job_id:
+            continue
+        payload_project = None
+        try:
+            payload_project = (json.loads(job_row["payload"] or "{}") or {}).get("project_id")
+        except (TypeError, ValueError):
+            payload_project = None
+        if job_row["project_id"] == project_id or payload_project == project_id:
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_row["id"],))
     conn.execute("DELETE FROM project_members WHERE project_id = ?", (project_id,))
     conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     conn.commit()
