@@ -333,6 +333,54 @@ _MIGRATIONS: tuple[str, ...] = (
       CAST(strftime('%s','now') AS REAL), CAST(strftime('%s','now') AS REAL)
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS webhooks(
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      event_types TEXT NOT NULL,
+      secret TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_webhooks_project ON webhooks(project_id, created_at);
+    CREATE TABLE IF NOT EXISTS domain_events(
+      id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      memory_id TEXT,
+      payload TEXT NOT NULL,
+      created_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_domain_events_project ON domain_events(project_id, created_at);
+    CREATE TABLE IF NOT EXISTS webhook_deliveries(
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL REFERENCES domain_events(id) ON DELETE CASCADE,
+      webhook_id TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      memory_id TEXT,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at REAL,
+      last_error TEXT,
+      response_status INTEGER,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      UNIQUE(event_id, webhook_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due
+      ON webhook_deliveries(status, next_attempt_at, created_at);
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_project
+      ON webhook_deliveries(project_id, created_at DESC);
+    """,
+    """
+    ALTER TABLE jobs ADD COLUMN run_after REAL NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_after, created_at);
+    """,
 )
 
 
@@ -513,6 +561,16 @@ def create_memory(
         version=1,
         actor_key_hash=actor_key_hash,
     )
+    if project_id is not None:
+        from memoratum.webhooks import record_event
+
+        record_event(
+            db,
+            project_id=project_id,
+            event_type="memory_add",
+            memory_id=memory_id,
+            data={"memory": text, "metadata": metadata or {}},
+        )
     db.commit()
     return get_memory(db, memory_id)
 
@@ -562,6 +620,16 @@ def ensure_fact_memory(
         metadata=metadata or {},
         version=1,
     )
+    if project_id is not None:
+        from memoratum.webhooks import record_event
+
+        record_event(
+            conn,
+            project_id=project_id,
+            event_type="memory_add",
+            memory_id=memory_id,
+            data={"memory": text, "metadata": metadata or {}},
+        )
     return memory_id
 
 
@@ -649,6 +717,16 @@ def update_memory(
         metadata=new_metadata,
         actor_key_hash=actor_key_hash,
     )
+    if current.get("project_id") is not None:
+        from memoratum.webhooks import record_event
+
+        record_event(
+            conn,
+            project_id=str(current["project_id"]),
+            event_type="memory_update",
+            memory_id=memory_id,
+            data={"memory": new_text, "metadata": new_metadata},
+        )
     return get_memory(conn, memory_id)
 
 
@@ -711,6 +789,16 @@ def soft_delete_memory(
             actor_key_hash=actor_key_hash,
             content_hash=hashlib.sha256(row["text"].encode()).hexdigest(),
         )
+        if row.get("project_id") is not None:
+            from memoratum.webhooks import record_event
+
+            record_event(
+                conn,
+                project_id=str(row["project_id"]),
+                event_type="memory_delete",
+                memory_id=target,
+                data={"deleted": True},
+            )
     return {
         "memory_id": memory_id,
         "deleted": True,

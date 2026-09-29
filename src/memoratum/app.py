@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from memoratum import db, jobs
+from memoratum import db, jobs, webhooks
 from memoratum import facts as fact_store
 from memoratum.auth import IdentityProvider, token_fingerprint
 from memoratum.config import Settings
@@ -1153,6 +1153,225 @@ def create_app(
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def _webhook_project(authorization: str | None, conn: sqlite3.Connection, project_id: str):
+        if _is_admin(authorization, settings):
+            return None
+        scope = scope_of(_compat_auth_header(authorization), conn)
+        if not isinstance(scope, dict) or scope.get("project_id") != project_id:
+            return _error("FORBIDDEN", "project webhook administrator required", 403)
+        return None
+
+    @app.post("/api/v1/webhooks/projects/{project_id}/", status_code=201)
+    def create_webhook_route(
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        try:
+            created = webhooks.create_webhook(
+                conn,
+                project_id=project_id,
+                name=body.get("name", ""),
+                url=body.get("url", ""),
+                event_types=body.get("event_types", []),
+                allow_private=settings.webhook_allow_private_targets,
+            )
+        except (ValueError, webhooks.UnsafeWebhookTarget) as exc:
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            action="webhook.created",
+            resource_type="webhook",
+            resource_id=created["id"],
+            metadata={"project_id": project_id, "event_types": created["event_types"]},
+        )
+        return created
+
+    @app.get("/api/v1/webhooks/projects/{project_id}/")
+    def list_webhooks_route(
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        return webhooks.list_webhooks(conn, project_id=project_id)
+
+    @app.get("/api/v1/webhooks/{webhook_id}/")
+    def get_webhook_route(
+        webhook_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        denied = _webhook_project(authorization, conn, str(row["project_id"]))
+        if denied is not None:
+            return denied
+        result = webhooks.get_webhook(conn, webhook_id)
+        assert result is not None
+        return result
+
+    @app.put("/api/v1/webhooks/{webhook_id}/")
+    def update_webhook_route(
+        webhook_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        project_id = str(row["project_id"])
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        try:
+            result = webhooks.update_webhook(
+                conn,
+                webhook_id=webhook_id,
+                project_id=project_id,
+                name=body.get("name"),
+                url=body.get("url"),
+                event_types=body.get("event_types"),
+                allow_private=settings.webhook_allow_private_targets,
+            )
+        except (ValueError, webhooks.UnsafeWebhookTarget) as exc:
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        if result is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            action="webhook.updated",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            metadata={"project_id": project_id},
+        )
+        return {"message": "Webhook updated successfully", "webhook": result}
+
+    @app.delete("/api/v1/webhooks/{webhook_id}/")
+    def delete_webhook_route(
+        webhook_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        project_id = str(row["project_id"])
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        deleted = webhooks.delete_webhook(conn, webhook_id=webhook_id, project_id=project_id)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            action="webhook.deleted",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            metadata={"project_id": project_id},
+        )
+        return {"message": "Webhook deleted successfully", "deleted": deleted}
+
+    @app.post("/v4/webhooks/{webhook_id}/rotate-secret")
+    def rotate_webhook_secret_route(
+        webhook_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        project_id = str(row["project_id"])
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        secret = webhooks.rotate_secret(conn, webhook_id=webhook_id, project_id=project_id)
+        if secret is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            action="webhook.secret_rotated",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            metadata={"project_id": project_id},
+        )
+        return {"id": webhook_id, "secret": secret}
+
+    @app.get("/v4/projects/{project_id}/webhooks/deliveries")
+    def list_webhook_deliveries_route(
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        return {
+            "deliveries": webhooks.list_deliveries(
+                conn,
+                project_id=project_id,
+                limit=max(1, min(limit, 500)),
+                offset=max(0, offset),
+            )
+        }
+
+    @app.post("/v4/webhooks/deliveries/{delivery_id}/replay")
+    def replay_webhook_delivery_route(
+        delivery_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute(
+            "SELECT project_id FROM webhook_deliveries WHERE id = ?", (delivery_id,)
+        ).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "delivery not found", 404)
+        denied = _webhook_project(authorization, conn, str(row["project_id"]))
+        if denied is not None:
+            return denied
+        result = webhooks.replay_delivery(conn, delivery_id)
+        if result is None:
+            return _error("CONFLICT", "delivery is not replayable", 409)
+        return result
+
+    @app.get("/api/v1/orgs/organizations/{org_id}/projects/", status_code=200)
+    def list_projects_route(
+        org_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        rows = conn.execute(
+            "SELECT * FROM projects WHERE org_id = ? ORDER BY updated_at DESC", (org_id,)
+        ).fetchall()
+        return [_project_response(row) for row in rows]
 
     @app.post("/api/v1/orgs/organizations/{org_id}/projects/", status_code=201)
     def create_project(

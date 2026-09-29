@@ -13,13 +13,15 @@ import uuid
 from typing import Any
 
 
-def enqueue(conn: sqlite3.Connection, *, kind: str, payload: dict[str, Any]) -> str:
+def enqueue(
+    conn: sqlite3.Connection, *, kind: str, payload: dict[str, Any], run_after: float | None = None
+) -> str:
     job_id = uuid.uuid4().hex
     now = time.time()
     conn.execute(
-        "INSERT INTO jobs(id, kind, payload, status, attempts, result, error, worker, created_at, updated_at)"
-        " VALUES (?, ?, ?, 'queued', 0, NULL, NULL, NULL, ?, ?)",
-        (job_id, kind, json.dumps(payload), now, now),
+        "INSERT INTO jobs(id, kind, payload, status, attempts, result, error, worker, created_at, updated_at, run_after)"
+        " VALUES (?, ?, ?, 'queued', 0, NULL, NULL, NULL, ?, ?, ?)",
+        (job_id, kind, json.dumps(payload), now, now, run_after or 0.0),
     )
     conn.commit()
     return job_id
@@ -29,7 +31,8 @@ def claim(conn: sqlite3.Connection, *, worker: str) -> dict[str, Any] | None:
     """Atomically move one queued job to running. Returns None when empty."""
     now = time.time()
     row = conn.execute(
-        "SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+        "SELECT id FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY created_at LIMIT 1",
+        (now,),
     ).fetchone()
     if row is None:
         return None
@@ -62,10 +65,10 @@ def fail(conn: sqlite3.Connection, job_id: str, *, error: str) -> None:
     conn.commit()
 
 
-def requeue(conn: sqlite3.Connection, job_id: str) -> None:
+def requeue(conn: sqlite3.Connection, job_id: str, *, run_after: float | None = None) -> None:
     conn.execute(
-        "UPDATE jobs SET status = 'queued', worker = NULL, updated_at = ? WHERE id = ?",
-        (time.time(), job_id),
+        "UPDATE jobs SET status = 'queued', worker = NULL, run_after = ?, updated_at = ? WHERE id = ?",
+        (run_after or 0.0, time.time(), job_id),
     )
     conn.commit()
 

@@ -2,7 +2,7 @@
 
 Base URL autodetects nothing — pass it explicitly (default server: `http://localhost:6767`).
 Auth: `Authorization: Bearer <key>`; admin key, container-scoped key, or an
-optional `org_id` scope. Error shape everywhere:
+optional `org_id`/`project_id` scope. Error shape everywhere:
 `{"error": {"code": "...", "message": "..."}}`. All write/read routes validate bodies (422 on invalid).
 
 ## `POST /v3/documents` → 201
@@ -70,7 +70,7 @@ Same `(subject, predicate, object)` re-asserts (reviving a superseded row) inste
 
 ## `POST /v4/keys` → 201
 
-Body `{containerTag: string|null, org_id: string|null}` (null values are wildcards). Open mode or admin → `{key: "mm_..."}` (shown once); known non-admin key → 403; otherwise 401.
+Body `{containerTag: string|null, org_id: string|null, project_id: string|null}` (null values are wildcards). Open mode or admin → `{key: "mm_..."}` (shown once); known non-admin key → 403; otherwise 401.
 
 ## `POST /v4/keys/revoke` → 200
 
@@ -124,14 +124,38 @@ these routes:
 - `POST /v3/memories/search/` (also `/v1/memories/search/`) with entity filters
   → `{results: [{id, memory, score, metadata}]}`.
 - `GET /v1/memories/` with `user_id`, `agent_id`, `app_id`, or `run_id` → the
-  scoped fact list.
+  scoped memory list; `POST /v3/memories/` supports bounded pagination and
+  `show_expired`.
+- `GET/PUT/DELETE /v1/memories/{memory_id}/` → canonical get, partial update,
+  and redacted delete; `GET /v1/memories/{memory_id}/history/` returns history.
+- `DELETE /v1/memories/` with explicit entity filters → asynchronous
+  `event_id`.
+- `PUT /v1/batch/` and `DELETE /v1/batch/` → atomic official-shaped batches of
+  at most 1000 unique memories.
 
 Entity IDs become isolated `mem0:<entity>:<value>` container tags. The exact
 versioned request/response rules, capability matrix, and regression fixtures are
-specified in [`MEM0_COMPATIBILITY.md`](MEM0_COMPATIBILITY.md). Unsupported
-Mem0 update, history, bulk, organization, webhook, and managed-billing features
-are intentionally not emulated; use the native v3/v4 routes for those
-capabilities.
+specified in [`MEM0_COMPATIBILITY.md`](MEM0_COMPATIBILITY.md). Hosted billing,
+quotas, invitations, and a remote organization control plane remain
+intentionally out of scope.
+
+## Project and webhook routes
+
+`GET /v1/ping/` returns the seeded `org_id` and `project_id`. Local project and
+member management is available under
+`/api/v1/orgs/organizations/{org_id}/projects/`.
+
+Webhook management is opt-in and project-scoped:
+
+- `POST/GET /api/v1/webhooks/projects/{project_id}/`
+- `GET/PUT/DELETE /api/v1/webhooks/{webhook_id}/`
+- `POST /v4/webhooks/{webhook_id}/rotate-secret`
+- `GET /v4/projects/{project_id}/webhooks/deliveries`
+- `POST /v4/webhooks/deliveries/{delivery_id}/replay`
+
+Create returns the signing secret once; list/get responses redact it. Delivery
+uses HMAC-SHA256 signatures, bounded response reads, at-least-once retry, and
+local delivery history. See [`runbooks/webhooks.md`](runbooks/webhooks.md).
 
 ## `GET /health` → 200
 

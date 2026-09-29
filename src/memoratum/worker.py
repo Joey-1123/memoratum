@@ -47,13 +47,25 @@ def run_once(
     *,
     worker_id: str,
     vector_store: VectorStore | None = None,
+    webhook_allow_private_targets: bool = False,
+    webhook_timeout_seconds: float = 5.0,
+    webhook_max_attempts: int = 5,
 ) -> str | None:
     """Claim and run one job. Returns the job id, or None when the queue is empty."""
     job = jobs.claim(conn, worker=worker_id)
     if job is None:
         return None
     try:
-        result = _dispatch(conn, embedder, llm, job, vector_store=vector_store)
+        result = _dispatch(
+            conn,
+            embedder,
+            llm,
+            job,
+            vector_store=vector_store,
+            webhook_allow_private_targets=webhook_allow_private_targets,
+            webhook_timeout_seconds=webhook_timeout_seconds,
+            webhook_max_attempts=webhook_max_attempts,
+        )
         jobs.complete(conn, job["id"], result=result)
     except ValueError as exc:
         jobs.fail(conn, job["id"], error=f"permanent: {exc}")
@@ -72,6 +84,9 @@ def _dispatch(
     job: dict[str, Any],
     *,
     vector_store: VectorStore | None = None,
+    webhook_allow_private_targets: bool = False,
+    webhook_timeout_seconds: float = 5.0,
+    webhook_max_attempts: int = 5,
 ) -> dict[str, Any]:
     kind = job["kind"]
     payload = job["payload"] or {}
@@ -88,6 +103,22 @@ def _dispatch(
                     "mode": payload.get("dreaming", "dynamic"),
                     "container_tag": doc["container_tag"],
                     "org_id": doc.get("org_id"),
+                    "project_id": doc.get("project_id"),
+                },
+            )
+        if doc.get("project_id"):
+            from memoratum.webhooks import record_event
+
+            record_event(
+                conn,
+                project_id=str(doc["project_id"]),
+                event_type=(
+                    "ingest_job_completed" if doc["status"] == "done" else "ingest_job_failed"
+                ),
+                data={
+                    "document_id": doc["id"],
+                    "status": doc["status"],
+                    "container_tag": doc["container_tag"],
                 },
             )
         return {"document_id": doc["id"], "status": doc["status"]}
@@ -105,6 +136,16 @@ def _dispatch(
             org_id=payload.get("org_id"),
         )
         return {"calls": calls}
+    if kind == "webhook_delivery":
+        from memoratum.webhooks import deliver_delivery
+
+        return deliver_delivery(
+            conn,
+            payload["delivery_id"],
+            allow_private=webhook_allow_private_targets,
+            timeout_seconds=webhook_timeout_seconds,
+            max_attempts=webhook_max_attempts,
+        )
     if kind == "delete_all_memories":
         filters = payload.get("filters") or {}
         memories = db.list_all_memories(
@@ -224,6 +265,7 @@ def main() -> None:
                     llm,
                     worker_id=worker_id,
                     vector_store=vector_store,
+                    webhook_allow_private_targets=settings.webhook_allow_private_targets,
                 )
                 is None
             ):

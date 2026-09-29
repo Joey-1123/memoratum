@@ -34,6 +34,8 @@ class Settings:
     oidc_audience: str
     oidc_jwks_url: str
     dashboard_dir: str
+    webhook_allow_private_targets: bool
+    environment: str
 
     @classmethod
     def load(cls) -> Settings:
@@ -69,6 +71,12 @@ class Settings:
                     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "dashboard", "dist"
                 ),
             ),
+            webhook_allow_private_targets=(
+                _get("MEMORATUM_WEBHOOK_ALLOW_PRIVATE_TARGETS", "false").lower()
+                in {"1", "true", "yes", "on"}
+                and _get("MEMORATUM_ENV", "production").lower() in {"development", "test"}
+            ),
+            environment=_get("MEMORATUM_ENV", "production"),
         )
 
     @property

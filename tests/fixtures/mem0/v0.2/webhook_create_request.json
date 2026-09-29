@@ -1,0 +1,5 @@
+{
+  "url": "https://example.com/webhooks/mem0",
+  "name": "Memory Logger",
+  "event_types": ["memory_add", "memory_update"]
+}

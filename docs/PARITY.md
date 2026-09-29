@@ -10,6 +10,10 @@ client implementation. Phase-gated: each phase lands tested and runnable before 
   statuses `queued → extracting → chunking → embedding → indexing → done | failed`
 - `POST /v4/memories` — memory add (containerTag, metadata)
 - `POST /v4/search` — `{q, containerTag?, searchMode: hybrid|memories|documents, limit?, threshold?, rerank?, rewriteQuery?, filters?, include?}` → `{results: [{id, memory?|chunk?, similarity, metadata, updatedAt, version}], timing, total}`
+- `GET /v1/ping/` and local `/api/v1/orgs/.../projects/...` — seeded tenant
+  context, project settings, and local members
+- `POST/GET/PUT/DELETE /api/v1/webhooks/...` — opt-in project webhooks with
+  signed local delivery, retry, and replay history
 - `GET /v4/profile` — static + dynamic summary per containerTag
 - Auth: `Authorization: Bearer <key>`; scoped keys bound to a containerTag
 - Isolation: `containerTag` = hard boundary (user/tenant/project); metadata = soft filters

@@ -1,0 +1,11 @@
+{
+  "event": "memory_add",
+  "event_details": {
+    "id": "mem_contract",
+    "event": "ADD",
+    "data": {
+      "memory": "I moved to Paris.",
+      "metadata": {"source": "v0.2"}
+    }
+  }
+}

@@ -1,140 +1,123 @@
 # Mem0 compatibility profile
 
-**Contract:** `mem0-self-hosted-v0.1`
-**Official SDK target:** `mem0ai` Python client and `mem0ai` TypeScript client
-**Status:** partial compatibility; self-hosted HTTP profile only
+**Contract:** `mem0-self-hosted-v0.2`
+**Official SDK target:** `mem0ai==2.2.0` (Python) and the dependency-free
+TypeScript route probe
+**Status:** explicit self-hosted HTTP profile; not hosted-service parity
 
-Memoratum exposes a small, explicit compatibility layer for migrating clients
-that need the familiar memory request/response shape. This profile is a
-**versioned contract for the routes implemented in this repository**, not a
-claim that Memoratum implements every hosted Mem0 API, SDK behavior, or service
-feature.
+Memoratum exposes a versioned compatibility layer for clients that need the
+familiar Mem0 request/response shapes. It covers the routes implemented in this
+repository and does not claim to implement every hosted Mem0 API, SDK release,
+or control-plane feature.
 
-## SDK contract status
-
-The official Python client (`mem0ai==2.2.0`) sends
-`Authorization: Token <key>` and the add and search routes above; its `add()`
-payload is the fixture shape used here. CI exercises that client against a local
-contract server with `MEM0_TELEMETRY=false`. Its `get_all()` uses a POST
-collection route, which this profile does not yet implement. The official
-TypeScript package is named `mem0ai` (not `@mem0ai/mem0`); the repository runs
-a dependency-free probe against the same route and payload contract. The full
-upstream package is intentionally not a client dependency because it ships its
-own telemetry code and would violate this repository's zero-telemetry boundary;
-consumers may still point it at a local server with `MEM0_TELEMETRY=false`.
-This repository does not vendor or claim the upstream SDKs.
-
+## Capability status
 
 | Operation | Status | Routes |
 |---|---|---|
 | Add memories | Supported | `POST /v3/memories/add/`, `POST /v1/memories/` |
 | Poll an add event | Supported | `GET /v1/event/{event_id}/` |
 | Search memories | Supported | `POST /v3/memories/search/`, `POST /v1/memories/search/` |
-| List current memories | Supported | `GET /v1/memories/` |
+| List current memories | Supported | `GET /v1/memories/`, `POST /v3/memories/` |
+| Get one memory | Supported | `GET /v1/memories/{memory_id}/` |
+| Update one memory | Supported | `PUT /v1/memories/{memory_id}/` |
+| Delete one memory | Supported | `DELETE /v1/memories/{memory_id}/` |
+| Delete all in an entity scope | Supported | `DELETE /v1/memories/` |
+| Memory history | Supported | `GET /v1/memories/{memory_id}/history/` |
+| Atomic batch update/delete | Supported | `PUT /v1/batch/`, `DELETE /v1/batch/` |
+| Ping and project/member routes | Supported | `GET /v1/ping/`, `/api/v1/orgs/...` |
+| Project webhooks | Supported | `/api/v1/webhooks/...` |
+| Managed billing, quotas, invitations | Out of scope | — |
 
-Authentication accepts `Authorization: Token <key>` and maps it to the same
-scoped-key authorization used by the native API. Every add, search, and list
-request must identify exactly one supported entity scope: `user_id`,
-`agent_id`, `app_id`, or `run_id`. The selected ID is encoded as an isolated
-`mem0:<entity>:<value>` container tag.
+The machine-readable matrix in `src/memoratum/mem0_contract.py` is the source
+of truth for capability status. Versioned fixtures live under
+`tests/fixtures/mem0/v0.2/`; the older v0.1 fixtures remain regression tests.
 
-## Request and response contract
+## Authentication and scope
 
-The canonical machine-readable request and response examples live in
-`tests/fixtures/mem0/v0.1/` and are exercised by
-`tests/test_mem0_contract.py`. The version directory and manifest are updated
-with every breaking contract change. The fixture set includes add, event,
-search, list, and error envelopes.
+Authentication accepts `Authorization: Token <key>` and the native
+`Authorization: Bearer <key>` form. Every add, search, and list request must
+identify exactly one supported entity scope: `user_id`, `agent_id`, `app_id`,
+or `run_id`. The ID is encoded as `mem0:<entity>:<value>`. Project-scoped keys
+additionally restrict reads, writes, events, and webhook management to their
+project. Missing, malformed, and cross-scope IDs do not reveal another scope's
+data.
 
-### Add
+## Canonical memory lifecycle
 
-`POST /v3/memories/add/` accepts:
+Memories have stable `mem_<uuid>` IDs, text and metadata, timestamps, version,
+expiration, scope links, and deletion state. Updates append history and enqueue
+provider reindexing. Deletes remove active content and vectors while retaining a
+redacted tombstone and content hash. History is a list-shaped, append-only
+compatibility response. Expired records are hidden unless `show_expired` is
+requested.
 
-```json
-{
-  "messages": [{"role": "user", "content": "The user prefers local search."}],
-  "user_id": "user-123",
-  "metadata": {"source": "example"},
-  "infer": true
-}
-```
+`POST /v3/memories/add/` is asynchronous and returns
+`{"event_id":"<job-id>","status":"PENDING"}`. An add with `infer=false` (or no
+configured LLM) creates canonical input memories; with an LLM, extracted facts
+are projected into canonical memories during the worker dream step.
 
-The response is asynchronous:
+## Bulk operations
 
-```json
-{"event_id": "<job-id>", "status": "PENDING"}
-```
-
-The event is completed by the background worker. Poll it with
-`GET /v1/event/{event_id}/`; the status is one of `PENDING`, `SUCCEEDED`, or
-`FAILED`.
-
-### Search
-
-`POST /v3/memories/search/` accepts a query, entity filters, and bounded
-ranking controls:
-
-```json
-{
-  "query": "local search",
-  "filters": {"user_id": "user-123"},
-  "top_k": 5,
-  "threshold": 0.0,
-  "rerank": false
-}
-```
-
-The response is:
+`PUT /v1/batch/` and `DELETE /v1/batch/` accept the official shape:
 
 ```json
-{"results": [{"id": "<id>", "memory": "...", "score": 0.01, "metadata": {}}]}
+{"memories":[{"memory_id":"mem_...","text":"updated"}]}
 ```
 
-Search uses Memoratum's hybrid retrieval over the selected entity scope. The
-`score` is a ranking score, not a promise of cosine similarity.
+Batches contain 1–1000 unique items, validate every item before writing, and
+commit atomically for SQLite. The response is message-style, for example
+`{"message":"Successfully updated 1 memories"}`. Large native jobs and
+reindexing remain asynchronous in the local worker.
 
-### List
+## Organizations, projects, and members
 
-`GET /v1/memories/?user_id=user-123&limit=10` returns current facts in the
-selected entity scope. The response uses the same `results` array shape as
-search, with `created_at` included for each item.
+The first boot seeds `local-org` and `local-project`. `GET /v1/ping/` returns
+that context for a wildcard/admin key and the bound context for a project key.
+The official project and member paths are implemented for local management:
 
-## Capability boundaries
+- `POST/GET /api/v1/orgs/organizations/{org_id}/projects/`
+- `GET/PATCH /api/v1/orgs/organizations/{org_id}/projects/{project_id}/`
+- `GET/POST/PUT/DELETE /api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/`
 
-The following capabilities are deliberately **planned** or **out of scope** in
-this first profile:
+This is local RBAC and configuration only. There are no invitations, remote
+organization control plane, hosted billing, or quota service.
 
-- `update_memory` — planned; native fact management is available through the
-  v4 API while compatibility update semantics are being specified.
-- `delete_memory` compatibility route — planned; the native v4 delete route is
-  available.
-- History, bulk operations, organizations, webhooks, and managed billing —
-  not part of this self-hosted profile.
+## Webhooks
 
-See the machine-readable capability matrix in
-`src/memoratum/mem0_contract.py` and the versioned fixtures for regression
-coverage. The matrix is intentionally explicit so a client can fail fast or
-fall back to native routes rather than infer unsupported behavior.
+Webhooks are disabled by default. An administrator or authorized project
+administrator explicitly creates a project-scoped endpoint with the official
+route shape:
 
-## Contract rules
+```http
+POST /api/v1/webhooks/projects/{project_id}/
+{"url":"https://example.test/hook","name":"Memory Logger","event_types":["memory_add"]}
+```
 
-1. `messages` must be non-empty; each message has a supported `role` and
-   non-empty `content`.
-2. Add requires an entity scope. An explicit `containerTag` is an escape hatch
-   for clients that already manage local tags; it must use the `mem0:` namespace
-   and cannot be combined with an entity id.
-3. Search requires entity filters; list requires an entity query parameter.
-4. `top_k` and list `limit` are bounded to 1–100; search `threshold` is in the
-   range 0–1.
-5. Errors use the stable envelope `{"error":{"code":"...","message":"..."}}`.
-6. Unknown, out-of-scope, or malformed resource IDs must not reveal another
-   scope's data.
-7. The profile remains self-hosted and adds no telemetry. Local audit and usage
-   accounting are available through the native governance endpoints.
+The create response returns the signing secret once. List/get responses redact
+it. Supported events are `memory_add`, `memory_update`, `memory_delete`,
+`memory_categorize`, and the documented ingest-job events. The local outbox and
+worker provide at-least-once delivery, stable delivery IDs, HMAC-SHA256
+signatures, exponential retry, dead-letter state, and authorized replay.
 
-## Versioning
+Webhook URLs require HTTPS and reject private, loopback, link-local,
+multicast, reserved, and metadata addresses after DNS resolution. Redirects are
+disabled. Local HTTP/private targets require the explicit development-only
+settings `MEMORATUM_ENV=development` (or `test`) and
+`MEMORATUM_WEBHOOK_ALLOW_PRIVATE_TARGETS=true`.
 
-A breaking change to request validation, route mapping, response shape, or
-entity isolation must increment the contract version and update the fixtures,
-capability matrix, tests, and this document together. Additive optional fields
-may remain within the same profile only when existing clients remain valid.
+See [`docs/runbooks/webhooks.md`](runbooks/webhooks.md) for receiver
+verification and operations.
+
+## Errors and versioning
+
+Errors use the stable envelope:
+
+```json
+{"error":{"code":"VALIDATION_ERROR","message":"..."}}
+```
+
+A breaking change to request validation, route mapping, response shape, or scope
+isolation increments the contract version and updates fixtures, capability
+status, tests, and this document together. Optional additive fields do not
+break existing clients. The profile remains self-hosted and adds no telemetry;
+audit and usage accounting stay in the local SQLite database.

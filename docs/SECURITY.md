@@ -14,6 +14,13 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
   `containerTag` and, when supplied, one `org_id` (403 outside, 401 for unknown).
   Document fetch returns uniform 404 for missing-or-forbidden so IDs can't be
   probed across scopes.
+- **Outbound webhooks**: disabled by default. Project-scoped endpoints are
+  validated at creation and delivery; production requires HTTPS, rejects
+  private/loopback/link-local/reserved/metadata DNS targets, disables redirects,
+  bounds response size and timeout, signs a timestamped body with HMAC-SHA256,
+  and keeps delivery/audit state in the local SQLite database. Local HTTP
+  targets require an explicit development-only setting. See
+  [`runbooks/webhooks.md`](runbooks/webhooks.md).
 - **MCP server (stdio)**: no auth by design — local-process trust only. Do not
   expose it over a network transport.
 - **LLM contexts**: indexed content is untrusted. Dreaming extracts facts from

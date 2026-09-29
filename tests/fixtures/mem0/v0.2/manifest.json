@@ -16,6 +16,9 @@
     "get_all_request.json",
     "get_all_response.json",
     "ping_response.json",
-    "error_response.json"
+    "error_response.json",
+    "webhook_create_request.json",
+    "webhook_create_response.json",
+    "webhook_event_payload.json"
   ]
 }

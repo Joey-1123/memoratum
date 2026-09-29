@@ -90,6 +90,18 @@ CAPABILITIES: tuple[dict[str, str], ...] = (
         "notes": "Atomic batches up to 1000 items.",
     },
     {
+        "name": "ping_projects_members",
+        "status": "supported",
+        "routes": "GET /v1/ping/; /api/v1/orgs/organizations/{org_id}/projects/",
+        "notes": "Local default tenant plus project/member compatibility routes.",
+    },
+    {
+        "name": "webhooks",
+        "status": "supported",
+        "routes": "/api/v1/webhooks/projects/{project_id}/; /api/v1/webhooks/{webhook_id}/",
+        "notes": "Opt-in signed local delivery; managed remote billing is not included.",
+    },
+    {
         "name": "managed_billing",
         "status": "out_of_scope",
         "routes": "—",
@@ -218,6 +230,18 @@ def validate_batch_request(payload: Any, *, update: bool) -> dict[str, Any]:
     return values
 
 
+def validate_webhook_request(payload: Any) -> dict[str, Any]:
+    values = _require_mapping(payload, "webhook request")
+    _require_text(values.get("url"), "url")
+    _require_text(values.get("name"), "name")
+    events = values.get("event_types")
+    if not isinstance(events, list) or not events:
+        raise ValueError("event_types must be a non-empty list")
+    if any(not isinstance(event, str) or not event for event in events):
+        raise ValueError("event_types must contain strings")
+    return values
+
+
 def validate_get_all_request(payload: Any) -> dict[str, Any]:
     values = _require_mapping(payload, "get-all request")
     _entity_scope(_require_mapping(values.get("filters"), "filters"))
@@ -279,6 +303,17 @@ def validate_response(payload: Any, *, kind: str) -> dict[str, Any] | list[Any]:
             raise ValueError("ping response status must be ok")
         _require_text(values.get("org_id"), "org_id")
         _require_text(values.get("project_id"), "project_id")
+    elif kind == "webhook":
+        _require_text(values.get("id"), "id")
+        _require_text(values.get("name"), "name")
+        _require_text(values.get("url"), "url")
+        if not isinstance(values.get("event_types"), list):
+            raise ValueError("webhook event_types must be a list")
+    elif kind == "webhook_event":
+        details = _require_mapping(values.get("event_details"), "event_details")
+        _require_text(details.get("id"), "event_details.id")
+        _require_text(details.get("event"), "event_details.event")
+        _require_mapping(details.get("data"), "event_details.data")
     elif kind == "event":
         if values.get("status") not in {"PENDING", "SUCCEEDED", "FAILED"}:
             raise ValueError("event response status is invalid")

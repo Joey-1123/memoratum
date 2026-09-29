@@ -126,6 +126,7 @@ def add_fact(
         org_id=org_id,
         document_id=document_id,
         expires_at=expires_at,
+        project_id=project_id,
     )
     conn.commit()
     return get_fact(conn, fact_id)

@@ -29,7 +29,10 @@ def test_v02_request_and_response_validators_cover_lifecycle() -> None:
         validate_get_all_request,
         validate_response,
         validate_update_request,
+        validate_webhook_request,
     )
+
+    validate_webhook_request(_fixture("webhook_create_request.json"))
 
     validate_add_request(_fixture("add_request.json"))
     validate_update_request(_fixture("update_request.json"))
@@ -48,6 +51,8 @@ def test_v02_request_and_response_validators_cover_lifecycle() -> None:
         ("get_all_response.json", "get_all"),
         ("ping_response.json", "ping"),
         ("error_response.json", "error"),
+        ("webhook_create_response.json", "webhook"),
+        ("webhook_event_payload.json", "webhook_event"),
     ):
         validate_response(_fixture(name), kind=kind)
 
