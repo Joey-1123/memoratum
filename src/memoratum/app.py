@@ -329,6 +329,64 @@ def create_app(
     def actor(authorization: str | None, conn: sqlite3.Connection) -> tuple[str, str | None]:
         return actor_from_scope(authorization, scope_of(authorization, conn))
 
+    def _idempotency_scope(authorization: str | None, conn: sqlite3.Connection) -> str:
+        kind, key_hash = actor(authorization, conn)
+        return f"{kind}:{key_hash or 'anonymous'}"
+
+    def _begin_idempotency(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        key: str | None,
+        *,
+        operation: str,
+        payload: Any,
+    ) -> tuple[db.IdempotencyClaim | None, JSONResponse | None]:
+        if key is None:
+            return None, None
+        if not key.strip() or len(key) > 256:
+            return None, _error("VALIDATION_ERROR", "Idempotency-Key must be 1-256 characters", 422)
+        request_hash = db.canonical_request_hash({"operation": operation, "payload": payload})
+        claim = db.claim_idempotency(
+            conn,
+            scope=_idempotency_scope(authorization, conn),
+            key=key,
+            request_hash=request_hash,
+        )
+        if claim.status == "conflict":
+            return None, _error(
+                "IDEMPOTENCY_CONFLICT",
+                "Idempotency-Key was already used with a different request",
+                409,
+            )
+        if claim.status == "replay":
+            return claim, None
+        if claim.status != "claimed":
+            return None, _error(
+                "IDEMPOTENCY_IN_FLIGHT",
+                "a request with this Idempotency-Key is still in progress",
+                409,
+                {"Retry-After": "1"},
+            )
+        return claim, None
+
+    def _finish_idempotency(
+        conn: sqlite3.Connection,
+        claim: db.IdempotencyClaim | None,
+        *,
+        response: Any,
+        job_id: str | None = None,
+    ) -> None:
+        if claim is None or claim.status != "claimed":
+            return
+        db.complete_idempotency(
+            conn,
+            scope=claim.scope,
+            key=claim.key,
+            request_hash=claim.request_hash,
+            response=response,
+            job_id=job_id,
+        )
+
     def meter(
         authorization: str | None,
         conn: sqlite3.Connection,
@@ -534,7 +592,12 @@ def create_app(
 
     @app.post("/v3/memories/add/")
     @app.post("/v1/memories/")
-    def mem0_add(body: Mem0AddIn, conn: DbConn, authorization: str | None = Header(default=None)):
+    def mem0_add(
+        body: Mem0AddIn,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
         values = body.model_dump()
         if body.containerTag is not None and any(
             values.get(key) is not None for key in ("user_id", "agent_id", "app_id", "run_id")
@@ -567,46 +630,64 @@ def create_app(
             operation="document",
             input_chars=sum(len(m.content) for m in body.messages),
         )
-        content = "\n".join(f"{message.role}: {message.content}" for message in body.messages)
-        document = db.create_document(
-            conn,
-            container_tag=tag,
-            content=content,
-            metadata=body.metadata,
-            org_id=org_id,
-        )
-        if not body.infer or app.state.llm is None:
-            for message in body.messages:
-                if message.role != "system":
-                    db.ensure_input_memory(
-                        conn,
-                        text=message.content,
-                        container_tag=tag,
-                        metadata=body.metadata,
-                        org_id=org_id,
-                        document_id=document["id"],
-                    )
-        job_id = jobs.enqueue(
-            conn,
-            kind="ingest",
-            payload={
-                "document_id": document["id"],
-                "dreaming": "dynamic",
-                "container_tag": tag,
-                "org_id": org_id,
-            },
-        )
-        audit(
+        claim, claim_error = _begin_idempotency(
             auth,
             conn,
-            container_tag=tag,
-            org_id=org_id,
-            action="mem0.add",
-            resource_type="document",
-            resource_id=document["id"],
-            metadata={"job_id": job_id, "infer": body.infer},
+            idempotency_key,
+            operation="mem0.add",
+            payload=values,
         )
-        return {"event_id": job_id, "status": "PENDING"}
+        if claim_error is not None:
+            return claim_error
+        if claim is not None and claim.status == "replay":
+            return claim.response
+        try:
+            content = "\n".join(f"{message.role}: {message.content}" for message in body.messages)
+            document = db.create_document(
+                conn,
+                container_tag=tag,
+                content=content,
+                metadata=body.metadata,
+                org_id=org_id,
+            )
+            if not body.infer or app.state.llm is None:
+                for message in body.messages:
+                    if message.role != "system":
+                        db.ensure_input_memory(
+                            conn,
+                            text=message.content,
+                            container_tag=tag,
+                            metadata=body.metadata,
+                            org_id=org_id,
+                            document_id=document["id"],
+                        )
+            job_id = jobs.enqueue(
+                conn,
+                kind="ingest",
+                payload={
+                    "document_id": document["id"],
+                    "dreaming": "dynamic",
+                    "container_tag": tag,
+                    "org_id": org_id,
+                },
+            )
+            audit(
+                auth,
+                conn,
+                container_tag=tag,
+                org_id=org_id,
+                action="mem0.add",
+                resource_type="document",
+                resource_id=document["id"],
+                metadata={"job_id": job_id, "infer": body.infer},
+            )
+            response = {"event_id": job_id, "status": "PENDING"}
+            _finish_idempotency(conn, claim, response=response, job_id=job_id)
+            return response
+        except Exception:
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            raise
 
     @app.get("/v1/event/{event_id}/")
     def mem0_event(event_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -734,6 +815,7 @@ def create_app(
         body: dict[str, Any],
         conn: DbConn,
         authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ):
         memory, error = _get_memory_or_error(memory_id, conn, authorization)
         if error is not None:
@@ -751,56 +833,78 @@ def create_app(
             return _error("VALIDATION_ERROR", "text must be non-empty", 422)
         if "metadata" in body and not isinstance(body["metadata"], dict):
             return _error("VALIDATION_ERROR", "metadata must be an object", 422)
-        old_text = memory["text"]
-        new_text = body.get("text", old_text)
-        metadata = db.clean_memory_metadata({**memory["metadata"], **(body.get("metadata") or {})})
-        expires_at = memory.get("expires_at")
-        if "expiration_date" in body:
-            value = body["expiration_date"]
-            if value is None:
-                expires_at = None
-            else:
-                try:
-                    expires_at = (
-                        datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC).timestamp() + 86399
-                    )
-                except (TypeError, ValueError):
-                    return _error("VALIDATION_ERROR", "expiration_date must be YYYY-MM-DD", 422)
-        version = int(memory["version"]) + 1
-        conn.execute(
-            "UPDATE memories SET text = ?, metadata = ?, expires_at = ?, version = ?, updated_at = ?"
-            " WHERE id = ?",
-            (
-                new_text,
-                json.dumps(metadata, separators=(",", ":")),
-                expires_at,
-                version,
-                time.time(),
-                memory_id,
-            ),
-        )
-        db.append_memory_history(
+        auth = _compat_auth_header(authorization)
+        claim, claim_error = _begin_idempotency(
+            auth,
             conn,
-            memory_id=memory_id,
-            event="UPDATE",
-            version=version,
-            old_text=old_text,
-            new_text=new_text,
-            metadata=metadata,
-            actor_key_hash=actor(authorization, conn)[1],
+            idempotency_key,
+            operation="mem0.update",
+            payload={"memory_id": memory_id, "body": body},
         )
-        conn.commit()
-        updated = db.get_memory(conn, memory_id)
-        audit(
-            authorization,
-            conn,
-            container_tag=updated["container_tag"],
-            org_id=updated.get("org_id"),
-            action="memory.updated",
-            resource_type="memory",
-            resource_id=memory_id,
-        )
-        return _memory_response(updated)
+        if claim_error is not None:
+            return claim_error
+        if claim is not None and claim.status == "replay":
+            return claim.response
+        try:
+            old_text = memory["text"]
+            new_text = body.get("text", old_text)
+            metadata = db.clean_memory_metadata(
+                {**memory["metadata"], **(body.get("metadata") or {})}
+            )
+            expires_at = memory.get("expires_at")
+            if "expiration_date" in body:
+                value = body["expiration_date"]
+                if value is None:
+                    expires_at = None
+                else:
+                    try:
+                        expires_at = (
+                            datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
+                            + 86399
+                        )
+                    except (TypeError, ValueError):
+                        return _error("VALIDATION_ERROR", "expiration_date must be YYYY-MM-DD", 422)
+            version = int(memory["version"]) + 1
+            conn.execute(
+                "UPDATE memories SET text = ?, metadata = ?, expires_at = ?, version = ?,"
+                " updated_at = ? WHERE id = ?",
+                (
+                    new_text,
+                    json.dumps(metadata, separators=(",", ":")),
+                    expires_at,
+                    version,
+                    time.time(),
+                    memory_id,
+                ),
+            )
+            db.append_memory_history(
+                conn,
+                memory_id=memory_id,
+                event="UPDATE",
+                version=version,
+                old_text=old_text,
+                new_text=new_text,
+                metadata=metadata,
+                actor_key_hash=actor(auth, conn)[1],
+            )
+            conn.commit()
+            updated = db.get_memory(conn, memory_id)
+            audit(
+                auth,
+                conn,
+                container_tag=updated["container_tag"],
+                org_id=updated.get("org_id"),
+                action="memory.updated",
+                resource_type="memory",
+                resource_id=memory_id,
+            )
+            response = _memory_response(updated)
+            _finish_idempotency(conn, claim, response=response)
+            return response
+        except Exception:
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            raise
 
     @app.delete("/v1/memories/{memory_id}/")
     def mem0_delete(

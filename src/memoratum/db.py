@@ -13,6 +13,7 @@ import secrets
 import sqlite3
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 # Rebuild the unique key first, then restore the legacy dreaming column as a
@@ -267,6 +268,20 @@ _MIGRATIONS: tuple[str, ...] = (
       NULL,
       f.created_at
     FROM facts AS f;
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS idempotency_keys(
+      scope TEXT NOT NULL,
+      key TEXT NOT NULL,
+      request_hash TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'in_flight',
+      response TEXT,
+      job_id TEXT,
+      created_at REAL NOT NULL,
+      expires_at REAL NOT NULL,
+      PRIMARY KEY(scope, key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_idempotency_expiry ON idempotency_keys(expires_at);
     """,
 )
 
@@ -627,6 +642,102 @@ def list_memory_history(
         item["metadata"] = json.loads(item.get("metadata") or "{}")
         out.append(item)
     return out
+
+
+def canonical_request_hash(value: Any) -> str:
+    """Hash a JSON-compatible request deterministically for idempotency claims."""
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
+@dataclass(frozen=True)
+class IdempotencyClaim:
+    status: str
+    request_hash: str
+    response: Any = None
+    job_id: str | None = None
+    scope: str = ""
+    key: str = ""
+
+
+def claim_idempotency(
+    conn: sqlite3.Connection,
+    *,
+    scope: str,
+    key: str,
+    request_hash: str,
+    expires_in: int = 86_400,
+) -> IdempotencyClaim:
+    """Atomically claim a scoped key, replaying a completed response if present."""
+    now = _now()
+    conn.execute("DELETE FROM idempotency_keys WHERE expires_at <= ?", (now,))
+    try:
+        conn.execute(
+            "INSERT INTO idempotency_keys(scope, key, request_hash, status, created_at, expires_at)"
+            " VALUES (?, ?, ?, 'in_flight', ?, ?)",
+            (scope, key, request_hash, now, now + max(60, expires_in)),
+        )
+        conn.commit()
+        return IdempotencyClaim(status="claimed", request_hash=request_hash, scope=scope, key=key)
+    except sqlite3.IntegrityError:
+        row = conn.execute(
+            "SELECT request_hash, status, response, job_id FROM idempotency_keys"
+            " WHERE scope = ? AND key = ?",
+            (scope, key),
+        ).fetchone()
+        if row is None:
+            raise
+        if row["request_hash"] != request_hash:
+            conn.commit()
+            return IdempotencyClaim(status="conflict", request_hash=row["request_hash"])
+        response = json.loads(row["response"]) if row["response"] else None
+        conn.commit()
+        return IdempotencyClaim(
+            status="replay" if row["status"] == "done" else row["status"],
+            request_hash=row["request_hash"],
+            response=response,
+            job_id=row["job_id"],
+            scope=scope,
+            key=key,
+        )
+
+
+def complete_idempotency(
+    conn: sqlite3.Connection,
+    *,
+    scope: str,
+    key: str,
+    request_hash: str,
+    response: Any,
+    job_id: str | None = None,
+) -> None:
+    changed = conn.execute(
+        "UPDATE idempotency_keys SET status = 'done', response = ?, job_id = ?"
+        " WHERE scope = ? AND key = ? AND request_hash = ?",
+        (json.dumps(response, separators=(",", ":")), job_id, scope, key, request_hash),
+    ).rowcount
+    if changed != 1:
+        raise RuntimeError("idempotency claim is missing or does not match")
+    conn.commit()
+
+
+def release_idempotency(conn: sqlite3.Connection, *, scope: str, key: str) -> None:
+    conn.execute("DELETE FROM idempotency_keys WHERE scope = ? AND key = ?", (scope, key))
+    conn.commit()
+
+
+def get_idempotency(conn: sqlite3.Connection, *, scope: str, key: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT scope, key, request_hash, status, response, job_id, created_at, expires_at"
+        " FROM idempotency_keys WHERE scope = ? AND key = ?",
+        (scope, key),
+    ).fetchone()
+    if row is None:
+        return None
+    result = dict(row)
+    result["response"] = json.loads(result["response"]) if result["response"] else None
+    return result
 
 
 def get_share_link(db: sqlite3.Connection, link_id: str) -> dict[str, Any] | None:
