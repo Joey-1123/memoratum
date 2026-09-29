@@ -14,16 +14,32 @@ from typing import Any
 
 
 def enqueue(
-    conn: sqlite3.Connection, *, kind: str, payload: dict[str, Any], run_after: float | None = None
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    payload: dict[str, Any],
+    run_after: float | None = None,
+    commit: bool = True,
 ) -> str:
     job_id = uuid.uuid4().hex
     now = time.time()
+    project_id = payload.get("project_id")
     conn.execute(
-        "INSERT INTO jobs(id, kind, payload, status, attempts, result, error, worker, created_at, updated_at, run_after)"
-        " VALUES (?, ?, ?, 'queued', 0, NULL, NULL, NULL, ?, ?, ?)",
-        (job_id, kind, json.dumps(payload), now, now, run_after or 0.0),
+        "INSERT INTO jobs(id, kind, payload, project_id, status, attempts, result, error, worker,"
+        " created_at, updated_at, run_after)"
+        " VALUES (?, ?, ?, ?, 'queued', 0, NULL, NULL, NULL, ?, ?, ?)",
+        (
+            job_id,
+            kind,
+            json.dumps(payload),
+            project_id if isinstance(project_id, str) else None,
+            now,
+            now,
+            run_after or 0.0,
+        ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return job_id
 
 
@@ -71,6 +87,17 @@ def requeue(conn: sqlite3.Connection, job_id: str, *, run_after: float | None = 
         (run_after or 0.0, time.time(), job_id),
     )
     conn.commit()
+
+
+def cancel(conn: sqlite3.Connection, job_id: str) -> bool:
+    """Cancel a queued job; running work is never interrupted."""
+    changed = conn.execute(
+        "UPDATE jobs SET status = 'cancelled', worker = NULL, updated_at = ?"
+        " WHERE id = ? AND status = 'queued'",
+        (time.time(), job_id),
+    ).rowcount
+    conn.commit()
+    return changed == 1
 
 
 def get(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:

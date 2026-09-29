@@ -381,6 +381,75 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE jobs ADD COLUMN run_after REAL NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_after, created_at);
     """,
+    """
+    ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'OWNER';
+    """,
+    """
+    PRAGMA foreign_keys=OFF;
+    DROP TABLE IF EXISTS documents_project_scoped;
+    CREATE TABLE documents_project_scoped(
+      id TEXT PRIMARY KEY,
+      container_tag TEXT NOT NULL,
+      custom_id TEXT,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      metadata TEXT,
+      expires_at REAL,
+      org_id TEXT,
+      dreamed_at REAL,
+      project_id TEXT,
+      UNIQUE(container_tag, custom_id, org_id, project_id)
+    );
+    INSERT INTO documents_project_scoped(
+      id, container_tag, custom_id, content, status, created_at, updated_at,
+      metadata, expires_at, org_id, dreamed_at, project_id
+    )
+    SELECT id, container_tag, custom_id, content, status, created_at, updated_at,
+      metadata, expires_at, org_id, dreamed_at, project_id
+    FROM documents;
+    DROP TABLE documents;
+    ALTER TABLE documents_project_scoped RENAME TO documents;
+    CREATE INDEX IF NOT EXISTS idx_documents_tag ON documents(container_tag);
+    CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id, container_tag);
+    PRAGMA foreign_keys=ON;
+    """,
+    """
+    PRAGMA foreign_keys=OFF;
+    DROP TABLE IF EXISTS usage_counters_project;
+    CREATE TABLE usage_counters_project(
+      key_hash TEXT NOT NULL,
+      container_tag TEXT NOT NULL,
+      org_id TEXT NOT NULL,
+      project_id TEXT NOT NULL DEFAULT '',
+      requests INTEGER NOT NULL DEFAULT 0,
+      searches INTEGER NOT NULL DEFAULT 0,
+      document_writes INTEGER NOT NULL DEFAULT 0,
+      fact_writes INTEGER NOT NULL DEFAULT 0,
+      input_chars INTEGER NOT NULL DEFAULT 0,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      PRIMARY KEY(key_hash, container_tag, org_id, project_id)
+    );
+    INSERT INTO usage_counters_project(
+      key_hash, container_tag, org_id, project_id, requests, searches,
+      document_writes, fact_writes, input_chars, created_at, updated_at
+    )
+    SELECT key_hash, container_tag, org_id, COALESCE(project_id, ''), requests, searches,
+      document_writes, fact_writes, input_chars, created_at, updated_at
+    FROM usage_counters;
+    DROP TABLE usage_counters;
+    ALTER TABLE usage_counters_project RENAME TO usage_counters;
+    CREATE INDEX IF NOT EXISTS idx_usage_updated ON usage_counters(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_scope ON usage_counters(container_tag, org_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_counters(project_id, container_tag, updated_at DESC);
+    PRAGMA foreign_keys=ON;
+    """,
+    """
+    ALTER TABLE projects ADD COLUMN deleting INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS idx_projects_deleting ON projects(deleting, updated_at DESC);
+    """,
 )
 
 
@@ -425,10 +494,13 @@ def create_document(
     meta = json.dumps(metadata or {})
     if custom_id is not None:
         org_clause = "org_id IS NULL" if org_id is None else "org_id = ?"
+        project_clause = "project_id IS NULL" if project_id is None else "project_id = ?"
         org_params: tuple[Any, ...] = () if org_id is None else (org_id,)
+        project_params: tuple[Any, ...] = () if project_id is None else (project_id,)
         row = db.execute(
-            f"SELECT id FROM documents WHERE container_tag = ? AND custom_id = ? AND {org_clause}",
-            (container_tag, custom_id, *org_params),
+            f"SELECT id FROM documents WHERE container_tag = ? AND custom_id = ? AND {org_clause}"
+            f" AND {project_clause}",
+            (container_tag, custom_id, *org_params, *project_params),
         ).fetchone()
         if row is not None:
             db.execute(
@@ -668,6 +740,31 @@ def get_memory(db: sqlite3.Connection, memory_id: str) -> dict[str, Any]:
     if row is None:
         raise KeyError(memory_id)
     return _decode_memory(row)
+
+
+def resolve_memory_reference(db: sqlite3.Connection, reference: str) -> dict[str, Any] | None:
+    """Resolve canonical and legacy fact references to one canonical memory.
+
+    Early self-hosted builds returned ``mem_<fact_id>`` from search and raw fact
+    IDs from list responses. The migration backfills those projections, but the
+    HTTP compatibility layer still accepts both reference forms during the
+    transition window.
+    """
+    try:
+        return get_memory(db, reference)
+    except KeyError:
+        pass
+    candidates = [reference]
+    if reference.startswith("mem_"):
+        candidates.append(reference[4:])
+    for candidate in candidates:
+        row = db.execute(
+            "SELECT * FROM memories WHERE fact_id = ? ORDER BY created_at, id LIMIT 1",
+            (candidate,),
+        ).fetchone()
+        if row is not None:
+            return _decode_memory(row)
+    return None
 
 
 _UNSET = object()
@@ -1091,6 +1188,7 @@ def keyword_search(
     *,
     container_tag: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     match = fts_query(query)
@@ -1099,7 +1197,7 @@ def keyword_search(
     joins = " FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid"
     conditions = ["chunks_fts MATCH ?"]
     params: list[Any] = [match]
-    if container_tag is not None or org_id is not None:
+    if container_tag is not None or org_id is not None or project_id is not None:
         joins += " JOIN documents d ON d.id = c.document_id"
     if container_tag is not None:
         conditions.append("d.container_tag = ?")
@@ -1107,6 +1205,9 @@ def keyword_search(
     if org_id is not None:
         conditions.append("d.org_id = ?")
         params.append(org_id)
+    if project_id is not None:
+        conditions.append("d.project_id = ?")
+        params.append(project_id)
     params.append(limit)
     rows = db.execute(
         f"SELECT c.id, c.document_id, c.text, rank{joins}"
@@ -1131,12 +1232,15 @@ def create_api_key(
     container_tag: str | None = None,
     org_id: str | None = None,
     project_id: str | None = None,
+    role: str = "OWNER",
 ) -> str:
+    if role not in {"OWNER", "READER"}:
+        raise ValueError("role must be OWNER or READER")
     raw = "mm_" + secrets.token_urlsafe(32)
     db.execute(
-        "INSERT INTO api_keys(key_hash, container_tag, created_at, org_id, project_id)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (_hash_key(raw), container_tag, _now(), org_id, project_id),
+        "INSERT INTO api_keys(key_hash, container_tag, created_at, org_id, project_id, role)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (_hash_key(raw), container_tag, _now(), org_id, project_id, role),
     )
     db.commit()
     return raw
@@ -1148,7 +1252,8 @@ def lookup_key(db: sqlite3.Connection, raw: str) -> dict[str, Any] | None:
     if db.execute("SELECT 1 FROM revoked_keys WHERE key_hash = ?", (h,)).fetchone() is not None:
         return None
     row = db.execute(
-        "SELECT key_hash, container_tag, org_id, project_id FROM api_keys WHERE key_hash = ?", (h,)
+        "SELECT key_hash, container_tag, org_id, project_id, role FROM api_keys WHERE key_hash = ?",
+        (h,),
     ).fetchone()
     if row is None:
         return None
@@ -1168,8 +1273,21 @@ def revoke_key(db: sqlite3.Connection, raw: str) -> bool:
 
 
 def prune_expired(conn: sqlite3.Connection) -> dict[str, int]:
-    """Hard-delete expired documents (chunks cascade), vectors, and facts."""
+    """Expire canonical memories and hard-delete expired source rows/vectors."""
     now = time.time()
+    expired_memories = conn.execute(
+        "SELECT id FROM memories WHERE state != 'deleted'"
+        " AND expires_at IS NOT NULL AND expires_at <= ?",
+        (now,),
+    ).fetchall()
+    memory_ids: list[str] = []
+    for row in expired_memories:
+        result = soft_delete_memory(conn, str(row["id"]))
+        if result["deleted"]:
+            memory_ids.append(str(row["id"]))
+    if memory_ids:
+        placeholders = ",".join("?" for _ in memory_ids)
+        conn.execute(f"DELETE FROM vector_points WHERE id IN ({placeholders})", memory_ids)
     conn.execute(
         "DELETE FROM vector_points WHERE id IN ("
         "SELECT c.id FROM chunks c JOIN documents d ON d.id = c.document_id"
@@ -1184,24 +1302,90 @@ def prune_expired(conn: sqlite3.Connection) -> dict[str, int]:
         "DELETE FROM documents WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
     ).rowcount
     conn.commit()
-    return {"facts": facts, "documents": docs}
+    return {"memories": len(memory_ids), "facts": facts, "documents": docs}
+
+
+def purge_project(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str,
+    org_id: str | None = None,
+    preserve_job_id: str | None = None,
+) -> dict[str, int]:
+    """Purge all project-owned data and the project row in one transaction."""
+    project = conn.execute(
+        "SELECT org_id, deleting FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    if project is None:
+        return {"memories": 0, "facts": 0, "documents": 0, "keys": 0, "webhooks": 0}
+    if org_id is not None and project["org_id"] != org_id:
+        raise ValueError("project does not belong to org_id")
+    memories = conn.execute("DELETE FROM memories WHERE project_id = ?", (project_id,)).rowcount
+    facts = conn.execute("DELETE FROM facts WHERE project_id = ?", (project_id,)).rowcount
+    conn.execute("DELETE FROM vector_points WHERE project_id = ?", (project_id,))
+    documents = conn.execute("DELETE FROM documents WHERE project_id = ?", (project_id,)).rowcount
+    keys = conn.execute("DELETE FROM api_keys WHERE project_id = ?", (project_id,)).rowcount
+    webhooks = conn.execute("DELETE FROM webhooks WHERE project_id = ?", (project_id,)).rowcount
+    conn.execute("DELETE FROM usage_counters WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM audit_events WHERE project_id = ?", (project_id,))
+    if preserve_job_id is None:
+        conn.execute("DELETE FROM jobs WHERE project_id = ?", (project_id,))
+    else:
+        conn.execute(
+            "DELETE FROM jobs WHERE project_id = ? AND id != ?", (project_id, preserve_job_id)
+        )
+    conn.execute("DELETE FROM project_members WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    conn.commit()
+    return {
+        "memories": memories,
+        "facts": facts,
+        "documents": documents,
+        "keys": keys,
+        "webhooks": webhooks,
+    }
 
 
 def purge_tag(
-    db: sqlite3.Connection, container_tag: str, *, org_id: str | None = None
+    db: sqlite3.Connection,
+    container_tag: str,
+    *,
+    org_id: str | None = None,
+    project_id: str | None = None,
+    legacy_only: bool = False,
 ) -> dict[str, int]:
-    """Delete everything in a tag, optionally limited to one organization."""
+    """Delete tag data within an explicit scope.
+
+    ``legacy_only`` is used for historical container-tag keys. It restricts the
+    operation to rows that have no organization or project so a legacy key can
+    never erase a tenant-scoped record.
+    """
     where = "container_tag = ?"
-    params: tuple[Any, ...] = (container_tag,)
+    params: list[Any] = [container_tag]
     if org_id is not None:
         where += " AND org_id = ?"
-        params += (org_id,)
+        params.append(org_id)
+    if project_id is not None:
+        where += " AND project_id = ?"
+        params.append(project_id)
+    if legacy_only:
+        where += " AND org_id IS NULL AND project_id IS NULL"
+    memory_ids = [
+        str(row["id"])
+        for row in db.execute(f"SELECT id FROM memories WHERE {where}", params).fetchall()
+    ]
+    if memory_ids:
+        placeholders = ",".join("?" for _ in memory_ids)
+        db.execute(
+            f"DELETE FROM webhook_deliveries WHERE memory_id IN ({placeholders})", memory_ids
+        )
+        db.execute(f"DELETE FROM domain_events WHERE memory_id IN ({placeholders})", memory_ids)
+    memories = db.execute(f"DELETE FROM memories WHERE {where}", params).rowcount
     facts = db.execute(f"DELETE FROM facts WHERE {where}", params).rowcount
     db.execute(f"DELETE FROM vector_points WHERE {where}", params)
     docs = db.execute(f"DELETE FROM documents WHERE {where}", params).rowcount
-    keys = db.execute(f"DELETE FROM api_keys WHERE {where}", params).rowcount
     db.commit()
-    return {"facts": facts, "documents": docs, "keys": keys}
+    return {"memories": memories, "facts": facts, "documents": docs, "keys": 0}
 
 
 _USAGE_COLUMNS = {
@@ -1239,6 +1423,7 @@ def record_usage(
     operation: str,
     units: int = 1,
     input_chars: int = 0,
+    project_id: str | None = None,
 ) -> None:
     """Increment one local per-key usage row; no data leaves the process."""
     if operation not in _USAGE_COLUMNS:
@@ -1250,6 +1435,7 @@ def record_usage(
     key = _scope_value(key_hash) or "anonymous"
     tag = _scope_value(container_tag)
     org = _scope_value(org_id)
+    project = _scope_value(project_id)
     values: dict[str, int] = {
         "requests": units,
         "searches": 0,
@@ -1262,10 +1448,10 @@ def record_usage(
     db.execute(
         """
         INSERT INTO usage_counters(
-          key_hash, container_tag, org_id, requests, searches,
+          key_hash, container_tag, org_id, project_id, requests, searches,
           document_writes, fact_writes, input_chars, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(key_hash, container_tag, org_id) DO UPDATE SET
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(key_hash, container_tag, org_id, project_id) DO UPDATE SET
           requests = requests + excluded.requests,
           searches = searches + excluded.searches,
           document_writes = document_writes + excluded.document_writes,
@@ -1277,6 +1463,7 @@ def record_usage(
             key,
             tag,
             org,
+            project,
             values["requests"],
             values["searches"],
             values["document_writes"],
@@ -1294,13 +1481,17 @@ def list_usage(
     *,
     container_tag: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    if project_id is not None:
+        where = f"{where} AND project_id = ?" if where else "project_id = ?"
+        params.append(project_id)
     clause = f" WHERE {where}" if where else ""
     rows = db.execute(
-        "SELECT key_hash, container_tag, org_id, requests, searches, document_writes,"
+        "SELECT key_hash, container_tag, org_id, project_id, requests, searches, document_writes,"
         " fact_writes, input_chars, created_at, updated_at"
         f" FROM usage_counters{clause}"
         " ORDER BY updated_at DESC, key_hash LIMIT ? OFFSET ?",
@@ -1311,14 +1502,22 @@ def list_usage(
         item = dict(row)
         item["container_tag"] = item["container_tag"] or None
         item["org_id"] = item["org_id"] or None
+        item["project_id"] = item["project_id"] or None
         out.append(item)
     return out
 
 
 def count_usage(
-    db: sqlite3.Connection, *, container_tag: str | None = None, org_id: str | None = None
+    db: sqlite3.Connection,
+    *,
+    container_tag: str | None = None,
+    org_id: str | None = None,
+    project_id: str | None = None,
 ) -> int:
     where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    if project_id is not None:
+        where = f"{where} AND project_id = ?" if where else "project_id = ?"
+        params.append(project_id)
     clause = f" WHERE {where}" if where else ""
     return int(
         db.execute(f"SELECT COUNT(*) AS n FROM usage_counters{clause}", params).fetchone()["n"]
@@ -1333,6 +1532,7 @@ def append_audit_event(
     container_tag: str | None,
     org_id: str | None,
     action: str,
+    project_id: str | None = None,
     resource_type: str | None = None,
     resource_id: str | None = None,
     outcome: str = "succeeded",
@@ -1345,9 +1545,9 @@ def append_audit_event(
     db.execute(
         """
         INSERT INTO audit_events(
-          id, created_at, actor_kind, actor_key_hash, container_tag, org_id,
+          id, created_at, actor_kind, actor_key_hash, container_tag, org_id, project_id,
           action, resource_type, resource_id, outcome, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -1357,6 +1557,7 @@ def append_audit_event(
             hashlib.sha256(actor_key_hash.encode()).hexdigest()[:16] if actor_key_hash else None,
             container_tag,
             org_id,
+            project_id,
             action,
             resource_type,
             resource_id,
@@ -1373,13 +1574,17 @@ def list_audit_events(
     *,
     container_tag: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    if project_id is not None:
+        where = f"{where} AND project_id = ?" if where else "project_id = ?"
+        params.append(project_id)
     clause = f" WHERE {where}" if where else ""
     rows = db.execute(
-        "SELECT id, created_at, actor_kind, actor_key_hash, container_tag, org_id, action,"
+        "SELECT id, created_at, actor_kind, actor_key_hash, container_tag, org_id, project_id, action,"
         " resource_type, resource_id, outcome, metadata"
         f" FROM audit_events{clause}"
         " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
@@ -1394,9 +1599,16 @@ def list_audit_events(
 
 
 def count_audit_events(
-    db: sqlite3.Connection, *, container_tag: str | None = None, org_id: str | None = None
+    db: sqlite3.Connection,
+    *,
+    container_tag: str | None = None,
+    org_id: str | None = None,
+    project_id: str | None = None,
 ) -> int:
     where, params = _scope_filter(container_tag=container_tag, org_id=org_id)
+    if project_id is not None:
+        where = f"{where} AND project_id = ?" if where else "project_id = ?"
+        params.append(project_id)
     clause = f" WHERE {where}" if where else ""
     return int(
         db.execute(f"SELECT COUNT(*) AS n FROM audit_events{clause}", params).fetchone()["n"]

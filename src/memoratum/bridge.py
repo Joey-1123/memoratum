@@ -68,6 +68,7 @@ def sync_records(
     slug: str,
     *,
     org_id: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, int]:
     """Direct-DB sync (server-side import endpoint). Same semantics as sync_graph."""
     tag = f"graphify:{slug}"
@@ -79,6 +80,7 @@ def sync_records(
         content=report,
         custom_id=f"graphify:{slug}:report",
         org_id=org_id,
+        project_id=project_id,
     )
     records = fact_records(graph, slug=slug, commit=commit)
     for record in records:
@@ -92,10 +94,13 @@ def sync_records(
             metadata=record["metadata"],
             supersede=False,
             org_id=org_id,
+            project_id=project_id,
         )
     wanted = {fact_key(r) for r in records}
     deleted = 0
-    for fact in list_facts(conn, tag, include_superseded=True, org_id=org_id):
+    for fact in list_facts(
+        conn, tag, include_superseded=True, org_id=org_id, project_id=project_id
+    ):
         key = (fact["subject"], fact["predicate"], fact["object"])
         is_graph = bool((fact.get("metadata") or {}).get("graphify"))
         if is_graph and key not in wanted and delete_fact(conn, fact["id"]):

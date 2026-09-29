@@ -134,6 +134,7 @@ def _dispatch(
             mode=payload.get("mode", "dynamic"),
             container_tag=payload.get("container_tag"),
             org_id=payload.get("org_id"),
+            project_id=payload.get("project_id"),
         )
         return {"calls": calls}
     if kind == "webhook_delivery":
@@ -179,6 +180,28 @@ def _dispatch(
         if deleted_ids and vector_store is not None:
             vector_store.delete(ids=deleted_ids)
         return {"deleted": len(deleted_ids), "memory_ids": deleted_ids}
+    if kind == "purge_project":
+        project_id = str(payload["project_id"])
+        org_id = payload.get("org_id")
+        tags = [
+            str(row["container_tag"])
+            for row in conn.execute(
+                "SELECT DISTINCT container_tag FROM documents WHERE project_id = ?"
+                " UNION SELECT DISTINCT container_tag FROM facts WHERE project_id = ?"
+                " UNION SELECT DISTINCT container_tag FROM memories WHERE project_id = ?",
+                (project_id, project_id, project_id),
+            ).fetchall()
+        ]
+        for tag in tags:
+            if vector_store is not None:
+                vector_store.delete(container_tag=tag, org_id=org_id, project_id=project_id)
+        counts = db.purge_project(
+            conn,
+            project_id=project_id,
+            org_id=org_id,
+            preserve_job_id=job.get("id"),
+        )
+        return {"project_id": project_id, "status": "deleted", **counts}
     if kind == "reindex_memory":
         memory = db.get_memory(conn, payload["memory_id"])
         if memory["state"] == "deleted":
@@ -199,6 +222,7 @@ def _dispatch(
                     kind="memory",
                     container_tag=memory["container_tag"],
                     org_id=memory.get("org_id"),
+                    project_id=memory.get("project_id"),
                     metadata=memory["metadata"],
                     created_at=memory["created_at"],
                 )

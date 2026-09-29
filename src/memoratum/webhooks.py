@@ -288,6 +288,30 @@ def delete_webhook(conn: sqlite3.Connection, *, webhook_id: str, project_id: str
     return bool(changed)
 
 
+def _enqueue_delivery_job(conn: sqlite3.Connection, delivery_id: str, run_after: float) -> str:
+    """Insert one durable delivery job inside the caller's transaction."""
+    row = conn.execute(
+        "SELECT project_id FROM webhook_deliveries WHERE id = ?", (delivery_id,)
+    ).fetchone()
+    project_id = row["project_id"] if row is not None else None
+    job_id = "whj_" + uuid.uuid4().hex
+    now = time.time()
+    conn.execute(
+        "INSERT INTO jobs(id, kind, payload, project_id, status, attempts, result, error, worker,"
+        " created_at, updated_at, run_after) VALUES (?, 'webhook_delivery', ?, ?, 'queued', 0,"
+        " NULL, NULL, NULL, ?, ?, ?)",
+        (
+            job_id,
+            json.dumps({"delivery_id": delivery_id}, separators=(",", ":")),
+            project_id,
+            now,
+            now,
+            run_after,
+        ),
+    )
+    return job_id
+
+
 def _event_payload(
     *, event_type: str, memory_id: str | None, data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -354,19 +378,7 @@ def record_event(
             )
             # Keep the outbox row and its durable work item in the same transaction
             # as the state change that produced the event.
-            job_id = "whj_" + uuid.uuid4().hex
-            conn.execute(
-                "INSERT INTO jobs(id, kind, payload, status, attempts, result, error, worker,"
-                " created_at, updated_at, run_after) VALUES (?, 'webhook_delivery', ?, 'queued', 0,"
-                " NULL, NULL, NULL, ?, ?, ?)",
-                (
-                    job_id,
-                    json.dumps({"delivery_id": delivery_id}, separators=(",", ":")),
-                    now,
-                    now,
-                    now,
-                ),
-            )
+            _enqueue_delivery_job(conn, delivery_id, now)
     return event_id
 
 
@@ -444,14 +456,7 @@ def _schedule_delivery_retry(conn: sqlite3.Connection, delivery_id: str, run_at:
         (time.time(), payload),
     ).fetchone()
     if row is None:
-        job_id = "whj_" + uuid.uuid4().hex
-        now = time.time()
-        conn.execute(
-            "INSERT INTO jobs(id, kind, payload, status, attempts, result, error, worker,"
-            " created_at, updated_at, run_after) VALUES (?, 'webhook_delivery', ?, 'queued', 0,"
-            " NULL, NULL, NULL, ?, ?, ?)",
-            (job_id, payload, now, now, run_at),
-        )
+        _enqueue_delivery_job(conn, delivery_id, run_at)
     conn.commit()
 
 
@@ -585,19 +590,56 @@ def claim_due_deliveries(
 
 
 def replay_delivery(conn: sqlite3.Connection, delivery_id: str) -> dict[str, Any] | None:
-    row = conn.execute(
-        "SELECT id FROM webhook_deliveries WHERE id = ? AND status IN ('dead', 'queued')",
-        (delivery_id,),
-    ).fetchone()
-    if row is None:
-        return None
-    conn.execute(
-        "UPDATE webhook_deliveries SET status = 'queued', attempts = 0, last_error = NULL,"
-        " next_attempt_at = NULL, updated_at = ? WHERE id = ?",
-        (time.time(), delivery_id),
-    )
-    conn.commit()
-    return {"id": delivery_id, "status": "queued", "replayed": True}
+    """Reset a delivery and ensure exactly one durable delivery job exists."""
+    now = time.time()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT id FROM webhook_deliveries WHERE id = ? AND status IN ('dead', 'queued')",
+            (delivery_id,),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        payload = json.dumps({"delivery_id": delivery_id}, separators=(",", ":"))
+        queued = conn.execute(
+            "SELECT id FROM jobs WHERE kind = 'webhook_delivery' AND status = 'queued'"
+            " AND payload = ? ORDER BY created_at, id LIMIT 1",
+            (payload,),
+        ).fetchone()
+        job_id = str(queued["id"]) if queued is not None else None
+        if job_id is None:
+            running = conn.execute(
+                "SELECT 1 FROM jobs WHERE kind = 'webhook_delivery' AND status = 'running'"
+                " AND payload = ? LIMIT 1",
+                (payload,),
+            ).fetchone()
+            if running is not None:
+                conn.rollback()
+                return None
+        conn.execute(
+            "UPDATE webhook_deliveries SET status = 'queued', attempts = 0, last_error = NULL,"
+            " response_status = NULL, next_attempt_at = NULL, updated_at = ? WHERE id = ?",
+            (now, delivery_id),
+        )
+        if job_id is None:
+            job_id = _enqueue_delivery_job(conn, delivery_id, now)
+        else:
+            conn.execute(
+                "UPDATE jobs SET status = 'queued', worker = NULL, attempts = 0, result = NULL,"
+                " error = NULL, run_after = ?, updated_at = ? WHERE id = ?",
+                (now, now, job_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {
+        "id": delivery_id,
+        "status": "queued",
+        "replayed": True,
+        "job_id": job_id,
+    }
 
 
 def rotate_secret(conn: sqlite3.Connection, *, webhook_id: str, project_id: str) -> str | None:

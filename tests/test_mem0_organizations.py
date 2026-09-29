@@ -117,10 +117,15 @@ def test_project_scoped_keys_isolate_memory_reads() -> None:
     assert found.status_code == 200, found.text
     assert found.json()["results"]
 
+    other_project = client.post(
+        "/api/v1/orgs/organizations/local-org/projects/",
+        headers=_admin(),
+        json={"name": "Other"},
+    ).json()["id"]
     other = client.post(
         "/v4/keys",
         headers=_admin(),
-        json={"containerTag": "mem0:user_id:alice", "project_id": "another-project"},
+        json={"containerTag": "mem0:user_id:alice", "project_id": other_project},
     ).json()["key"]
     other_headers = {"Authorization": f"Bearer {other}"}
     assert (

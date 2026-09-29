@@ -61,12 +61,14 @@ def add_fact(
     (calls/contains/imports) pass supersede=False and coexist."""
     now = time.time()
     org_clause = "org_id IS NULL" if org_id is None else "org_id = ?"
+    project_clause = "project_id IS NULL" if project_id is None else "project_id = ?"
     org_params: tuple[Any, ...] = () if org_id is None else (org_id,)
+    project_params: tuple[Any, ...] = () if project_id is None else (project_id,)
     same = conn.execute(
         "SELECT id, valid_to, subject, predicate, object FROM facts"
         " WHERE container_tag = ? AND subject = ? AND predicate = ? AND object = ?"
-        f" AND {org_clause} ORDER BY created_at DESC LIMIT 1",
-        (container_tag, subject, predicate, object, *org_params),
+        f" AND {org_clause} AND {project_clause} ORDER BY created_at DESC LIMIT 1",
+        (container_tag, subject, predicate, object, *org_params, *project_params),
     ).fetchone()
     if same is not None:
         if same["valid_to"] is not None:
@@ -88,14 +90,14 @@ def add_fact(
         return get_fact(conn, same["id"])
     current = conn.execute(
         "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL"
-        f" AND {org_clause}",
-        (container_tag, subject, predicate, *org_params),
+        f" AND {org_clause} AND {project_clause}",
+        (container_tag, subject, predicate, *org_params, *project_params),
     ).fetchall()
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"
-        " superseded_by, created_at, metadata, expires_at, memory_type, org_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)",
+        " superseded_by, created_at, metadata, expires_at, memory_type, org_id, project_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)",
         (
             fact_id,
             container_tag,
@@ -109,6 +111,7 @@ def add_fact(
             expires_at,
             memory_type,
             org_id,
+            project_id,
         ),
     )
     for row in current:
@@ -162,6 +165,7 @@ def list_facts(
     filters: dict[str, Any] | None = None,
     memory_type: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
@@ -177,6 +181,9 @@ def list_facts(
     if org_id is not None:
         where += " AND org_id = ?"
         params.append(org_id)
+    if project_id is not None:
+        where += " AND project_id = ?"
+        params.append(project_id)
     query = f"SELECT * FROM facts WHERE {where} ORDER BY created_at"
     if limit is not None:
         query += " LIMIT ? OFFSET ?"
@@ -198,6 +205,7 @@ def count_facts(
     include_superseded: bool = False,
     memory_type: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
 ) -> int:
     """Count facts using the same visibility scope as list_facts."""
     now = time.time()
@@ -212,6 +220,9 @@ def count_facts(
     if org_id is not None:
         where += " AND org_id = ?"
         params.append(org_id)
+    if project_id is not None:
+        where += " AND project_id = ?"
+        params.append(project_id)
     return int(
         conn.execute(f"SELECT COUNT(*) AS n FROM facts WHERE {where}", params).fetchone()["n"]
     )

@@ -151,6 +151,7 @@ def search(
     *,
     container_tag: str,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int = 10,
     threshold: float = 0.0,
     keyword_limit: int = 50,
@@ -176,6 +177,9 @@ def search(
         if org_id is not None:
             doc_where += " AND d.org_id = ?"
             doc_params += (org_id,)
+        if project_id is not None:
+            doc_where += " AND d.project_id = ?"
+            doc_params += (project_id,)
         rows = conn.execute(
             "SELECT c.id, c.text, c.embedding, c.created_at, d.metadata FROM chunks c"
             " JOIN documents d ON d.id = c.document_id"
@@ -192,7 +196,9 @@ def search(
     fact_list: list[dict[str, Any]] = []
     if want_facts:
         fact_list = [
-            f for f in list_facts(conn, container_tag, org_id=org_id) if _matches(f["metadata"])
+            f
+            for f in list_facts(conn, container_tag, org_id=org_id, project_id=project_id)
+            if _matches(f["metadata"])
         ]
         for f in fact_list:
             key = f"mem_{f['id']}"
@@ -211,6 +217,7 @@ def search(
                 qvec,
                 container_tag=container_tag,
                 org_id=org_id,
+                project_id=project_id,
                 limit=max(limit * 3, keyword_limit),
                 filters=filters,
             )
@@ -259,7 +266,12 @@ def search(
     kw_ranked: list[tuple[str, float]] = []
     if want_chunks:
         for r in db.keyword_search(
-            conn, query, container_tag=container_tag, org_id=org_id, limit=keyword_limit
+            conn,
+            query,
+            container_tag=container_tag,
+            org_id=org_id,
+            project_id=project_id,
+            limit=keyword_limit,
         ):
             kw_ranked.append((f"chunk_{r['id']}", 1.0))
     if want_facts:
