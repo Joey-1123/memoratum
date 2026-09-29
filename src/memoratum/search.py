@@ -69,6 +69,61 @@ def merge_hits(batches: list[list[dict[str, Any]]], *, limit: int) -> list[dict[
     return sorted(best.values(), key=lambda h: h.get("similarity", 0), reverse=True)[:limit]
 
 
+def search_memory_records(
+    conn: sqlite3.Connection,
+    embedder: Embedder,
+    query: str,
+    *,
+    container_tag: str,
+    org_id: str | None = None,
+    limit: int = 10,
+    threshold: float = 0.0,
+    filters: dict[str, Any] | None = None,
+    show_expired: bool = False,
+) -> list[dict[str, Any]]:
+    """Search canonical memory records without mixing in document chunks."""
+    memories = db.list_memories(
+        conn,
+        container_tag,
+        org_id=org_id,
+        show_expired=show_expired,
+    )
+    if filters:
+        entity_fields = {"user_id", "agent_id", "app_id", "run_id"}
+        metadata_filters = {
+            key: value for key, value in filters.items() if key not in entity_fields
+        }
+        if metadata_filters:
+            memories = [
+                memory
+                for memory in memories
+                if all(
+                    memory["metadata"].get(key) == value for key, value in metadata_filters.items()
+                )
+            ]
+    if not memories:
+        return []
+    query_vector = embedder.embed([query])[0]
+    vectors = embedder.embed([memory["text"] for memory in memories])
+    hits = []
+    for memory, vector in zip(memories, vectors, strict=True):
+        score = max(_cosine(query_vector, vector), _token_overlap(query, memory["text"]))
+        if score < threshold:
+            continue
+        hits.append(
+            {
+                "id": memory["id"],
+                "memory": memory["text"],
+                "similarity": round(score, 6),
+                "metadata": memory["metadata"],
+                "created_at": memory["created_at"],
+                "updated_at": memory["updated_at"],
+            }
+        )
+    hits.sort(key=lambda hit: (-hit["similarity"], hit["id"]))
+    return hits[: max(0, limit)]
+
+
 def expand_query(llm, query: str, *, variants: int = 2) -> list[str]:
     """LLM-generated alternative queries; falls back to [query] on any failure."""
     import json as _json

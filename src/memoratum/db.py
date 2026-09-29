@@ -199,6 +199,36 @@ _MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_share_document ON share_links(document_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_share_expiry ON share_links(expires_at, revoked_at);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS memories(
+      id TEXT PRIMARY KEY,
+      container_tag TEXT NOT NULL,
+      text TEXT NOT NULL,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      org_id TEXT,
+      document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+      fact_id TEXT REFERENCES facts(id) ON DELETE SET NULL,
+      expires_at REAL,
+      version INTEGER NOT NULL DEFAULT 1,
+      state TEXT NOT NULL DEFAULT 'active',
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(container_tag, org_id, state);
+    CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC);
+    CREATE TABLE IF NOT EXISTS memory_history(
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      event TEXT NOT NULL,
+      old_text TEXT,
+      new_text TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      version INTEGER NOT NULL,
+      actor_key_hash TEXT,
+      created_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_history ON memory_history(memory_id, created_at);
+    """,
 )
 
 
@@ -315,6 +345,230 @@ def create_share_link(
     if link is None:
         raise RuntimeError("share link creation failed")
     return link
+
+
+def _decode_memory(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    memory = dict(row)
+    memory["metadata"] = json.loads(memory.get("metadata") or "{}")
+    return memory
+
+
+def create_memory(
+    db: sqlite3.Connection,
+    *,
+    text: str,
+    container_tag: str,
+    metadata: dict[str, Any] | None = None,
+    org_id: str | None = None,
+    document_id: str | None = None,
+    fact_id: str | None = None,
+    expires_at: float | None = None,
+    actor_key_hash: str | None = None,
+) -> dict[str, Any]:
+    if not text.strip():
+        raise ValueError("memory text must be non-empty")
+    now = _now()
+    memory_id = f"mem_{uuid.uuid4().hex}"
+    db.execute(
+        "INSERT INTO memories("
+        "id, container_tag, text, metadata, org_id, document_id, fact_id, expires_at,"
+        " version, state, created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)",
+        (
+            memory_id,
+            container_tag,
+            text,
+            json.dumps(metadata or {}, separators=(",", ":")),
+            org_id,
+            document_id,
+            fact_id,
+            expires_at,
+            now,
+            now,
+        ),
+    )
+    append_memory_history(
+        db,
+        memory_id=memory_id,
+        event="ADD",
+        new_text=text,
+        metadata=metadata or {},
+        version=1,
+        actor_key_hash=actor_key_hash,
+    )
+    db.commit()
+    return get_memory(db, memory_id)
+
+
+def ensure_fact_memory(
+    conn: sqlite3.Connection,
+    *,
+    fact_id: str,
+    text: str,
+    container_tag: str,
+    metadata: dict[str, Any] | None,
+    org_id: str | None,
+    document_id: str | None,
+    expires_at: float | None,
+) -> str:
+    """Create the canonical memory projection for a fact without committing."""
+    existing = conn.execute("SELECT id FROM memories WHERE fact_id = ?", (fact_id,)).fetchone()
+    if existing is not None:
+        return str(existing["id"])
+    memory_id = f"mem_{uuid.uuid4().hex}"
+    now = _now()
+    conn.execute(
+        "INSERT INTO memories("
+        "id, container_tag, text, metadata, org_id, document_id, fact_id, expires_at,"
+        " version, state, created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)",
+        (
+            memory_id,
+            container_tag,
+            text,
+            json.dumps(metadata or {}, separators=(",", ":")),
+            org_id,
+            document_id,
+            fact_id,
+            expires_at,
+            now,
+            now,
+        ),
+    )
+    append_memory_history(
+        conn,
+        memory_id=memory_id,
+        event="ADD",
+        new_text=text,
+        metadata=metadata or {},
+        version=1,
+    )
+    return memory_id
+
+
+def ensure_input_memory(
+    conn: sqlite3.Connection,
+    *,
+    text: str,
+    container_tag: str,
+    metadata: dict[str, Any] | None,
+    org_id: str | None,
+    document_id: str,
+) -> str:
+    """Idempotently project one raw Mem0 input message into a memory record."""
+    normalized = dict(metadata or {})
+    rows = conn.execute(
+        "SELECT id, text FROM memories WHERE document_id = ? AND state != 'deleted'",
+        (document_id,),
+    ).fetchall()
+    for row in rows:
+        if row["text"] == text:
+            return str(row["id"])
+    return create_memory(
+        conn,
+        text=text,
+        container_tag=container_tag,
+        metadata=normalized,
+        org_id=org_id,
+        document_id=document_id,
+    )["id"]
+
+
+def get_memory(db: sqlite3.Connection, memory_id: str) -> dict[str, Any]:
+    row = db.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    if row is None:
+        raise KeyError(memory_id)
+    return _decode_memory(row)
+
+
+def list_memories(
+    db: sqlite3.Connection,
+    container_tag: str,
+    *,
+    org_id: str | None = None,
+    include_deleted: bool = False,
+    show_expired: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    where = ["container_tag = ?"]
+    params: list[Any] = [container_tag]
+    if org_id is not None:
+        where.append("org_id = ?")
+        params.append(org_id)
+    if not include_deleted:
+        where.append("state != 'deleted'")
+    if not show_expired:
+        where.append("(expires_at IS NULL OR expires_at > ?)")
+        params.append(_now())
+    query = f"SELECT * FROM memories WHERE {' AND '.join(where)} ORDER BY created_at, id"
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend((max(0, limit), max(0, offset)))
+    return [_decode_memory(row) for row in db.execute(query, params).fetchall()]
+
+
+def append_memory_history(
+    db: sqlite3.Connection,
+    *,
+    memory_id: str,
+    event: str,
+    version: int,
+    old_text: str | None = None,
+    new_text: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    actor_key_hash: str | None = None,
+) -> str:
+    if event not in {"ADD", "UPDATE", "DELETE"}:
+        raise ValueError(f"unknown memory history event: {event}")
+    history_id = uuid.uuid4().hex
+    db.execute(
+        "INSERT INTO memory_history("
+        "id, memory_id, event, old_text, new_text, metadata, version, actor_key_hash, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            history_id,
+            memory_id,
+            event,
+            old_text,
+            new_text,
+            json.dumps(metadata or {}, separators=(",", ":")),
+            version,
+            actor_key_hash,
+            _now(),
+        ),
+    )
+    return history_id
+
+
+def list_memory_history(
+    db: sqlite3.Connection,
+    memory_id: str,
+    *,
+    container_tag: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    where = ["memory_id = ?"]
+    params: list[Any] = [memory_id]
+    if container_tag is not None:
+        where.append("memory_id IN (SELECT id FROM memories WHERE container_tag = ?)")
+        params.append(container_tag)
+    query = (
+        "SELECT id, memory_id, event, old_text, new_text, metadata, version,"
+        " actor_key_hash, created_at FROM memory_history"
+        f" WHERE {' AND '.join(where)} ORDER BY created_at, id"
+    )
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend((max(0, limit), max(0, offset)))
+    rows = db.execute(query, params).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["metadata"] = json.loads(item.get("metadata") or "{}")
+        out.append(item)
+    return out
 
 
 def get_share_link(db: sqlite3.Connection, link_id: str) -> dict[str, Any] | None:

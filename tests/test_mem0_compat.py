@@ -43,7 +43,7 @@ def test_mem0_add_event_and_search_compat() -> None:
         json={"query": "Paris", "filters": {"user_id": "alice"}, "top_k": 5},
     )
     assert searched.status_code == 200, searched.text
-    assert searched.json()["results"]
+    assert searched.json()["results"], searched.text
 
 
 def test_mem0_alias_requires_entity_filter() -> None:

@@ -4,7 +4,7 @@
 
 ## Phase 0 — Contract and identity foundation
 
-- [ ] **Task 0.1: Approve the capability map and compatibility boundary**
+- [x] **Task 0.1: Approve the capability map and compatibility boundary**
   - Acceptance: `memory-identity`, `memory-lifecycle`, `bulk-operations`, `organizations-projects`, `webhook-delivery`, and `client-surface` have stable IDs, acyclic dependencies, and an explicit build order; self-hosted scope, atomic compatibility bulk semantics, default project seeding, redacted delete history, official webhook event coverage, and the development-only private-network webhook exception are recorded.
   - Verify: human review of `tasks/plan.md`; capability map agrees with `docs/MEM0_COMPATIBILITY.md` and `src/memoratum/mem0_contract.py` after implementation begins.
   - Files: `tasks/plan.md`, `docs/MEM0_COMPATIBILITY.md`

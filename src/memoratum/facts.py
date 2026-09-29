@@ -12,6 +12,31 @@ import time
 import uuid
 from typing import Any
 
+from memoratum import db
+
+
+def _ensure_memory(
+    conn: sqlite3.Connection,
+    *,
+    fact_id: str,
+    text: str,
+    container_tag: str,
+    metadata: dict[str, Any],
+    org_id: str | None,
+    document_id: str | None,
+    expires_at: float | None,
+) -> str:
+    return db.ensure_fact_memory(
+        conn,
+        fact_id=fact_id,
+        text=text,
+        container_tag=container_tag,
+        metadata=metadata,
+        org_id=org_id,
+        document_id=document_id,
+        expires_at=expires_at,
+    )
+
 
 def add_fact(
     conn: sqlite3.Connection,
@@ -35,7 +60,8 @@ def add_fact(
     org_clause = "org_id IS NULL" if org_id is None else "org_id = ?"
     org_params: tuple[Any, ...] = () if org_id is None else (org_id,)
     same = conn.execute(
-        "SELECT id, valid_to FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND object = ?"
+        "SELECT id, valid_to, subject, predicate, object FROM facts"
+        " WHERE container_tag = ? AND subject = ? AND predicate = ? AND object = ?"
         f" AND {org_clause} ORDER BY created_at DESC LIMIT 1",
         (container_tag, subject, predicate, object, *org_params),
     ).fetchone()
@@ -44,7 +70,17 @@ def add_fact(
             conn.execute(
                 "UPDATE facts SET valid_to = NULL, superseded_by = NULL WHERE id = ?", (same["id"],)
             )
-            conn.commit()
+        _ensure_memory(
+            conn,
+            fact_id=same["id"],
+            text=f"{same['subject']} {same['predicate']} {same['object']}",
+            container_tag=container_tag,
+            metadata=metadata or {},
+            org_id=org_id,
+            document_id=document_id,
+            expires_at=expires_at,
+        )
+        conn.commit()
         return get_fact(conn, same["id"])
     current = conn.execute(
         "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL"
@@ -77,6 +113,16 @@ def add_fact(
                 "UPDATE facts SET valid_to = ?, superseded_by = ? WHERE id = ?",
                 (now, fact_id, row["id"]),
             )
+    _ensure_memory(
+        conn,
+        fact_id=fact_id,
+        text=f"{subject} {predicate} {object}",
+        container_tag=container_tag,
+        metadata=metadata or {},
+        org_id=org_id,
+        document_id=document_id,
+        expires_at=expires_at,
+    )
     conn.commit()
     return get_fact(conn, fact_id)
 

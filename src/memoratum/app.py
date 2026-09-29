@@ -29,7 +29,7 @@ from memoratum.embeddings import build_embedder as build_provider_embedder
 from memoratum.facts import count_facts, list_facts
 from memoratum.llm import build_chat
 from memoratum.rerank import build_reranker
-from memoratum.search import expand_query, merge_hits, pack_vector, search
+from memoratum.search import expand_query, merge_hits, pack_vector, search, search_memory_records
 from memoratum.vectorstore import build_vector_store as build_provider_vector_store
 
 
@@ -573,6 +573,17 @@ def create_app(
             metadata=body.metadata,
             org_id=org_id,
         )
+        if not body.infer or app.state.llm is None:
+            for message in body.messages:
+                if message.role != "system":
+                    db.ensure_input_memory(
+                        conn,
+                        text=message.content,
+                        container_tag=tag,
+                        metadata=body.metadata,
+                        org_id=org_id,
+                        document_id=document["id"],
+                    )
         job_id = jobs.enqueue(
             conn,
             kind="ingest",
@@ -629,8 +640,7 @@ def create_app(
             )
         auth = _compat_auth_header(authorization)
         org_id = authorize(auth, conn, tag, operation="search", input_chars=len(body.query))
-        vector_store = vector_store_for(conn)
-        hits = search(
+        hits = search_memory_records(
             conn,
             app.state.embedder,
             body.query,
@@ -638,18 +648,16 @@ def create_app(
             org_id=org_id,
             limit=body.top_k,
             threshold=body.threshold,
-            search_mode="hybrid",
-            rerank=body.rerank,
-            reranker=app.state.reranker,
-            vector_store=vector_store,
+            filters=body.filters,
+            show_expired=body.show_expired,
         )
         return {
             "results": [
                 {
                     "id": hit["id"],
-                    "memory": hit.get("memory", hit.get("chunk", "")),
-                    "score": hit.get("similarity", 0.0),
-                    "metadata": {},
+                    "memory": hit["memory"],
+                    "score": hit["similarity"],
+                    "metadata": hit["metadata"],
                 }
                 for hit in hits
             ]
@@ -672,16 +680,19 @@ def create_app(
             return _error("VALIDATION_ERROR", "an entity id is required", 422)
         auth = _compat_auth_header(authorization)
         org_id = authorize(auth, conn, tag, operation="request")
-        facts = list_facts(conn, tag, org_id=org_id)[: max(1, min(limit, 100))]
+        memories = db.list_memories(
+            conn, tag, org_id=org_id, show_expired=False, limit=max(1, min(limit, 100))
+        )
         return {
             "results": [
                 {
-                    "id": fact["id"],
-                    "memory": f"{fact['subject']} {fact['predicate']} {fact['object']}",
-                    "metadata": fact["metadata"],
-                    "created_at": fact["created_at"],
+                    "id": memory["id"],
+                    "memory": memory["text"],
+                    "metadata": memory["metadata"],
+                    "created_at": memory["created_at"],
+                    "updated_at": memory["updated_at"],
                 }
-                for fact in facts
+                for memory in memories
             ]
         }
 
