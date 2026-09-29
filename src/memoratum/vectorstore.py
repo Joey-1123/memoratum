@@ -181,6 +181,7 @@ class InMemoryVectorStore:
                 if record.container_tag == container_tag
                 and (org_id is None or record.org_id == org_id)
                 and (project_id is None or record.project_id == project_id)
+                and (not unscoped_only or (record.org_id is None and record.project_id is None))
             }
         else:
             raise ValueError("delete requires ids or a container tag")
@@ -285,6 +286,7 @@ class SQLiteVectorStore:
         container_tag: str | None = None,
         org_id: str | None = None,
         project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         conditions: list[str] = []
         params: list[Any] = []
@@ -302,6 +304,8 @@ class SQLiteVectorStore:
             if project_id is not None:
                 conditions.append("project_id = ?")
                 params.append(project_id)
+            if unscoped_only:
+                conditions.extend(["org_id IS NULL", "project_id IS NULL"])
         else:
             raise ValueError("delete requires ids or a container tag")
         deleted = self.conn.execute(

@@ -2437,7 +2437,9 @@ def create_app(
                 return _error("NOT_FOUND", "tag not found", 404)
             raise
         if legacy_only:
-            vector_store_for(conn).delete(container_tag=tag, org_id=None, project_id=None)
+            vector_store_for(conn).delete(
+                container_tag=tag, org_id=None, project_id=None, unscoped_only=True
+            )
         else:
             vector_store_for(conn).delete(container_tag=tag, org_id=org_id, project_id=project_id)
         counts = db.purge_tag(
