@@ -25,6 +25,7 @@ def _ensure_memory(
     org_id: str | None,
     document_id: str | None,
     expires_at: float | None,
+    project_id: str | None = None,
 ) -> str:
     return db.ensure_fact_memory(
         conn,
@@ -35,6 +36,7 @@ def _ensure_memory(
         org_id=org_id,
         document_id=document_id,
         expires_at=expires_at,
+        project_id=project_id,
     )
 
 
@@ -51,6 +53,7 @@ def add_fact(
     expires_at: float | None = None,
     memory_type: str = "semantic",
     org_id: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """Add a fact. Same (s,p,o) re-asserts (reviving a superseded row).
     Same (s,p) with a different object supersedes live rows only when
@@ -79,6 +82,7 @@ def add_fact(
             org_id=org_id,
             document_id=document_id,
             expires_at=expires_at,
+            project_id=project_id,
         )
         conn.commit()
         return get_fact(conn, same["id"])

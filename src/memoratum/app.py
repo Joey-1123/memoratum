@@ -67,6 +67,7 @@ def _error(
 class KeyIn(BaseModel):
     containerTag: str | None = None
     org_id: str | None = None
+    project_id: str | None = None
 
 
 class DocPatch(BaseModel):
@@ -124,11 +125,12 @@ class ImportIn(BaseModel):
 
 
 def _is_admin(authorization: str | None, settings: Settings) -> bool:
+    normalized = _compat_auth_header(authorization)
     return bool(
         settings.auth_enabled
-        and authorization
-        and authorization.startswith("Bearer ")
-        and hmac.compare_digest(authorization[len("Bearer ") :], settings.api_key)
+        and normalized
+        and normalized.startswith("Bearer ")
+        and hmac.compare_digest(normalized[len("Bearer ") :], settings.api_key)
     )
 
 
@@ -302,6 +304,7 @@ def create_app(
                     "key_hash": token_fingerprint(raw),
                     "container_tag": identity.container_tag,
                     "org_id": identity.org_id,
+                    "project_id": None,
                     "identity_subject": identity.subject,
                 }
         row = db.lookup_key(conn, raw)
@@ -311,6 +314,7 @@ def create_app(
             "key_hash": row["key_hash"],
             "container_tag": row["container_tag"],
             "org_id": row["org_id"],
+            "project_id": row["project_id"],
         }
 
     def actor_from_scope(authorization: str | None, scope: dict | bool) -> tuple[str, str | None]:
@@ -450,6 +454,7 @@ def create_app(
         scope: dict | bool,
         container_tag: str,
         org_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
         if scope is True or scope is None:
             return True
@@ -459,15 +464,19 @@ def create_app(
         if scope_tag is not None and scope_tag != container_tag:
             return False
         scope_org = scope.get("org_id")
-        return scope_org is None or org_id == scope_org
+        if scope_org is not None and org_id != scope_org:
+            return False
+        scope_project = scope.get("project_id")
+        return scope_project is None or scope_project == project_id
 
     def may_access(
         authorization: str | None,
         conn: sqlite3.Connection,
         container_tag: str,
         org_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
-        return scope_allows(scope_of(authorization, conn), container_tag, org_id)
+        return scope_allows(scope_of(authorization, conn), container_tag, org_id, project_id)
 
     def authorize(
         authorization: str | None,
@@ -475,6 +484,7 @@ def create_app(
         container_tag: str,
         org_id: str | None = None,
         *,
+        project_id: str | None = None,
         operation: str = "request",
         input_chars: int = 0,
     ) -> str | None:
@@ -494,7 +504,11 @@ def create_app(
         effective_org = org_id
         if isinstance(scope, dict) and scope.get("org_id") is not None and org_id is None:
             effective_org = scope["org_id"]
-        if not scope_allows(scope, container_tag, effective_org):
+        scope = scope_of(authorization, conn)
+        effective_project = project_id
+        if effective_project is None and isinstance(scope, dict):
+            effective_project = scope.get("project_id")
+        if not scope_allows(scope, container_tag, effective_org, effective_project):
             raise HTTPException(status_code=403, detail="FORBIDDEN")
         meter(
             authorization,
@@ -510,13 +524,31 @@ def create_app(
     def _authorized(authorization: str | None, conn: sqlite3.Connection) -> bool:
         return credential_ok(authorization, conn)
 
+    def project_scope(
+        authorization: str | None, conn: sqlite3.Connection
+    ) -> tuple[str | None, str | None]:
+        scope = scope_of(authorization, conn)
+        if isinstance(scope, dict) and scope.get("project_id"):
+            project_id = str(scope["project_id"])
+            row = conn.execute("SELECT org_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=403, detail="FORBIDDEN")
+            return str(row["org_id"]), project_id
+        return None, None
+
     def _may_access(
         authorization: str | None,
         conn: sqlite3.Connection,
         container_tag: str,
         org_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
-        return may_access(authorization, conn, container_tag, org_id)
+        if not may_access(authorization, conn, container_tag, org_id, project_id):
+            return False
+        scope = scope_of(authorization, conn)
+        if isinstance(scope, dict) and scope.get("project_id") is not None:
+            return scope["project_id"] == project_id
+        return True
 
     def _job_tag(conn: sqlite3.Connection, job: dict[str, Any]) -> str | None:
         payload = job.get("payload") or {}
@@ -622,13 +654,23 @@ def create_app(
                 422,
             )
         auth = _compat_auth_header(authorization)
-        org_id = authorize(
-            auth,
-            conn,
-            tag,
-            operation="document",
-            input_chars=sum(len(m.content) for m in body.messages),
-        )
+        scope = scope_of(auth, conn)
+        project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        if project_id is not None:
+            project = conn.execute(
+                "SELECT org_id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if project is None:
+                return _error("NOT_FOUND", "project not found", 404)
+            org_id = str(project["org_id"])
+        else:
+            org_id = authorize(
+                auth,
+                conn,
+                tag,
+                operation="document",
+                input_chars=sum(len(m.content) for m in body.messages),
+            )
         claim, claim_error = _begin_idempotency(
             auth,
             conn,
@@ -648,6 +690,7 @@ def create_app(
                 content=content,
                 metadata=body.metadata,
                 org_id=org_id,
+                project_id=project_id,
             )
             if not body.infer or app.state.llm is None:
                 for message in body.messages:
@@ -659,6 +702,7 @@ def create_app(
                             metadata=body.metadata,
                             org_id=org_id,
                             document_id=document["id"],
+                            project_id=project_id,
                         )
             job_id = jobs.enqueue(
                 conn,
@@ -668,6 +712,7 @@ def create_app(
                     "dreaming": "dynamic",
                     "container_tag": tag,
                     "org_id": org_id,
+                    "project_id": project_id,
                 },
             )
             audit(
@@ -721,13 +766,23 @@ def create_app(
                 422,
             )
         auth = _compat_auth_header(authorization)
-        org_id = authorize(auth, conn, tag, operation="search", input_chars=len(body.query))
+        scope = scope_of(auth, conn)
+        project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        org_id = authorize(
+            auth,
+            conn,
+            tag,
+            project_id=project_id,
+            operation="search",
+            input_chars=len(body.query),
+        )
         hits = search_memory_records(
             conn,
             app.state.embedder,
             body.query,
             container_tag=tag,
             org_id=org_id,
+            project_id=project_id,
             limit=body.top_k,
             threshold=body.threshold,
             filters=body.filters,
@@ -856,7 +911,13 @@ def create_app(
             auth = _compat_auth_header(authorization)
             if not credential_ok(auth, conn):
                 return None, _error("UNAUTHORIZED", "authentication required", 401)
-            if not may_access(auth, conn, memory["container_tag"], memory.get("org_id")):
+            if not may_access(
+                auth,
+                conn,
+                memory["container_tag"],
+                memory.get("org_id"),
+                memory.get("project_id"),
+            ):
                 return None, _error("NOT_FOUND", "memory not found", 404)
         return memory, None
 
@@ -1000,6 +1061,7 @@ def create_app(
             )
         wildcard = any(value == "*" for value in filters.values())
         auth = _compat_auth_header(authorization)
+        scope = scope_of(auth, conn)
         if wildcard and settings.auth_enabled and not _is_admin(auth, settings):
             return _error("FORBIDDEN", "an administrative key is required for wildcard delete", 403)
         exact_tag = _mem0_entity_tag(filters) if not wildcard else None
@@ -1012,7 +1074,9 @@ def create_app(
                 return _error("UNAUTHORIZED", "authentication required", 401)
             if isinstance(scope, dict):
                 org_id = scope.get("org_id")
-        payload: dict[str, Any] = {"filters": filters, "org_id": org_id}
+        payload: dict[str, Any] = {"filters": filters, "org_id": org_id, "project_id": None}
+        if isinstance(scope, dict):
+            payload["project_id"] = scope.get("project_id")
         if exact_tag is not None:
             payload["container_tag"] = exact_tag
         event_id = jobs.enqueue(conn, kind="delete_all_memories", payload=payload)
@@ -1030,6 +1094,247 @@ def create_app(
             "message": "Delete in progress. This may take some time.",
             "event_id": event_id,
         }
+
+    @app.get("/v1/ping/")
+    def mem0_ping(conn: DbConn, authorization: str | None = Header(default=None)):
+        if settings.auth_enabled and not credential_ok(authorization, conn):
+            return _error("UNAUTHORIZED", "authentication required", 401)
+        scope = scope_of(authorization, conn)
+        if isinstance(scope, dict) and scope.get("project_id"):
+            project_id = str(scope["project_id"])
+            row = conn.execute(
+                "SELECT id, org_id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if row is None:
+                return _error("NOT_FOUND", "project not found", 404)
+            org_id = str(row["org_id"])
+        else:
+            org_id, project_id = "local-org", "local-project"
+        meter(authorization, conn, container_tag=None, org_id=org_id)
+        return {
+            "status": "ok",
+            "user_email": None,
+            "org_id": org_id,
+            "project_id": project_id,
+        }
+
+    def _project_admin(authorization: str | None, conn: sqlite3.Connection) -> bool:
+        if _is_admin(authorization, settings):
+            return True
+        scope = scope_of(authorization, conn)
+        if not isinstance(scope, dict) or not scope.get("project_id"):
+            return False
+        row = conn.execute(
+            "SELECT role FROM project_members WHERE project_id = ? AND email = ?",
+            (scope["project_id"], scope.get("identity_subject", scope.get("key_hash"))),
+        ).fetchone()
+        return row is not None and row["role"] == "OWNER"
+
+    def _project_response(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "org_id": row["org_id"],
+            "name": row["name"],
+            "description": row["description"],
+            "custom_instructions": row["custom_instructions"],
+            "custom_categories": json.loads(row["custom_categories"] or "[]"),
+            "agent_custom_instructions": row["agent_custom_instructions"],
+            "multilingual": bool(row["multilingual"]),
+            "decay": bool(row["decay"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @app.post("/api/v1/orgs/organizations/{org_id}/projects/", status_code=201)
+    def create_project(
+        org_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        if not isinstance(body.get("name"), str) or not body["name"].strip():
+            return _error("VALIDATION_ERROR", "name is required", 422)
+        now = time.time()
+        project_id = "project-" + secrets.token_urlsafe(12)
+        conn.execute(
+            "INSERT INTO projects(id, org_id, name, description, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, org_id, body["name"].strip(), body.get("description"), now, now),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        assert row is not None
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            action="project.created",
+            resource_id=project_id,
+        )
+        return _project_response(row)
+
+    @app.get("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/")
+    def get_project(
+        org_id: str,
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+        ).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        return _project_response(row)
+
+    @app.patch("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/")
+    def update_project(
+        org_id: str,
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+        ).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        allowed = {
+            "name",
+            "description",
+            "custom_instructions",
+            "custom_categories",
+            "agent_custom_instructions",
+            "multilingual",
+            "decay",
+        }
+        if not body or set(body) - allowed:
+            return _error("VALIDATION_ERROR", "unsupported project settings", 422)
+        values = dict(row)
+        for key in ("name", "description", "custom_instructions", "agent_custom_instructions"):
+            if key in body:
+                values[key] = body[key]
+        if "custom_categories" in body:
+            if not isinstance(body["custom_categories"], list):
+                return _error("VALIDATION_ERROR", "custom_categories must be a list", 422)
+            values["custom_categories"] = json.dumps(body["custom_categories"])
+        for key in ("multilingual", "decay"):
+            if key in body:
+                values[key] = int(bool(body[key]))
+        values["updated_at"] = time.time()
+        conn.execute(
+            "UPDATE projects SET name = ?, description = ?, custom_instructions = ?,"
+            " custom_categories = ?, agent_custom_instructions = ?, multilingual = ?, decay = ?,"
+            " updated_at = ? WHERE id = ? AND org_id = ?",
+            (
+                values["name"],
+                values["description"],
+                values["custom_instructions"],
+                values["custom_categories"],
+                values["agent_custom_instructions"],
+                values["multilingual"],
+                values["decay"],
+                values["updated_at"],
+                project_id,
+                org_id,
+            ),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        assert updated is not None
+        return _project_response(updated)
+
+    @app.get("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
+    def list_project_members(
+        org_id: str,
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+            ).fetchone()
+            is None
+        ):
+            return _error("NOT_FOUND", "project not found", 404)
+        rows = conn.execute(
+            "SELECT email, role, created_at, updated_at FROM project_members WHERE project_id = ? ORDER BY email",
+            (project_id,),
+        ).fetchall()
+        return {"members": [dict(row) for row in rows]}
+
+    @app.post("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/", status_code=201)
+    def add_project_member(
+        org_id: str,
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        email = body.get("email")
+        role = body.get("role", "READER")
+        if not isinstance(email, str) or "@" not in email or role not in {"OWNER", "READER"}:
+            return _error("VALIDATION_ERROR", "email and role are required", 422)
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+            ).fetchone()
+            is None
+        ):
+            return _error("NOT_FOUND", "project not found", 404)
+        now = time.time()
+        conn.execute(
+            "INSERT INTO project_members(project_id, email, role, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, email) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at",
+            (project_id, email, role, now, now),
+        )
+        conn.commit()
+        return {"email": email, "role": role, "project_id": project_id}
+
+    @app.put("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
+    def update_project_member(
+        org_id: str,
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        return add_project_member(org_id, project_id, body, conn, authorization)
+
+    @app.delete("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
+    def remove_project_member(
+        org_id: str,
+        project_id: str,
+        email: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        changed = conn.execute(
+            "DELETE FROM project_members WHERE project_id = ? AND email = ?", (project_id, email)
+        ).rowcount
+        conn.commit()
+        return {"removed": bool(changed)}
 
     @app.get("/v1/memories/{memory_id}/")
     def mem0_get(memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -1551,7 +1856,12 @@ def create_app(
     @app.post("/v4/keys", status_code=201)
     def issue_key(body: KeyIn, conn: DbConn, authorization: str | None = Header(default=None)):
         if not settings.auth_enabled or _is_admin(authorization, settings):
-            raw = db.create_api_key(conn, container_tag=body.containerTag, org_id=body.org_id)
+            raw = db.create_api_key(
+                conn,
+                container_tag=body.containerTag,
+                org_id=body.org_id,
+                project_id=body.project_id,
+            )
             meter(
                 authorization,
                 conn,
@@ -1566,7 +1876,11 @@ def create_app(
                 action="key.issued",
                 resource_type="api_key",
                 resource_id=db.hash_key(raw)[:16],
-                metadata={"containerTag": body.containerTag, "org_id": body.org_id},
+                metadata={
+                    "containerTag": body.containerTag,
+                    "org_id": body.org_id,
+                    "project_id": body.project_id,
+                },
             )
             return {"key": raw}
         if (

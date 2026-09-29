@@ -107,7 +107,12 @@ def _dispatch(
         return {"calls": calls}
     if kind == "delete_all_memories":
         filters = payload.get("filters") or {}
-        memories = db.list_all_memories(conn, org_id=payload.get("org_id"), show_expired=True)
+        memories = db.list_all_memories(
+            conn,
+            org_id=payload.get("org_id"),
+            project_id=payload.get("project_id"),
+            show_expired=True,
+        )
         selected = []
         for memory in memories:
             tag = memory["container_tag"]

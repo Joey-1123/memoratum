@@ -76,6 +76,7 @@ def search_memory_records(
     *,
     container_tag: str,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int = 10,
     threshold: float = 0.0,
     filters: dict[str, Any] | None = None,
@@ -86,6 +87,7 @@ def search_memory_records(
         conn,
         container_tag,
         org_id=org_id,
+        project_id=project_id,
         show_expired=show_expired,
     )
     if filters:

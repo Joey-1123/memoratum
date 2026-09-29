@@ -286,6 +286,53 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE memories ADD COLUMN event_at REAL;
     """,
+    """
+    ALTER TABLE api_keys ADD COLUMN project_id TEXT;
+    ALTER TABLE documents ADD COLUMN project_id TEXT;
+    ALTER TABLE facts ADD COLUMN project_id TEXT;
+    ALTER TABLE memories ADD COLUMN project_id TEXT;
+    ALTER TABLE jobs ADD COLUMN project_id TEXT;
+    ALTER TABLE vector_points ADD COLUMN project_id TEXT;
+    ALTER TABLE audit_events ADD COLUMN project_id TEXT;
+    ALTER TABLE usage_counters ADD COLUMN project_id TEXT;
+    CREATE TABLE IF NOT EXISTS organizations(
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS projects(
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      custom_instructions TEXT,
+      custom_categories TEXT,
+      agent_custom_instructions TEXT,
+      multilingual INTEGER NOT NULL DEFAULT 0,
+      decay INTEGER NOT NULL DEFAULT 0,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS project_members(
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('OWNER', 'READER')),
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      PRIMARY KEY(project_id, email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_project_members_email ON project_members(email);
+    INSERT OR IGNORE INTO organizations(id, name, created_at, updated_at)
+      VALUES ('local-org', 'Local Organization', CAST(strftime('%s','now') AS REAL), CAST(strftime('%s','now') AS REAL));
+    INSERT OR IGNORE INTO projects(
+      id, org_id, name, description, created_at, updated_at
+    ) VALUES (
+      'local-project', 'local-org', 'Local Project', 'Default self-hosted project',
+      CAST(strftime('%s','now') AS REAL), CAST(strftime('%s','now') AS REAL)
+    );
+    """,
 )
 
 
@@ -324,6 +371,7 @@ def create_document(
     metadata: dict[str, Any] | None = None,
     expires_at: float | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     now = _now()
     meta = json.dumps(metadata or {})
@@ -337,8 +385,8 @@ def create_document(
         if row is not None:
             db.execute(
                 "UPDATE documents SET content = ?, status = 'queued', updated_at = ?, metadata = ?, dreamed_at = NULL,"
-                " expires_at = ?, org_id = ? WHERE id = ?",
-                (content, now, meta, expires_at, org_id, row["id"]),
+                " expires_at = ?, org_id = ?, project_id = ? WHERE id = ?",
+                (content, now, meta, expires_at, org_id, project_id, row["id"]),
             )
             db.execute("DELETE FROM chunks WHERE document_id = ?", (row["id"],))
             db.commit()
@@ -346,8 +394,8 @@ def create_document(
     doc_id = uuid.uuid4().hex
     db.execute(
         "INSERT INTO documents(id, container_tag, custom_id, content, status, created_at, updated_at, metadata,"
-        " expires_at, org_id) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)",
-        (doc_id, container_tag, custom_id, content, now, now, meta, expires_at, org_id),
+        " expires_at, org_id, project_id) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)",
+        (doc_id, container_tag, custom_id, content, now, now, meta, expires_at, org_id, project_id),
     )
     db.commit()
     return get_document(db, doc_id)
@@ -431,6 +479,7 @@ def create_memory(
     fact_id: str | None = None,
     expires_at: float | None = None,
     actor_key_hash: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     if not text.strip():
         raise ValueError("memory text must be non-empty")
@@ -438,9 +487,9 @@ def create_memory(
     memory_id = f"mem_{uuid.uuid4().hex}"
     db.execute(
         "INSERT INTO memories("
-        "id, container_tag, text, metadata, org_id, document_id, fact_id, expires_at,"
+        "id, container_tag, text, metadata, org_id, document_id, fact_id, expires_at, project_id,"
         " version, state, created_at, updated_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)",
         (
             memory_id,
             container_tag,
@@ -450,6 +499,7 @@ def create_memory(
             document_id,
             fact_id,
             expires_at,
+            project_id,
             now,
             now,
         ),
@@ -477,6 +527,7 @@ def ensure_fact_memory(
     org_id: str | None,
     document_id: str | None,
     expires_at: float | None,
+    project_id: str | None = None,
 ) -> str:
     """Create the canonical memory projection for a fact without committing."""
     existing = conn.execute("SELECT id FROM memories WHERE fact_id = ?", (fact_id,)).fetchone()
@@ -486,9 +537,9 @@ def ensure_fact_memory(
     now = _now()
     conn.execute(
         "INSERT INTO memories("
-        "id, container_tag, text, metadata, org_id, document_id, fact_id, expires_at,"
+        "id, container_tag, text, metadata, org_id, document_id, fact_id, expires_at, project_id,"
         " version, state, created_at, updated_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)",
         (
             memory_id,
             container_tag,
@@ -498,6 +549,7 @@ def ensure_fact_memory(
             document_id,
             fact_id,
             expires_at,
+            project_id,
             now,
             now,
         ),
@@ -521,6 +573,7 @@ def ensure_input_memory(
     metadata: dict[str, Any] | None,
     org_id: str | None,
     document_id: str,
+    project_id: str | None = None,
 ) -> str:
     """Idempotently project one raw Mem0 input message into a memory record."""
     normalized = dict(metadata or {})
@@ -538,6 +591,7 @@ def ensure_input_memory(
         metadata=normalized,
         org_id=org_id,
         document_id=document_id,
+        project_id=project_id,
     )["id"]
 
 
@@ -669,6 +723,7 @@ def list_all_memories(
     conn: sqlite3.Connection,
     *,
     org_id: str | None = None,
+    project_id: str | None = None,
     include_deleted: bool = False,
     show_expired: bool = False,
 ) -> list[dict[str, Any]]:
@@ -678,6 +733,9 @@ def list_all_memories(
     if org_id is not None:
         where.append("org_id = ?")
         params.append(org_id)
+    if project_id is not None:
+        where.append("project_id = ?")
+        params.append(project_id)
     if not include_deleted:
         where.append("state != 'deleted'")
     if not show_expired:
@@ -695,6 +753,7 @@ def list_memories(
     container_tag: str,
     *,
     org_id: str | None = None,
+    project_id: str | None = None,
     include_deleted: bool = False,
     show_expired: bool = False,
     limit: int | None = None,
@@ -705,6 +764,9 @@ def list_memories(
     if org_id is not None:
         where.append("org_id = ?")
         params.append(org_id)
+    if project_id is not None:
+        where.append("project_id = ?")
+        params.append(project_id)
     if not include_deleted:
         where.append("state != 'deleted'")
     if not show_expired:
@@ -976,12 +1038,17 @@ def hash_key(raw: str) -> str:
 
 
 def create_api_key(
-    db: sqlite3.Connection, *, container_tag: str | None = None, org_id: str | None = None
+    db: sqlite3.Connection,
+    *,
+    container_tag: str | None = None,
+    org_id: str | None = None,
+    project_id: str | None = None,
 ) -> str:
     raw = "mm_" + secrets.token_urlsafe(32)
     db.execute(
-        "INSERT INTO api_keys(key_hash, container_tag, created_at, org_id) VALUES (?, ?, ?, ?)",
-        (_hash_key(raw), container_tag, _now(), org_id),
+        "INSERT INTO api_keys(key_hash, container_tag, created_at, org_id, project_id)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (_hash_key(raw), container_tag, _now(), org_id, project_id),
     )
     db.commit()
     return raw
@@ -993,7 +1060,7 @@ def lookup_key(db: sqlite3.Connection, raw: str) -> dict[str, Any] | None:
     if db.execute("SELECT 1 FROM revoked_keys WHERE key_hash = ?", (h,)).fetchone() is not None:
         return None
     row = db.execute(
-        "SELECT key_hash, container_tag, org_id FROM api_keys WHERE key_hash = ?", (h,)
+        "SELECT key_hash, container_tag, org_id, project_id FROM api_keys WHERE key_hash = ?", (h,)
     ).fetchone()
     if row is None:
         return None
