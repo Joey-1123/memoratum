@@ -1251,6 +1251,10 @@ def create_app(
                 return error
             assert memory is not None
             resolved.append((item, memory))
+        for _item, memory in resolved:
+            denied = require_project_write(auth, conn, memory.get("project_id"))
+            if denied is not None:
+                return denied
         try:
             conn.execute("BEGIN IMMEDIATE")
             for item, memory in resolved:
@@ -1331,6 +1335,10 @@ def create_app(
                 return error
             assert memory is not None
             resolved.append(memory)
+        for memory in resolved:
+            denied = require_project_write(auth, conn, memory.get("project_id"))
+            if denied is not None:
+                return denied
         try:
             conn.execute("BEGIN IMMEDIATE")
             deleted_ids: list[str] = []
@@ -1882,6 +1890,7 @@ def create_app(
         ).fetchone()
         if row is None:
             return _error("NOT_FOUND", "project not found", 404)
+        meter(authorization, conn, container_tag=None, org_id=org_id, project_id=project_id)
         return _project_response(row)
 
     @app.patch("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/")
@@ -1949,6 +1958,16 @@ def create_app(
         conn.commit()
         updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         assert updated is not None
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.updated",
+            resource_type="project",
+            resource_id=project_id,
+        )
         return _project_response(updated)
 
     @app.get("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
@@ -1968,6 +1987,13 @@ def create_app(
             is None
         ):
             return _error("NOT_FOUND", "project not found", 404)
+        meter(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+        )
         rows = conn.execute(
             "SELECT email, role, created_at, updated_at FROM project_members WHERE project_id = ? ORDER BY email",
             (project_id,),
@@ -2003,6 +2029,17 @@ def create_app(
             (project_id, email, role, now, now),
         )
         conn.commit()
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.member_upserted",
+            resource_type="project_member",
+            resource_id=email,
+            metadata={"role": role},
+        )
         return {"email": email, "role": role, "project_id": project_id}
 
     @app.put("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
@@ -2030,6 +2067,17 @@ def create_app(
             "DELETE FROM project_members WHERE project_id = ? AND email = ?", (project_id, email)
         ).rowcount
         conn.commit()
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.member_removed",
+            resource_type="project_member",
+            resource_id=email,
+            outcome="succeeded" if changed else "not_found",
+        )
         return {"removed": bool(changed)}
 
     @app.get("/v4/memories/{memory_id}")
