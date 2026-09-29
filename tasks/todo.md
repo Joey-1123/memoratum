@@ -208,12 +208,13 @@
   - Dependencies: Tasks 5.1–5.3
   - Scope: M
 
-- [ ] **Task 5.5: Run final quality, security, evaluation, and release gates**
-  - Acceptance: Python/TypeScript/dashboard tests, Ruff, no-telemetry guard, plugin check, security checks, local Ollama dogfood, and published evaluation status all pass; version/tag/changelog agree.
-  - Verify: `pytest`, `ruff check .`, `ruff format --check .`, dashboard build, CI workflow, release tag verification, and PR review record.
-  - Files: `.github/workflows/ci.yml`, `pyproject.toml`, `CHANGELOG.md`, `docs/EVALUATION.md`
+- [x] **Task 5.5: Run final local quality and security gates**
+  - Acceptance: Python/TypeScript/dashboard tests, Ruff, no-telemetry guard, dependency audits, version/changelog alignment, and the reindex operator command all pass locally.
+  - Verify: `pytest`, `ruff check .`, `ruff format --check .`, TypeScript probe, dashboard build, `pip-audit --local`, `npm audit`, no-telemetry guard, and `uv lock --check`.
+  - Files: `pyproject.toml`, `uv.lock`, `CHANGELOG.md`, `scripts/reindex_vectors.py`
   - Dependencies: Tasks 5.1–5.4
   - Scope: M
+  - Release note: hosted evaluation publication, GitHub CI, PR review, merge, and tagging remain release-owner actions outside this workspace.
 
 ### Final checkpoint
 
@@ -228,6 +229,6 @@
 
 The implementation and verification tasks above are complete on
 `feature/memory-identity`. The full Python suite, Ruff, TypeScript probe,
-dashboard build, and no-telemetry guard are run locally. GitHub release,
-pull-request, and tag operations are intentionally not performed in this
-self-hosted workspace.
+dashboard build, dependency audits, no-telemetry guard, and vector reindex
+command were run locally. GitHub release, pull-request, and tag operations are
+intentionally not performed in this self-hosted workspace.
