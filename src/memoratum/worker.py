@@ -17,7 +17,7 @@ from memoratum.config import Settings
 from memoratum.dreaming import dream_document, dream_pending
 from memoratum.embeddings import Embedder
 from memoratum.llm import ChatModel, build_chat
-from memoratum.vectorstore import VectorStore, build_vector_store
+from memoratum.vectorstore import VectorRecord, VectorStore, build_vector_store
 
 MAX_ATTEMPTS = 3
 
@@ -180,9 +180,148 @@ def _dispatch(
         if deleted_ids and vector_store is not None:
             vector_store.delete(ids=deleted_ids)
         return {"deleted": len(deleted_ids), "memory_ids": deleted_ids}
+    if kind == "bulk_memories":
+        operations = payload.get("operations") or []
+        previous = jobs.get(conn, str(job["id"])) or {}
+        prior_items = {
+            int(item["index"]): item
+            for item in (previous.get("result") or {}).get("items", [])
+            if isinstance(item, dict) and item.get("index") is not None
+        }
+        progress: list[dict[str, Any]] = []
+        terminal = {"completed", "completed_with_vector_error", "not_found"}
+        for index, operation in enumerate(operations):
+            if not isinstance(operation, dict):
+                progress.append(
+                    {"index": index, "status": "failed", "error": "operation must be an object"}
+                )
+                continue
+            existing = prior_items.get(index)
+            if existing is not None and existing.get("status") in terminal:
+                progress.append(existing)
+                continue
+            item_result: dict[str, Any] = {
+                "index": index,
+                "memory_id": operation.get("memory_id"),
+                "action": operation.get("action"),
+            }
+            try:
+                memory_id = str(operation["memory_id"])
+                action = str(operation.get("action", "update"))
+                if action not in {"update", "delete"}:
+                    raise ValueError("action must be update or delete")
+                memory = db.get_memory(conn, memory_id)
+                if (
+                    payload.get("container_tag")
+                    and memory["container_tag"] != payload["container_tag"]
+                ):
+                    raise KeyError(memory_id)
+                if payload.get("org_id") and memory.get("org_id") != payload["org_id"]:
+                    raise KeyError(memory_id)
+                if payload.get("project_id") and memory.get("project_id") != payload["project_id"]:
+                    raise KeyError(memory_id)
+                if action == "update":
+                    updated = db.update_memory(
+                        conn,
+                        memory_id,
+                        text=operation.get("text"),
+                        metadata=operation.get("metadata"),
+                        actor_key_hash=payload.get("actor_key_hash"),
+                    )
+                    conn.commit()
+                    item_result["status"] = "completed"
+                    if vector_store is not None:
+                        try:
+                            vector = embedder.embed([updated["text"]])[0]
+                            vector_store.upsert(
+                                [
+                                    VectorRecord(
+                                        id=str(updated["id"]),
+                                        vector=vector,
+                                        text=updated["text"],
+                                        kind="memory",
+                                        container_tag=updated["container_tag"],
+                                        org_id=updated.get("org_id"),
+                                        project_id=updated.get("project_id"),
+                                        metadata=updated["metadata"],
+                                        created_at=updated.get("created_at") or time.time(),
+                                    )
+                                ]
+                            )
+                        except Exception as exc:  # noqa: BLE001 - authoritative row is committed
+                            jobs.enqueue(
+                                conn,
+                                kind="reindex_memory",
+                                payload={
+                                    "memory_id": str(updated["id"]),
+                                    "container_tag": updated["container_tag"],
+                                    "org_id": updated.get("org_id"),
+                                    "project_id": updated.get("project_id"),
+                                },
+                            )
+                            item_result["status"] = "completed_with_vector_error"
+                            item_result["vector_error"] = type(exc).__name__
+                else:
+                    deleted = db.soft_delete_memory(
+                        conn, memory_id, actor_key_hash=payload.get("actor_key_hash")
+                    )
+                    conn.commit()
+                    item_result["status"] = "completed"
+                    item_result["deleted"] = bool(deleted["deleted"])
+                    if deleted["deleted_ids"] and vector_store is not None:
+                        try:
+                            vector_store.delete(ids=deleted["deleted_ids"])
+                        except Exception as exc:  # noqa: BLE001 - authoritative row is committed
+                            jobs.enqueue(
+                                conn,
+                                kind="reindex_memory",
+                                payload={
+                                    "memory_id": memory_id,
+                                    "container_tag": memory["container_tag"],
+                                    "org_id": memory.get("org_id"),
+                                    "project_id": memory.get("project_id"),
+                                },
+                            )
+                            item_result["status"] = "completed_with_vector_error"
+                            item_result["vector_error"] = type(exc).__name__
+            except KeyError:
+                conn.rollback()
+                item_result["status"] = "not_found"
+            except Exception as exc:  # noqa: BLE001 - preserve per-item progress
+                conn.rollback()
+                item_result["status"] = "failed"
+                item_result["error"] = type(exc).__name__
+            progress.append(item_result)
+            jobs.update_result(
+                conn,
+                str(job["id"]),
+                {
+                    "total": len(operations),
+                    "completed": sum(
+                        1 for item in progress if item.get("status", "").startswith("completed")
+                    ),
+                    "failed": sum(
+                        1 for item in progress if item.get("status") in {"failed", "not_found"}
+                    ),
+                    "items": progress,
+                },
+            )
+        return {
+            "total": len(operations),
+            "completed": sum(
+                1 for item in progress if item.get("status", "").startswith("completed")
+            ),
+            "failed": sum(1 for item in progress if item.get("status") in {"failed", "not_found"}),
+            "items": progress,
+        }
     if kind == "purge_project":
         project_id = str(payload["project_id"])
         org_id = payload.get("org_id")
+        project = conn.execute("SELECT org_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if project is None:
+            return {"project_id": project_id, "status": "already_deleted"}
+        if org_id is not None and project["org_id"] != org_id:
+            raise ValueError("project does not belong to org_id")
         tags = [
             str(row["container_tag"])
             for row in conn.execute(
@@ -210,7 +349,6 @@ def _dispatch(
             return {"memory_id": memory["id"], "status": "deleted"}
         if vector_store is None:
             return {"memory_id": memory["id"], "status": "skipped"}
-        from memoratum.vectorstore import VectorRecord
 
         vector = embedder.embed([memory["text"]])[0]
         vector_store.upsert(

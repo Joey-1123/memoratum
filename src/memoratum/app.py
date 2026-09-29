@@ -70,7 +70,7 @@ class KeyIn(BaseModel):
     containerTag: str | None = None
     org_id: str | None = None
     project_id: str | None = None
-    role: Literal["OWNER", "READER"] = "OWNER"
+    role: Literal["OWNER", "READER"] = "READER"
 
 
 class DocPatch(BaseModel):
@@ -228,6 +228,7 @@ def create_app(
 ):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
+    webhooks.set_encryption_data_dir(settings.data_dir)
     app = FastAPI(title="Memoratum")
     app.state.settings = settings
     if rate_limit_per_minute:
@@ -283,6 +284,11 @@ def create_app(
         return None
 
     _ensure_boot_key(settings)
+    bootstrap_conn = db.connect(settings.db_path)
+    try:
+        webhooks.migrate_plaintext_secrets(bootstrap_conn)
+    finally:
+        bootstrap_conn.close()
     dashboard_index = os.path.join(settings.dashboard_dir, "index.html")
     if os.path.exists(dashboard_index):
         from starlette.staticfiles import StaticFiles
@@ -449,7 +455,7 @@ def create_app(
         )
 
     def admin_error(authorization: str | None, conn: sqlite3.Connection) -> JSONResponse | None:
-        if _is_admin(authorization, settings):
+        if not settings.auth_enabled or _is_admin(authorization, settings):
             return None
         normalized = _compat_auth_header(authorization)
         if (
@@ -494,7 +500,20 @@ def create_app(
         org_id: str | None = None,
         project_id: str | None = None,
     ) -> bool:
-        return scope_allows(scope_of(authorization, conn), container_tag, org_id, project_id)
+        scope = scope_of(authorization, conn)
+        if scope_allows(scope, container_tag, org_id, project_id):
+            return True
+        if container_tag is None and project_id and isinstance(scope, dict):
+            identity = scope.get("identity_email") or scope.get("identity_subject")
+            if identity and (org_id is None or scope.get("org_id") in {None, org_id}):
+                return (
+                    conn.execute(
+                        "SELECT 1 FROM project_members WHERE project_id = ? AND email = ?",
+                        (project_id, identity),
+                    ).fetchone()
+                    is not None
+                )
+        return False
 
     def authorize(
         authorization: str | None,
@@ -510,10 +529,12 @@ def create_app(
             effective_project = project_id
             if effective_project is not None:
                 project = conn.execute(
-                    "SELECT org_id FROM projects WHERE id = ?", (effective_project,)
+                    "SELECT org_id, deleting FROM projects WHERE id = ?", (effective_project,)
                 ).fetchone()
                 if project is None:
                     raise HTTPException(status_code=404, detail="project not found")
+                if project["deleting"]:
+                    raise HTTPException(status_code=409, detail="project deletion is in progress")
                 project_org = str(project["org_id"])
                 if org_id is not None and org_id != project_org:
                     raise HTTPException(status_code=422, detail="project does not belong to org_id")
@@ -540,10 +561,12 @@ def create_app(
             effective_project = scope.get("project_id")
         if effective_project is not None:
             project = conn.execute(
-                "SELECT org_id FROM projects WHERE id = ?", (effective_project,)
+                "SELECT org_id, deleting FROM projects WHERE id = ?", (effective_project,)
             ).fetchone()
             if project is None:
                 raise HTTPException(status_code=404, detail="project not found")
+            if project["deleting"]:
+                raise HTTPException(status_code=409, detail="project deletion is in progress")
             project_org = str(project["org_id"])
             if effective_org is None:
                 effective_org = project_org
@@ -693,12 +716,79 @@ def create_app(
             conn,
             container_tag=doc.containerTag,
             org_id=org_id,
+            project_id=project_id,
             action="document.created",
             resource_type="document",
             resource_id=created["id"],
             metadata={"job_id": job_id},
         )
         return {"id": created["id"], "status": "queued", "job_id": job_id}
+
+    @app.post("/v4/memories", status_code=201)
+    def create_native_memory(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        text = body.get("text")
+        container_tag = body.get("containerTag", body.get("container_tag", "default"))
+        if not isinstance(text, str) or not text.strip():
+            return _error("VALIDATION_ERROR", "text is required", 422)
+        if not isinstance(container_tag, str) or not container_tag.strip():
+            return _error("VALIDATION_ERROR", "containerTag must be a non-empty string", 422)
+        metadata = body.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            return _error("VALIDATION_ERROR", "metadata must be an object", 422)
+        auth = _compat_auth_header(authorization)
+        project_id = effective_project(auth, conn, body.get("project_id"))
+        org_id = authorize(
+            auth,
+            conn,
+            container_tag,
+            body.get("org_id"),
+            project_id=project_id,
+            operation="document",
+            input_chars=len(text),
+        )
+        expires_at = body.get("expires_at")
+        if "expiration_date" in body:
+            expires_at = _expiration_timestamp(body["expiration_date"])
+        try:
+            memory = db.create_memory(
+                conn,
+                text=text,
+                container_tag=container_tag,
+                metadata=metadata,
+                org_id=org_id,
+                expires_at=expires_at,
+                project_id=project_id,
+            )
+        except ValueError as exc:
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        job_id = jobs.enqueue(
+            conn,
+            kind="reindex_memory",
+            payload={
+                "memory_id": memory["id"],
+                "container_tag": memory["container_tag"],
+                "org_id": memory.get("org_id"),
+                "project_id": memory.get("project_id"),
+            },
+        )
+        audit(
+            auth,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
+            action="memory.created",
+            resource_type="memory",
+            resource_id=memory["id"],
+            metadata={"job_id": job_id},
+        )
+        response = _memory_response(memory)
+        response["job_id"] = job_id
+        return response
 
     @app.post("/v3/memories/add/")
     @app.post("/v1/memories/")
@@ -801,6 +891,7 @@ def create_app(
                 conn,
                 container_tag=tag,
                 org_id=org_id,
+                project_id=project_id,
                 action="mem0.add",
                 resource_type="document",
                 resource_id=document["id"],
@@ -950,6 +1041,64 @@ def create_app(
                     )
         return None
 
+    def _validate_bulk_operations(
+        operations: Any,
+    ) -> tuple[list[dict[str, Any]] | None, JSONResponse | None]:
+        if not isinstance(operations, list) or not operations or len(operations) > 1000:
+            return None, _error("VALIDATION_ERROR", "operations must contain 1-1000 items", 422)
+        allowed = {"memory_id", "action", "text", "metadata"}
+        seen: set[str] = set()
+        normalized: list[dict[str, Any]] = []
+        for index, item in enumerate(operations):
+            if not isinstance(item, dict):
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}] must be an object", 422
+                )
+            unknown = set(item) - allowed
+            if unknown:
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}] contains unsupported fields", 422
+                )
+            memory_id = item.get("memory_id")
+            action = item.get("action")
+            if not isinstance(memory_id, str) or not memory_id.strip():
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}].memory_id is required", 422
+                )
+            if action not in {"update", "delete"}:
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}].action must be update or delete", 422
+                )
+            if memory_id in seen:
+                return None, _error("VALIDATION_ERROR", "memory_id values must be unique", 422)
+            seen.add(memory_id)
+            if action == "update":
+                if "text" not in item and "metadata" not in item:
+                    return None, _error(
+                        "VALIDATION_ERROR",
+                        f"operations[{index}] must include text or metadata",
+                        422,
+                    )
+                if "text" in item and (
+                    not isinstance(item["text"], str) or not item["text"].strip()
+                ):
+                    return None, _error(
+                        "VALIDATION_ERROR", f"operations[{index}].text must be non-empty", 422
+                    )
+                if "metadata" in item and not isinstance(item["metadata"], dict):
+                    return None, _error(
+                        "VALIDATION_ERROR", f"operations[{index}].metadata must be an object", 422
+                    )
+            normalized.append(
+                {
+                    "memory_id": memory_id,
+                    "action": action,
+                    **({"text": item["text"]} if "text" in item else {}),
+                    **({"metadata": item["metadata"]} if "metadata" in item else {}),
+                }
+            )
+        return normalized, None
+
     def _expiration_timestamp(value: Any) -> float | None:
         if value is None:
             return None
@@ -1003,6 +1152,69 @@ def create_app(
                 return None, _error("NOT_FOUND", "memory not found", 404)
         return memory, None
 
+    @app.post("/v4/memories/bulk", status_code=202)
+    @app.post("/v4/memories/batch", status_code=202)
+    @app.post("/v4/jobs/bulk", status_code=202)
+    def native_bulk_memories(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        operations = body.get("operations", body.get("items"))
+        normalized, validation_error = _validate_bulk_operations(operations)
+        if validation_error is not None:
+            return validation_error
+        assert normalized is not None
+        auth = _compat_auth_header(authorization)
+        project_id = effective_project(auth, conn, body.get("project_id"))
+        container_tag = body.get("containerTag", body.get("container_tag", "default"))
+        if not isinstance(container_tag, str) or not container_tag.strip():
+            return _error("VALIDATION_ERROR", "containerTag must be a non-empty string", 422)
+        org_id = authorize(
+            auth,
+            conn,
+            container_tag,
+            body.get("org_id"),
+            project_id=project_id,
+            operation="request",
+        )
+        resolved: list[dict[str, Any]] = []
+        for operation in normalized:
+            memory, error = _get_memory_or_error(operation["memory_id"], conn, auth)
+            if error is not None:
+                return error
+            assert memory is not None
+            if memory["container_tag"] != container_tag:
+                return _error("NOT_FOUND", "memory not found", 404)
+            if project_id is not None and memory.get("project_id") != project_id:
+                return _error("NOT_FOUND", "memory not found", 404)
+            if org_id is not None and memory.get("org_id") != org_id:
+                return _error("NOT_FOUND", "memory not found", 404)
+            resolved.append({**operation, "memory_id": str(memory["id"])})
+        job_id = jobs.enqueue(
+            conn,
+            kind="bulk_memories",
+            payload={
+                "operations": resolved,
+                "container_tag": container_tag,
+                "org_id": org_id,
+                "project_id": project_id,
+                "actor_key_hash": actor(auth, conn)[1],
+            },
+        )
+        audit(
+            auth,
+            conn,
+            container_tag=container_tag,
+            org_id=org_id,
+            project_id=project_id,
+            action="memory.bulk_queued",
+            resource_type="job",
+            resource_id=job_id,
+            metadata={"total": len(resolved)},
+        )
+        return {"job_id": job_id, "status": "PENDING", "total": len(resolved)}
+
     @app.put("/v1/batch/")
     def mem0_batch_update(
         body: dict[str, Any],
@@ -1041,6 +1253,16 @@ def create_app(
         except Exception:
             conn.rollback()
             raise
+        batch_project = (
+            str(resolved[0][1]["project_id"])
+            if resolved
+            and resolved[0][1].get("project_id")
+            and all(
+                memory.get("project_id") == resolved[0][1].get("project_id")
+                for _, memory in resolved
+            )
+            else None
+        )
         for item, memory in resolved:
             job_id = jobs.enqueue(
                 conn,
@@ -1057,12 +1279,20 @@ def create_app(
                 conn,
                 container_tag=memory["container_tag"],
                 org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
                 action="memory.batch_updated",
                 resource_type="memory",
                 resource_id=str(memory["id"]),
                 metadata={"job_id": job_id},
             )
-        meter(auth, conn, container_tag=None, org_id=None, operation="request")
+        meter(
+            auth,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=batch_project,
+            operation="request",
+        )
         return {"message": f"Successfully updated {len(resolved)} memories"}
 
     @app.delete("/v1/batch/")
@@ -1103,20 +1333,40 @@ def create_app(
             conn.rollback()
             raise
         if deleted_ids:
-            vector_store_for(conn).delete(ids=deleted_ids)
+            store = vector_store_for(conn)
+            if store is not None:
+                store.delete(ids=deleted_ids)
+        batch_project = (
+            str(resolved[0]["project_id"])
+            if resolved
+            and resolved[0].get("project_id")
+            and all(
+                memory.get("project_id") == resolved[0].get("project_id") for memory in resolved
+            )
+            else None
+        )
         for memory in resolved:
             audit(
                 auth,
                 conn,
                 container_tag=memory["container_tag"],
                 org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
                 action="memory.batch_deleted",
                 resource_type="memory",
                 resource_id=memory["id"],
             )
-        meter(auth, conn, container_tag=None, org_id=None, operation="request")
+        meter(
+            auth,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=batch_project,
+            operation="request",
+        )
         return {"message": f"Successfully deleted {len(deleted_ids)} memories"}
 
+    @app.delete("/v4/memories")
     @app.delete("/v1/memories/")
     def mem0_delete_all(
         conn: DbConn,
@@ -1149,8 +1399,15 @@ def create_app(
             return _error("FORBIDDEN", "an administrative key is required for wildcard delete", 403)
         exact_tag = _mem0_entity_tag(filters) if not wildcard else None
         org_id: str | None = None
+        scope_project = scope.get("project_id") if isinstance(scope, dict) else None
         if exact_tag is not None:
-            org_id = authorize(auth, conn, exact_tag, operation="request")
+            org_id = authorize(
+                auth,
+                conn,
+                exact_tag,
+                project_id=scope_project,
+                operation="request",
+            )
         elif settings.auth_enabled:
             scope = scope_of(auth, conn)
             if scope is False:
@@ -1168,6 +1425,7 @@ def create_app(
             conn,
             container_tag=exact_tag,
             org_id=org_id,
+            project_id=payload.get("project_id"),
             action="memory.delete_all_queued",
             resource_type="memory_scope",
             resource_id=None,
@@ -1193,7 +1451,7 @@ def create_app(
             org_id = str(row["org_id"])
         else:
             org_id, project_id = "local-org", "local-project"
-        meter(authorization, conn, container_tag=None, org_id=org_id)
+        meter(authorization, conn, container_tag=None, org_id=org_id, project_id=project_id)
         return {
             "status": "ok",
             "user_email": None,
@@ -1210,7 +1468,7 @@ def create_app(
         owner_only: bool = False,
     ) -> JSONResponse | None:
         """Authorize project management without treating a tag key as an admin key."""
-        if _is_admin(authorization, settings):
+        if not settings.auth_enabled or _is_admin(authorization, settings):
             return None
         scope = scope_of(_compat_auth_header(authorization), conn)
         if not isinstance(scope, dict):
@@ -1296,6 +1554,7 @@ def create_app(
             conn,
             container_tag=None,
             org_id=None,
+            project_id=project_id,
             action="webhook.created",
             resource_type="webhook",
             resource_id=created["id"],
@@ -1354,6 +1613,7 @@ def create_app(
                 name=body.get("name"),
                 url=body.get("url"),
                 event_types=body.get("event_types"),
+                is_active=body.get("is_active"),
                 allow_private=settings.webhook_allow_private_targets,
             )
         except (ValueError, webhooks.UnsafeWebhookTarget) as exc:
@@ -1365,6 +1625,7 @@ def create_app(
             conn,
             container_tag=None,
             org_id=None,
+            project_id=project_id,
             action="webhook.updated",
             resource_type="webhook",
             resource_id=webhook_id,
@@ -1391,6 +1652,7 @@ def create_app(
             conn,
             container_tag=None,
             org_id=None,
+            project_id=project_id,
             action="webhook.deleted",
             resource_type="webhook",
             resource_id=webhook_id,
@@ -1419,6 +1681,7 @@ def create_app(
             conn,
             container_tag=None,
             org_id=None,
+            project_id=project_id,
             action="webhook.secret_rotated",
             resource_type="webhook",
             resource_id=webhook_id,
@@ -1503,16 +1766,32 @@ def create_app(
             return _error("NOT_FOUND", "project not found", 404)
         if project_id == "local-project":
             return _error("CONFLICT", "the default project cannot be deleted", 409)
+        if int(row["deleting"] or 0):
+            for existing in conn.execute(
+                "SELECT id, payload FROM jobs WHERE kind = 'purge_project'"
+                " AND status IN ('queued', 'running') ORDER BY created_at"
+            ).fetchall():
+                payload = json.loads(existing["payload"] or "{}")
+                if payload.get("project_id") == project_id:
+                    return {
+                        "job_id": str(existing["id"]),
+                        "status": "PENDING",
+                        "project_id": project_id,
+                    }
+            return _error("CONFLICT", "project deletion is already in progress", 409)
         job_id = jobs.enqueue(
             conn,
             kind="purge_project",
             payload={"project_id": project_id, "org_id": org_id},
             commit=False,
         )
-        conn.execute(
+        changed = conn.execute(
             "UPDATE projects SET deleting = 1, updated_at = ? WHERE id = ? AND deleting = 0",
             (time.time(), project_id),
-        )
+        ).rowcount
+        if changed != 1:
+            conn.rollback()
+            return _error("CONFLICT", "project deletion is already in progress", 409)
         conn.commit()
         audit(
             authorization,
@@ -1554,6 +1833,7 @@ def create_app(
             conn,
             container_tag=None,
             org_id=org_id,
+            project_id=project_id,
             action="project.created",
             resource_id=project_id,
         )
@@ -1724,6 +2004,7 @@ def create_app(
         conn.commit()
         return {"removed": bool(changed)}
 
+    @app.get("/v4/memories/{memory_id}")
     @app.get("/v1/memories/{memory_id}/")
     def mem0_get(memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
         memory, error = _get_memory_or_error(memory_id, conn, authorization)
@@ -1732,10 +2013,16 @@ def create_app(
         assert memory is not None
         memory_id = str(memory["id"])
         meter(
-            authorization, conn, container_tag=memory["container_tag"], org_id=memory.get("org_id")
+            authorization,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
         )
         return _memory_response(memory)
 
+    @app.put("/v4/memories/{memory_id}")
+    @app.patch("/v4/memories/{memory_id}")
     @app.put("/v1/memories/{memory_id}/")
     def mem0_update(
         memory_id: str,
@@ -1816,6 +2103,7 @@ def create_app(
             conn,
             container_tag=updated["container_tag"],
             org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
             action="memory.updated",
             resource_type="memory",
             resource_id=memory_id,
@@ -1824,6 +2112,66 @@ def create_app(
         response = _memory_response(updated)
         response["job_id"] = job_id
         _finish_idempotency(conn, claim, response=response, job_id=job_id)
+        return response
+
+    @app.post("/v4/memories/{memory_id}/categorize")
+    @app.post("/v1/memories/{memory_id}/categorize")
+    def categorize_memory_route(
+        memory_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        category = body.get("category", body.get("memory_type"))
+        if not isinstance(category, str) or not category.strip():
+            return _error("VALIDATION_ERROR", "category is required", 422)
+        try:
+            updated = db.categorize_memory(
+                conn,
+                str(memory["id"]),
+                category=category,
+                actor_key_hash=actor(_compat_auth_header(authorization), conn)[1],
+            )
+            conn.commit()
+        except KeyError:
+            return _error("NOT_FOUND", "memory not found", 404)
+        except ValueError as exc:
+            conn.rollback()
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        job_id = jobs.enqueue(
+            conn,
+            kind="reindex_memory",
+            payload={
+                "memory_id": str(updated["id"]),
+                "container_tag": updated["container_tag"],
+                "org_id": updated.get("org_id"),
+                "project_id": updated.get("project_id"),
+            },
+        )
+        audit(
+            _compat_auth_header(authorization),
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
+            action="memory.categorized",
+            resource_type="memory",
+            resource_id=str(updated["id"]),
+            metadata={"category": category.strip(), "job_id": job_id},
+        )
+        meter(
+            _compat_auth_header(authorization),
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
+        )
+        response = _memory_response(updated)
+        response["job_id"] = job_id
         return response
 
     @app.delete("/v1/memories/{memory_id}/")
@@ -1864,16 +2212,26 @@ def create_app(
             if claim is not None and claim.status == "claimed":
                 db.release_idempotency(conn, scope=claim.scope, key=claim.key)
             raise
-        vector_store_for(conn).delete(ids=result["deleted_ids"])
+        store = vector_store_for(conn)
+        if store is not None:
+            store.delete(ids=result["deleted_ids"])
         audit(
             auth,
             conn,
             container_tag=memory["container_tag"],
             org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
             action="memory.deleted",
             resource_type="memory",
             resource_id=memory_id,
             metadata={"cascade_count": result["cascade_count"]},
+        )
+        meter(
+            auth,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
         )
         response = {
             "message": "Memory deleted successfully!",
@@ -1882,6 +2240,7 @@ def create_app(
         _finish_idempotency(conn, claim, response=response)
         return response
 
+    @app.get("/v4/memories/{memory_id}/history")
     @app.get("/v1/memories/{memory_id}/history/")
     def mem0_history(
         memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)
@@ -1891,6 +2250,13 @@ def create_app(
             return error
         assert memory is not None
         memory_id = str(memory["id"])
+        meter(
+            authorization,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
+        )
         return [
             _memory_history_response(row)
             for row in db.list_memory_history(
@@ -1986,6 +2352,7 @@ def create_app(
             conn,
             container_tag=doc["container_tag"],
             org_id=doc.get("org_id"),
+            project_id=doc.get("project_id"),
         )
         return {"id": doc["id"], "containerTag": doc["container_tag"], "status": doc["status"]}
 
@@ -2036,6 +2403,7 @@ def create_app(
             conn,
             container_tag=document["container_tag"],
             org_id=org_id,
+            project_id=document.get("project_id"),
             action="share.created",
             resource_type="share_link",
             resource_id=link["id"],
@@ -2083,6 +2451,7 @@ def create_app(
             conn,
             container_tag=document["container_tag"],
             org_id=org_id,
+            project_id=document.get("project_id"),
             action="share.revoked",
             resource_type="share_link",
             resource_id=link_id,
@@ -2132,6 +2501,7 @@ def create_app(
             conn,
             container_tag=doc["container_tag"],
             org_id=doc.get("org_id"),
+            project_id=doc.get("project_id"),
             operation="document",
             input_chars=len(patch.content or doc["content"]),
         )
@@ -2142,7 +2512,9 @@ def create_app(
             ).fetchall()
         ]
         if old_chunk_ids:
-            vector_store_for(conn).delete(ids=old_chunk_ids)
+            store = vector_store_for(conn)
+            if store is not None:
+                store.delete(ids=old_chunk_ids)
         updated = db.update_document(conn, doc_id, content=patch.content, metadata=patch.metadata)
         job_id = jobs.enqueue(
             conn,
@@ -2159,6 +2531,7 @@ def create_app(
             conn,
             container_tag=updated["container_tag"],
             org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
             action="document.updated",
             resource_type="document",
             resource_id=updated["id"],
@@ -2321,6 +2694,7 @@ def create_app(
                 conn,
                 container_tag=body.containerTag,
                 org_id=body.org_id,
+                project_id=body.project_id,
             )
             audit(
                 authorization,
@@ -2356,13 +2730,23 @@ def create_app(
         key = body.get("key") if isinstance(body, dict) else None
         if not isinstance(key, str) or not key:
             return _error("VALIDATION_ERROR", "key is required", 422)
+        key_row = db.lookup_key(conn, key)
         revoked = db.revoke_key(conn, key)
-        meter(authorization, conn, container_tag=None, org_id=None)
+        key_org = key_row.get("org_id") if key_row else None
+        key_project = key_row.get("project_id") if key_row else None
+        meter(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=key_org,
+            project_id=key_project,
+        )
         audit(
             authorization,
             conn,
             container_tag=None,
-            org_id=None,
+            org_id=key_org,
+            project_id=key_project,
             action="key.revoked",
             resource_type="api_key",
             resource_id=db.hash_key(key)[:16],
@@ -2375,7 +2759,46 @@ def create_app(
         try:
             fact = fact_store.get_fact(conn, fact_id)
         except KeyError:
-            return _error("NOT_FOUND", "fact not found", 404)
+            memory = db.resolve_memory_reference(conn, fact_id)
+            if memory is None:
+                return _error("NOT_FOUND", "fact not found", 404)
+            if settings.auth_enabled:
+                if not credential_ok(authorization, conn):
+                    return _error("UNAUTHORIZED", "authentication required", 401)
+                if not may_access(
+                    authorization,
+                    conn,
+                    memory["container_tag"],
+                    memory.get("org_id"),
+                    memory.get("project_id"),
+                ):
+                    return _error("NOT_FOUND", "fact not found", 404)
+            result = db.soft_delete_memory(
+                conn, str(memory["id"]), actor_key_hash=actor(authorization, conn)[1]
+            )
+            conn.commit()
+            if result["deleted_ids"]:
+                store = vector_store_for(conn)
+                if store is not None:
+                    store.delete(ids=result["deleted_ids"])
+            meter(
+                authorization,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
+            )
+            audit(
+                authorization,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
+                action="memory.deleted",
+                resource_type="memory",
+                resource_id=str(memory["id"]),
+            )
+            return {"deleted": str(memory["id"]), "cascade_count": result["cascade_count"]}
         if settings.auth_enabled:
             if not credential_ok(authorization, conn):
                 return _error("UNAUTHORIZED", "authentication required", 401)
@@ -2402,7 +2825,9 @@ def create_app(
                 deleted_memory_ids = list(result["deleted_ids"])
         fact_store.delete_fact(conn, fact_id)
         if deleted_memory_ids:
-            vector_store_for(conn).delete(ids=deleted_memory_ids)
+            store = vector_store_for(conn)
+            if store is not None:
+                store.delete(ids=deleted_memory_ids)
         meter(
             authorization,
             conn,
@@ -2415,6 +2840,7 @@ def create_app(
             conn,
             container_tag=fact["container_tag"],
             org_id=fact.get("org_id"),
+            project_id=fact.get("project_id"),
             action="fact.deleted",
             resource_type="fact",
             resource_id=fact_id,
@@ -2436,12 +2862,12 @@ def create_app(
             if exc.status_code in {403, 404}:
                 return _error("NOT_FOUND", "tag not found", 404)
             raise
-        if legacy_only:
-            vector_store_for(conn).delete(
-                container_tag=tag, org_id=None, project_id=None, unscoped_only=True
-            )
-        else:
-            vector_store_for(conn).delete(container_tag=tag, org_id=org_id, project_id=project_id)
+        store = vector_store_for(conn)
+        if store is not None:
+            if legacy_only:
+                store.delete(container_tag=tag, org_id=None, project_id=None, unscoped_only=True)
+            else:
+                store.delete(container_tag=tag, org_id=org_id, project_id=project_id)
         counts = db.purge_tag(
             conn, tag, org_id=org_id, project_id=project_id, legacy_only=legacy_only
         )
@@ -2450,6 +2876,7 @@ def create_app(
             conn,
             container_tag=tag,
             org_id=org_id,
+            project_id=project_id,
             action="tag.purged",
             resource_type="tag",
             resource_id=tag,
@@ -2498,6 +2925,7 @@ def create_app(
             conn,
             container_tag=body.containerTag,
             org_id=org_id,
+            project_id=project_id,
             action="fact.created",
             resource_type="fact",
             resource_id=fact["id"],
@@ -2603,6 +3031,7 @@ def create_app(
             conn,
             container_tag=f"graphify:{slug}",
             org_id=org_id,
+            project_id=project_id,
             action="graph.imported",
             resource_type="graph",
             resource_id=slug,
@@ -2623,12 +3052,24 @@ def create_app(
             project_id = _job_project(conn, job)
             if not may_access(authorization, conn, tag, org_id, project_id):
                 return _error("NOT_FOUND", "job not found", 404)
+            if project_id and not _is_admin(authorization, settings):
+                denied = _project_scope_error(
+                    authorization, conn, str(org_id or ""), str(project_id), owner_only=True
+                )
+                if denied is not None:
+                    return denied
         if job["status"] != "queued":
             return _error("CONFLICT", "only queued jobs can be cancelled", 409)
         if not jobs.cancel(conn, job_id):
             return _error("CONFLICT", "job is no longer queued", 409)
         payload = job.get("payload") or {}
         project_id = _job_project(conn, job)
+        if job["kind"] == "purge_project" and project_id:
+            conn.execute(
+                "UPDATE projects SET deleting = 0, updated_at = ? WHERE id = ?",
+                (time.time(), project_id),
+            )
+            conn.commit()
         if job["kind"] == "ingest" and project_id:
             webhooks.record_event(
                 conn,

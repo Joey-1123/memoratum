@@ -417,7 +417,14 @@ class QdrantVectorStore:
         ]
         self.client.upsert(collection_name=self.collection_name, points=points)
 
-    def _filter(self, container_tag: str, org_id: str | None, project_id: str | None = None) -> Any:
+    def _filter(
+        self,
+        container_tag: str,
+        org_id: str | None,
+        project_id: str | None = None,
+        *,
+        unscoped_only: bool = False,
+    ) -> Any:
         models = self._require_models()
         must = [
             models.FieldCondition(key="container_tag", match=models.MatchValue(value=container_tag))
@@ -428,6 +435,13 @@ class QdrantVectorStore:
             must.append(
                 models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id))
             )
+        if unscoped_only:
+            null_condition = getattr(models, "IsNullCondition", None)
+            for key in ("org_id", "project_id"):
+                if null_condition is not None:
+                    must.append(null_condition(key=key))
+                else:
+                    must.append(models.FieldCondition(key=key, match=models.MatchValue(value=None)))
         return models.Filter(must=must)
 
     def _hit(self, point: Any) -> VectorHit | None:
@@ -491,6 +505,7 @@ class QdrantVectorStore:
         container_tag: str | None = None,
         org_id: str | None = None,
         project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         if not self._collection_ready:
             return 0
@@ -506,9 +521,13 @@ class QdrantVectorStore:
             )
         elif container_tag is not None:
             selector = (
-                models.FilterSelector(filter=self._filter(container_tag, org_id, project_id))
+                models.FilterSelector(
+                    filter=self._filter(
+                        container_tag, org_id, project_id, unscoped_only=unscoped_only
+                    )
+                )
                 if hasattr(models, "FilterSelector")
-                else self._filter(container_tag, org_id, project_id)
+                else self._filter(container_tag, org_id, project_id, unscoped_only=unscoped_only)
             )
         else:
             raise ValueError("delete requires ids or a container tag")
@@ -595,13 +614,20 @@ class ChromaVectorStore:
         )
 
     def _where(
-        self, container_tag: str, org_id: str | None, project_id: str | None = None
+        self,
+        container_tag: str,
+        org_id: str | None,
+        project_id: str | None = None,
+        *,
+        unscoped_only: bool = False,
     ) -> dict[str, Any]:
         conditions: list[dict[str, Any]] = [{"container_tag": container_tag}]
         if org_id is not None:
             conditions.append({"org_id": org_id})
         if project_id is not None:
             conditions.append({"project_id": project_id})
+        if unscoped_only:
+            conditions.extend([{"org_id": ""}, {"project_id": ""}])
         return conditions[0] if len(conditions) == 1 else {"$and": conditions}
 
     @staticmethod
@@ -664,6 +690,7 @@ class ChromaVectorStore:
         container_tag: str | None = None,
         org_id: str | None = None,
         project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         collection = self._ensure_collection()
         if ids is not None:
@@ -673,7 +700,9 @@ class ChromaVectorStore:
             return len(ids)
         if container_tag is None:
             raise ValueError("delete requires ids or a container tag")
-        collection.delete(where=self._where(container_tag, org_id, project_id))
+        collection.delete(
+            where=self._where(container_tag, org_id, project_id, unscoped_only=unscoped_only)
+        )
         return 0
 
     def close(self) -> None:
@@ -739,6 +768,10 @@ class PgVectorStore:
             )
             """
         )
+        # Existing installations predate project-scoped vectors. Migrate them
+        # additively; NULL project ids remain unscoped and are never returned to a
+        # project-scoped query until a reindex backfills them.
+        cursor.execute(f"ALTER TABLE {self.table} ADD COLUMN IF NOT EXISTS project_id TEXT")
         self.conn.commit()
         self._ready = True
 
@@ -836,7 +869,7 @@ class PgVectorStore:
             hits.append(
                 VectorHit(
                     id=str(self._row_value(row, 0, "id")),
-                    score=float(self._row_value(row, 7, "score", 0.0) or 0.0),
+                    score=float(self._row_value(row, 8, "score", 0.0) or 0.0),
                     text=str(self._row_value(row, 2, "text", "")),
                     kind=str(self._row_value(row, 1, "kind", "")),
                     container_tag=str(self._row_value(row, 3, "container_tag", "")),
@@ -855,6 +888,7 @@ class PgVectorStore:
         container_tag: str | None = None,
         org_id: str | None = None,
         project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         self._ensure_schema()
         if ids is not None:
@@ -872,6 +906,8 @@ class PgVectorStore:
             if project_id is not None:
                 query += " AND project_id = %s"
                 params.append(project_id)
+            if unscoped_only:
+                query += " AND org_id IS NULL AND project_id IS NULL"
         else:
             raise ValueError("delete requires ids or a container tag")
         cursor = self.conn.cursor()

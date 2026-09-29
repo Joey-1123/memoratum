@@ -4,4 +4,4 @@
 
 """Memoratum: things to be remembered."""
 
-__version__ = "0.12.0"
+__version__ = "0.35.0"

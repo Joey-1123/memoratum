@@ -84,19 +84,8 @@ def test_open_mode_project_document_derives_project_org(tmp_path, monkeypatch) -
         headers={"Authorization": "Bearer mm_open_mode"},
         json={"name": "Open"},
     )
-    assert project_response.status_code == 401, project_response.text
-    from memoratum import db
-    from memoratum.config import Settings
-
-    conn = db.connect(Settings.load().db_path)
-    project_id = "project-open-test"
-    now = db._now()
-    conn.execute(
-        "INSERT INTO projects(id, org_id, name, created_at, updated_at) VALUES (?, 'local-org', ?, ?, ?)",
-        (project_id, "Open", now, now),
-    )
-    conn.commit()
-    conn.close()
+    assert project_response.status_code == 201, project_response.text
+    project_id = str(project_response.json()["id"])
     response = client.post(
         "/v3/documents",
         json={
@@ -155,7 +144,7 @@ def test_project_owner_can_cancel_queued_ingest(tmp_path, monkeypatch) -> None:
     key = client.post(
         "/v4/keys",
         headers=_admin(),
-        json={"containerTag": "mem0:user_id:alice", "project_id": project_id},
+        json={"containerTag": "mem0:user_id:alice", "project_id": project_id, "role": "OWNER"},
     ).json()["key"]
     headers = {"Authorization": f"Bearer {key}"}
     document = client.post(

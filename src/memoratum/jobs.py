@@ -73,6 +73,15 @@ def complete(
     conn.commit()
 
 
+def update_result(conn: sqlite3.Connection, job_id: str, result: dict[str, Any]) -> None:
+    """Persist intermediate progress for a long-running job."""
+    conn.execute(
+        "UPDATE jobs SET result = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(result, separators=(",", ":")), time.time(), job_id),
+    )
+    conn.commit()
+
+
 def fail(conn: sqlite3.Connection, job_id: str, *, error: str) -> None:
     conn.execute(
         "UPDATE jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ?",

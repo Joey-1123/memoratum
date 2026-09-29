@@ -14,7 +14,17 @@ def test_pgvector_adapter_uses_cosine_distance_and_scope() -> None:
             self.calls.append((query, params))
             if "SELECT" in query:
                 self.rows = [
-                    ("chunk-a", "chunk", "alpha", "t", "org-a", '{"source": "test"}', 1.0, 0.9)
+                    (
+                        "chunk-a",
+                        "chunk",
+                        "alpha",
+                        "t",
+                        "org-a",
+                        "project-a",
+                        '{"source": "test"}',
+                        1.0,
+                        0.9,
+                    )
                 ]
             return self
 
@@ -54,7 +64,10 @@ def test_pgvector_adapter_uses_cosine_distance_and_scope() -> None:
     )
     hits = store.query([1.0, 0.0], container_tag="t", org_id="org-a")
     assert hits[0].id == "chunk-a"
+    assert hits[0].project_id == "project-a"
+    assert hits[0].created_at == 1.0
     assert hits[0].score == 0.9
+    assert any("ADD COLUMN IF NOT EXISTS project_id" in query for query, _ in conn.cursor_obj.calls)
     assert any("ORDER BY embedding <=>" in query for query, _ in conn.cursor_obj.calls)
     store.delete(ids=["chunk-a"])
     store.close()

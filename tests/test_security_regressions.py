@@ -192,7 +192,7 @@ def test_cancelled_ingest_reaches_terminal_event_state_and_document_state(
     key = client.post(
         "/v4/keys",
         headers=_admin(),
-        json={"containerTag": "mem0:user_id:alice", "project_id": project_id},
+        json={"containerTag": "mem0:user_id:alice", "project_id": project_id, "role": "OWNER"},
     ).json()["key"]
     headers = {"Authorization": f"Bearer {key}"}
     document = client.post(

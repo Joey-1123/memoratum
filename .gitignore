@@ -8,6 +8,7 @@ build/
 .ruff_cache/
 .env
 data/
+.memoratum-data/
 *.db
 *.sqlite*
 

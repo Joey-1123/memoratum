@@ -382,7 +382,7 @@ _MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_after, created_at);
     """,
     """
-    ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'OWNER';
+    ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'READER';
     """,
     """
     PRAGMA foreign_keys=OFF;
@@ -449,6 +449,26 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE projects ADD COLUMN deleting INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS idx_projects_deleting ON projects(deleting, updated_at DESC);
+    """,
+    """
+    UPDATE vector_points
+    SET project_id = (
+      SELECT d.project_id FROM chunks c JOIN documents d ON d.id = c.document_id
+      WHERE CAST(c.id AS TEXT) = vector_points.id
+    )
+    WHERE project_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE CAST(c.id AS TEXT) = vector_points.id AND d.project_id IS NOT NULL
+      );
+    UPDATE vector_points
+    SET project_id = (SELECT m.project_id FROM memories m WHERE m.id = vector_points.id)
+    WHERE project_id IS NULL
+      AND EXISTS (SELECT 1 FROM memories m WHERE m.id = vector_points.id AND m.project_id IS NOT NULL);
+    UPDATE vector_points
+    SET project_id = (SELECT f.project_id FROM facts f WHERE f.id = vector_points.id)
+    WHERE project_id IS NULL
+      AND EXISTS (SELECT 1 FROM facts f WHERE f.id = vector_points.id AND f.project_id IS NOT NULL);
     """,
 )
 
@@ -603,6 +623,7 @@ def create_memory(
 ) -> dict[str, Any]:
     if not text.strip():
         raise ValueError("memory text must be non-empty")
+    metadata = clean_memory_metadata(metadata)
     now = _now()
     memory_id = f"mem_{uuid.uuid4().hex}"
     db.execute(
@@ -614,7 +635,7 @@ def create_memory(
             memory_id,
             container_tag,
             text,
-            json.dumps(metadata or {}, separators=(",", ":")),
+            json.dumps(metadata, separators=(",", ":")),
             org_id,
             document_id,
             fact_id,
@@ -629,7 +650,7 @@ def create_memory(
         memory_id=memory_id,
         event="ADD",
         new_text=text,
-        metadata=metadata or {},
+        metadata=metadata,
         version=1,
         actor_key_hash=actor_key_hash,
     )
@@ -641,7 +662,7 @@ def create_memory(
             project_id=project_id,
             event_type="memory_add",
             memory_id=memory_id,
-            data={"memory": text, "metadata": metadata or {}},
+            data={"memory": text, "metadata": metadata},
         )
     db.commit()
     return get_memory(db, memory_id)
@@ -660,6 +681,7 @@ def ensure_fact_memory(
     project_id: str | None = None,
 ) -> str:
     """Create the canonical memory projection for a fact without committing."""
+    metadata = clean_memory_metadata(metadata)
     existing = conn.execute("SELECT id FROM memories WHERE fact_id = ?", (fact_id,)).fetchone()
     if existing is not None:
         return str(existing["id"])
@@ -674,7 +696,7 @@ def ensure_fact_memory(
             memory_id,
             container_tag,
             text,
-            json.dumps(metadata or {}, separators=(",", ":")),
+            json.dumps(metadata, separators=(",", ":")),
             org_id,
             document_id,
             fact_id,
@@ -689,7 +711,7 @@ def ensure_fact_memory(
         memory_id=memory_id,
         event="ADD",
         new_text=text,
-        metadata=metadata or {},
+        metadata=metadata,
         version=1,
     )
     if project_id is not None:
@@ -700,7 +722,7 @@ def ensure_fact_memory(
             project_id=project_id,
             event_type="memory_add",
             memory_id=memory_id,
-            data={"memory": text, "metadata": metadata or {}},
+            data={"memory": text, "metadata": metadata},
         )
     return memory_id
 
@@ -823,6 +845,49 @@ def update_memory(
             event_type="memory_update",
             memory_id=memory_id,
             data={"memory": new_text, "metadata": new_metadata},
+        )
+    return get_memory(conn, memory_id)
+
+
+def categorize_memory(
+    conn: sqlite3.Connection,
+    memory_id: str,
+    *,
+    category: str,
+    actor_key_hash: str | None = None,
+) -> dict[str, Any]:
+    """Set a memory category and emit only the categorization event."""
+    if not isinstance(category, str) or not category.strip() or len(category.strip()) > 200:
+        raise ValueError("category must be a non-empty string of at most 200 characters")
+    current = get_memory(conn, memory_id)
+    if current["state"] == "deleted":
+        raise KeyError(memory_id)
+    category = category.strip()
+    metadata = clean_memory_metadata({**current["metadata"], "category": category})
+    version = int(current["version"]) + 1
+    conn.execute(
+        "UPDATE memories SET metadata = ?, version = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(metadata, separators=(",", ":")), version, _now(), memory_id),
+    )
+    append_memory_history(
+        conn,
+        memory_id=memory_id,
+        event="UPDATE",
+        version=version,
+        old_text=current["text"],
+        new_text=current["text"],
+        metadata=metadata,
+        actor_key_hash=actor_key_hash,
+    )
+    if current.get("project_id") is not None:
+        from memoratum.webhooks import record_event
+
+        record_event(
+            conn,
+            project_id=str(current["project_id"]),
+            event_type="memory_categorize",
+            memory_id=memory_id,
+            data={"category": category},
         )
     return get_memory(conn, memory_id)
 
@@ -1232,7 +1297,7 @@ def create_api_key(
     container_tag: str | None = None,
     org_id: str | None = None,
     project_id: str | None = None,
-    role: str = "OWNER",
+    role: str = "READER",
 ) -> str:
     if role not in {"OWNER", "READER"}:
         raise ValueError("role must be OWNER or READER")
