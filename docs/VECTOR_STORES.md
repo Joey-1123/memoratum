@@ -17,10 +17,16 @@ Install optional backends with `uv sync --extra qdrant`,
 expects the `vector` extension to be available in the target database.
 
 The adapters use explicit vectors and scope metadata, so the embedding provider
-remains independent from the vector backend. Deleting a document or purging a
-tag removes local vector points as part of the same lifecycle operation;
-external backends receive the corresponding scoped delete. Re-ingestion
-replaces the old chunk points before the new index is searched.
+remains independent from the vector backend. Records created before project
+scoping are backfilled automatically in the local SQLite index; external
+indexes should be rebuilt with `python scripts/reindex_vectors.py`. Project
+queries fail closed for legacy external records that still lack a project
+payload rather than exposing unscoped data to a tenant.
+
+Deleting a document or purging a tag removes local vector points as part of the
+same lifecycle operation; external backends receive the corresponding scoped
+delete. Re-ingestion replaces the old chunk points before the new index is
+searched.
 
 Configure the active index with `MEMORATUM_VECTOR_STORE` (`sqlite`, `qdrant`,
 `chroma`, `pgvector`, or `memory`), `MEMORATUM_VECTOR_STORE_ENDPOINT`,

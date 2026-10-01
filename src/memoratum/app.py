@@ -14,13 +14,14 @@ import secrets
 import sqlite3
 import threading
 import time
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from memoratum import db, jobs
+from memoratum import db, jobs, webhooks
 from memoratum import facts as fact_store
 from memoratum.auth import IdentityProvider, token_fingerprint
 from memoratum.config import Settings
@@ -29,7 +30,7 @@ from memoratum.embeddings import build_embedder as build_provider_embedder
 from memoratum.facts import count_facts, list_facts
 from memoratum.llm import build_chat
 from memoratum.rerank import build_reranker
-from memoratum.search import expand_query, merge_hits, pack_vector, search
+from memoratum.search import expand_query, merge_hits, pack_vector, search, search_memory_records
 from memoratum.vectorstore import build_vector_store as build_provider_vector_store
 
 
@@ -41,6 +42,7 @@ class DocumentIn(BaseModel):
     metadata: dict[str, Any] | None = None
     expires_at: float | None = None
     org_id: str | None = None
+    project_id: str | None = None
 
 
 class SearchIn(BaseModel):
@@ -53,6 +55,7 @@ class SearchIn(BaseModel):
     rerank: bool = False
     rewriteQuery: bool = False
     org_id: str | None = None
+    project_id: str | None = None
 
 
 def _error(
@@ -66,6 +69,8 @@ def _error(
 class KeyIn(BaseModel):
     containerTag: str | None = None
     org_id: str | None = None
+    project_id: str | None = None
+    role: Literal["OWNER", "READER"] = "READER"
 
 
 class DocPatch(BaseModel):
@@ -114,20 +119,23 @@ class FactIn(BaseModel):
     expires_at: float | None = None
     memory_type: str = "semantic"
     org_id: str | None = None
+    project_id: str | None = None
 
 
 class ImportIn(BaseModel):
     graph_dir: str = Field(min_length=1)
     tag: str = Field(min_length=1, max_length=128)
     org_id: str | None = None
+    project_id: str | None = None
 
 
 def _is_admin(authorization: str | None, settings: Settings) -> bool:
+    normalized = _compat_auth_header(authorization)
     return bool(
         settings.auth_enabled
-        and authorization
-        and authorization.startswith("Bearer ")
-        and hmac.compare_digest(authorization[len("Bearer ") :], settings.api_key)
+        and normalized
+        and normalized.startswith("Bearer ")
+        and hmac.compare_digest(normalized[len("Bearer ") :], settings.api_key)
     )
 
 
@@ -220,6 +228,7 @@ def create_app(
 ):
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
+    webhooks.set_encryption_data_dir(settings.data_dir)
     app = FastAPI(title="Memoratum")
     app.state.settings = settings
     if rate_limit_per_minute:
@@ -275,6 +284,11 @@ def create_app(
         return None
 
     _ensure_boot_key(settings)
+    bootstrap_conn = db.connect(settings.db_path)
+    try:
+        webhooks.migrate_plaintext_secrets(bootstrap_conn)
+    finally:
+        bootstrap_conn.close()
     dashboard_index = os.path.join(settings.dashboard_dir, "index.html")
     if os.path.exists(dashboard_index):
         from starlette.staticfiles import StaticFiles
@@ -301,7 +315,10 @@ def create_app(
                     "key_hash": token_fingerprint(raw),
                     "container_tag": identity.container_tag,
                     "org_id": identity.org_id,
+                    "project_id": identity.project_id,
                     "identity_subject": identity.subject,
+                    "identity_email": identity.email,
+                    "identity_role": identity.role,
                 }
         row = db.lookup_key(conn, raw)
         if row is None:
@@ -310,6 +327,8 @@ def create_app(
             "key_hash": row["key_hash"],
             "container_tag": row["container_tag"],
             "org_id": row["org_id"],
+            "project_id": row["project_id"],
+            "identity_role": row["role"],
         }
 
     def actor_from_scope(authorization: str | None, scope: dict | bool) -> tuple[str, str | None]:
@@ -327,12 +346,71 @@ def create_app(
     def actor(authorization: str | None, conn: sqlite3.Connection) -> tuple[str, str | None]:
         return actor_from_scope(authorization, scope_of(authorization, conn))
 
+    def _idempotency_scope(authorization: str | None, conn: sqlite3.Connection) -> str:
+        kind, key_hash = actor(authorization, conn)
+        return f"{kind}:{key_hash or 'anonymous'}"
+
+    def _begin_idempotency(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        key: str | None,
+        *,
+        operation: str,
+        payload: Any,
+    ) -> tuple[db.IdempotencyClaim | None, JSONResponse | None]:
+        if key is None:
+            return None, None
+        if not key.strip() or len(key) > 256:
+            return None, _error("VALIDATION_ERROR", "Idempotency-Key must be 1-256 characters", 422)
+        request_hash = db.canonical_request_hash({"operation": operation, "payload": payload})
+        claim = db.claim_idempotency(
+            conn,
+            scope=_idempotency_scope(authorization, conn),
+            key=key,
+            request_hash=request_hash,
+        )
+        if claim.status == "conflict":
+            return None, _error(
+                "IDEMPOTENCY_CONFLICT",
+                "Idempotency-Key was already used with a different request",
+                409,
+            )
+        if claim.status == "replay":
+            return claim, None
+        if claim.status != "claimed":
+            return None, _error(
+                "IDEMPOTENCY_IN_FLIGHT",
+                "a request with this Idempotency-Key is still in progress",
+                409,
+                {"Retry-After": "1"},
+            )
+        return claim, None
+
+    def _finish_idempotency(
+        conn: sqlite3.Connection,
+        claim: db.IdempotencyClaim | None,
+        *,
+        response: Any,
+        job_id: str | None = None,
+    ) -> None:
+        if claim is None or claim.status != "claimed":
+            return
+        db.complete_idempotency(
+            conn,
+            scope=claim.scope,
+            key=claim.key,
+            request_hash=claim.request_hash,
+            response=response,
+            job_id=job_id,
+        )
+
     def meter(
         authorization: str | None,
         conn: sqlite3.Connection,
         *,
         container_tag: str | None,
         org_id: str | None,
+        project_id: str | None = None,
         operation: str = "request",
         input_chars: int = 0,
         actor_override: tuple[str, str | None] | None = None,
@@ -343,6 +421,7 @@ def create_app(
             key_hash=key_hash,
             container_tag=container_tag,
             org_id=org_id,
+            project_id=project_id,
             operation=operation,
             input_chars=input_chars,
         )
@@ -354,6 +433,7 @@ def create_app(
         container_tag: str | None,
         org_id: str | None,
         action: str,
+        project_id: str | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
         outcome: str = "succeeded",
@@ -366,6 +446,7 @@ def create_app(
             actor_key_hash=key_hash,
             container_tag=container_tag,
             org_id=org_id,
+            project_id=project_id,
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
@@ -374,12 +455,13 @@ def create_app(
         )
 
     def admin_error(authorization: str | None, conn: sqlite3.Connection) -> JSONResponse | None:
-        if _is_admin(authorization, settings):
+        if not settings.auth_enabled or _is_admin(authorization, settings):
             return None
+        normalized = _compat_auth_header(authorization)
         if (
-            authorization
-            and authorization.startswith("Bearer ")
-            and db.lookup_key(conn, authorization[len("Bearer ") :]) is not None
+            normalized
+            and normalized.startswith("Bearer ")
+            and db.lookup_key(conn, normalized[len("Bearer ") :]) is not None
         ):
             return _error("FORBIDDEN", "admin key required", 403)
         return _error("UNAUTHORIZED", "authentication required", 401)
@@ -389,26 +471,49 @@ def create_app(
 
     def scope_allows(
         scope: dict | bool,
-        container_tag: str,
+        container_tag: str | None,
         org_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
         if scope is True or scope is None:
             return True
         if scope is False:
             return False
         scope_tag = scope.get("container_tag")
+        scope_org = scope.get("org_id")
+        if container_tag is None:
+            # Tagless jobs (for example project purge) are visible only to a
+            # key bound to the same project; a tag-only key must not become a
+            # control-plane key by omitting the tag constraint.
+            return scope.get("project_id") is not None and scope.get("project_id") == project_id
         if scope_tag is not None and scope_tag != container_tag:
             return False
-        scope_org = scope.get("org_id")
-        return scope_org is None or org_id == scope_org
+        if scope_org is not None and org_id != scope_org:
+            return False
+        scope_project = scope.get("project_id")
+        return scope_project is None or scope_project == project_id
 
     def may_access(
         authorization: str | None,
         conn: sqlite3.Connection,
-        container_tag: str,
+        container_tag: str | None,
         org_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
-        return scope_allows(scope_of(authorization, conn), container_tag, org_id)
+        scope = scope_of(authorization, conn)
+        if scope_allows(scope, container_tag, org_id, project_id):
+            return True
+        if container_tag is None and project_id and isinstance(scope, dict):
+            identity = scope.get("identity_email") or scope.get("identity_subject")
+            if identity and (org_id is None or scope.get("org_id") in {None, org_id}):
+                return (
+                    conn.execute(
+                        "SELECT 1 FROM project_members WHERE project_id = ? AND email = ?",
+                        (project_id, identity),
+                    ).fetchone()
+                    is not None
+                )
+        return False
 
     def authorize(
         authorization: str | None,
@@ -416,15 +521,30 @@ def create_app(
         container_tag: str,
         org_id: str | None = None,
         *,
+        project_id: str | None = None,
         operation: str = "request",
         input_chars: int = 0,
     ) -> str | None:
         if not settings.auth_enabled:
+            effective_project = project_id
+            if effective_project is not None:
+                project = conn.execute(
+                    "SELECT org_id, deleting FROM projects WHERE id = ?", (effective_project,)
+                ).fetchone()
+                if project is None:
+                    raise HTTPException(status_code=404, detail="project not found")
+                if project["deleting"]:
+                    raise HTTPException(status_code=409, detail="project deletion is in progress")
+                project_org = str(project["org_id"])
+                if org_id is not None and org_id != project_org:
+                    raise HTTPException(status_code=422, detail="project does not belong to org_id")
+                org_id = project_org
             meter(
                 authorization,
                 conn,
                 container_tag=container_tag,
                 org_id=org_id,
+                project_id=effective_project,
                 operation=operation,
                 input_chars=input_chars,
             )
@@ -435,13 +555,31 @@ def create_app(
         effective_org = org_id
         if isinstance(scope, dict) and scope.get("org_id") is not None and org_id is None:
             effective_org = scope["org_id"]
-        if not scope_allows(scope, container_tag, effective_org):
+        scope = scope_of(authorization, conn)
+        effective_project = project_id
+        if effective_project is None and isinstance(scope, dict):
+            effective_project = scope.get("project_id")
+        if effective_project is not None:
+            project = conn.execute(
+                "SELECT org_id, deleting FROM projects WHERE id = ?", (effective_project,)
+            ).fetchone()
+            if project is None:
+                raise HTTPException(status_code=404, detail="project not found")
+            if project["deleting"]:
+                raise HTTPException(status_code=409, detail="project deletion is in progress")
+            project_org = str(project["org_id"])
+            if effective_org is None:
+                effective_org = project_org
+            elif effective_org != project_org:
+                raise HTTPException(status_code=403, detail="FORBIDDEN")
+        if not scope_allows(scope, container_tag, effective_org, effective_project):
             raise HTTPException(status_code=403, detail="FORBIDDEN")
         meter(
             authorization,
             conn,
             container_tag=container_tag,
             org_id=effective_org,
+            project_id=effective_project,
             operation=operation,
             input_chars=input_chars,
             actor_override=actor_from_scope(authorization, scope),
@@ -451,13 +589,50 @@ def create_app(
     def _authorized(authorization: str | None, conn: sqlite3.Connection) -> bool:
         return credential_ok(authorization, conn)
 
+    def effective_project(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        requested: str | None = None,
+        *,
+        requested_org_id: str | None = None,
+    ) -> str | None:
+        """Resolve and validate a project context for native routes.
+
+        A project-scoped key always wins over an omitted body value. An explicit
+        value from an administrative caller is accepted only when the project
+        exists and belongs to the resolved organization.
+        """
+        scope = scope_of(_compat_auth_header(authorization), conn)
+        bound = scope.get("project_id") if isinstance(scope, dict) else None
+        project_id = str(bound) if bound else requested
+        if project_id is None:
+            return None
+        row = conn.execute(
+            "SELECT id, org_id, deleting FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        if row["deleting"]:
+            raise HTTPException(status_code=409, detail="project deletion is in progress")
+        if bound and str(bound) != project_id:
+            raise HTTPException(status_code=403, detail="FORBIDDEN")
+        if requested_org_id is not None and str(row["org_id"]) != requested_org_id:
+            raise HTTPException(status_code=422, detail="project does not belong to org_id")
+        return str(row["id"])
+
     def _may_access(
         authorization: str | None,
         conn: sqlite3.Connection,
         container_tag: str,
         org_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
-        return may_access(authorization, conn, container_tag, org_id)
+        if not may_access(authorization, conn, container_tag, org_id, project_id):
+            return False
+        scope = scope_of(authorization, conn)
+        if isinstance(scope, dict) and scope.get("project_id") is not None:
+            return scope["project_id"] == project_id
+        return True
 
     def _job_tag(conn: sqlite3.Connection, job: dict[str, Any]) -> str | None:
         payload = job.get("payload") or {}
@@ -465,7 +640,7 @@ def create_app(
             try:
                 return db.get_document(conn, payload["document_id"])["container_tag"]
             except KeyError:
-                return None
+                pass
         tag = payload.get("container_tag")
         return tag if isinstance(tag, str) else None
 
@@ -473,11 +648,25 @@ def create_app(
         payload = job.get("payload") or {}
         if payload.get("document_id"):
             try:
-                return db.get_document(conn, payload["document_id"]).get("org_id")
+                value = db.get_document(conn, payload["document_id"]).get("org_id")
+                if isinstance(value, str):
+                    return value
             except KeyError:
-                return None
+                pass
         org_id = payload.get("org_id")
         return org_id if isinstance(org_id, str) else None
+
+    def _job_project(conn: sqlite3.Connection, job: dict[str, Any]) -> str | None:
+        payload = job.get("payload") or {}
+        if payload.get("document_id"):
+            try:
+                value = db.get_document(conn, payload["document_id"]).get("project_id")
+                if isinstance(value, str):
+                    return value
+            except KeyError:
+                pass
+        project_id = payload.get("project_id")
+        return project_id if isinstance(project_id, str) else None
 
     @app.exception_handler(HTTPException)
     async def _http_errors(_req: Request, exc: HTTPException):
@@ -491,11 +680,16 @@ def create_app(
     def add_document(
         doc: DocumentIn, conn: DbConn, authorization: str | None = Header(default=None)
     ):
+        project_id = effective_project(authorization, conn, doc.project_id)
+        denied = require_project_write(authorization, conn, project_id)
+        if denied is not None:
+            return denied
         org_id = authorize(
             authorization,
             conn,
             doc.containerTag,
             doc.org_id,
+            project_id=project_id,
             operation="document",
             input_chars=len(doc.content),
         )
@@ -507,6 +701,7 @@ def create_app(
             metadata=doc.metadata,
             expires_at=doc.expires_at,
             org_id=org_id,
+            project_id=project_id,
         )
         job_id = jobs.enqueue(
             conn,
@@ -516,6 +711,7 @@ def create_app(
                 "dreaming": doc.dreaming,
                 "container_tag": doc.containerTag,
                 "org_id": org_id,
+                "project_id": project_id,
             },
         )
         audit(
@@ -523,6 +719,7 @@ def create_app(
             conn,
             container_tag=doc.containerTag,
             org_id=org_id,
+            project_id=project_id,
             action="document.created",
             resource_type="document",
             resource_id=created["id"],
@@ -530,9 +727,83 @@ def create_app(
         )
         return {"id": created["id"], "status": "queued", "job_id": job_id}
 
+    @app.post("/v4/memories", status_code=201)
+    def create_native_memory(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        text = body.get("text")
+        container_tag = body.get("containerTag", body.get("container_tag", "default"))
+        if not isinstance(text, str) or not text.strip():
+            return _error("VALIDATION_ERROR", "text is required", 422)
+        if not isinstance(container_tag, str) or not container_tag.strip():
+            return _error("VALIDATION_ERROR", "containerTag must be a non-empty string", 422)
+        metadata = body.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            return _error("VALIDATION_ERROR", "metadata must be an object", 422)
+        auth = _compat_auth_header(authorization)
+        project_id = effective_project(auth, conn, body.get("project_id"))
+        denied = require_project_write(auth, conn, project_id)
+        if denied is not None:
+            return denied
+        org_id = authorize(
+            auth,
+            conn,
+            container_tag,
+            body.get("org_id"),
+            project_id=project_id,
+            operation="document",
+            input_chars=len(text),
+        )
+        expires_at = body.get("expires_at")
+        if "expiration_date" in body:
+            expires_at = _expiration_timestamp(body["expiration_date"])
+        try:
+            memory = db.create_memory(
+                conn,
+                text=text,
+                container_tag=container_tag,
+                metadata=metadata,
+                org_id=org_id,
+                expires_at=expires_at,
+                project_id=project_id,
+            )
+        except ValueError as exc:
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        job_id = jobs.enqueue(
+            conn,
+            kind="reindex_memory",
+            payload={
+                "memory_id": memory["id"],
+                "container_tag": memory["container_tag"],
+                "org_id": memory.get("org_id"),
+                "project_id": memory.get("project_id"),
+            },
+        )
+        audit(
+            auth,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
+            action="memory.created",
+            resource_type="memory",
+            resource_id=memory["id"],
+            metadata={"job_id": job_id},
+        )
+        response = _memory_response(memory)
+        response["job_id"] = job_id
+        return response
+
     @app.post("/v3/memories/add/")
     @app.post("/v1/memories/")
-    def mem0_add(body: Mem0AddIn, conn: DbConn, authorization: str | None = Header(default=None)):
+    def mem0_add(
+        body: Mem0AddIn,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
         values = body.model_dump()
         if body.containerTag is not None and any(
             values.get(key) is not None for key in ("user_id", "agent_id", "app_id", "run_id")
@@ -558,42 +829,90 @@ def create_app(
                 422,
             )
         auth = _compat_auth_header(authorization)
+        project_id = effective_project(auth, conn, None)
+        denied = require_project_write(auth, conn, project_id)
+        if denied is not None:
+            return denied
+        if project_id is not None:
+            project = conn.execute(
+                "SELECT org_id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if project is None:
+                return _error("NOT_FOUND", "project not found", 404)
+            org_id = str(project["org_id"])
+        else:
+            org_id = None
         org_id = authorize(
             auth,
             conn,
             tag,
+            org_id,
+            project_id=project_id,
             operation="document",
             input_chars=sum(len(m.content) for m in body.messages),
         )
-        content = "\n".join(f"{message.role}: {message.content}" for message in body.messages)
-        document = db.create_document(
-            conn,
-            container_tag=tag,
-            content=content,
-            metadata=body.metadata,
-            org_id=org_id,
-        )
-        job_id = jobs.enqueue(
-            conn,
-            kind="ingest",
-            payload={
-                "document_id": document["id"],
-                "dreaming": "dynamic",
-                "container_tag": tag,
-                "org_id": org_id,
-            },
-        )
-        audit(
+        claim, claim_error = _begin_idempotency(
             auth,
             conn,
-            container_tag=tag,
-            org_id=org_id,
-            action="mem0.add",
-            resource_type="document",
-            resource_id=document["id"],
-            metadata={"job_id": job_id, "infer": body.infer},
+            idempotency_key,
+            operation="mem0.add",
+            payload=values,
         )
-        return {"event_id": job_id, "status": "PENDING"}
+        if claim_error is not None:
+            return claim_error
+        if claim is not None and claim.status == "replay":
+            return claim.response
+        try:
+            content = "\n".join(f"{message.role}: {message.content}" for message in body.messages)
+            document = db.create_document(
+                conn,
+                container_tag=tag,
+                content=content,
+                metadata=body.metadata,
+                org_id=org_id,
+                project_id=project_id,
+            )
+            if not body.infer or app.state.llm is None:
+                for message in body.messages:
+                    if message.role != "system":
+                        db.ensure_input_memory(
+                            conn,
+                            text=message.content,
+                            container_tag=tag,
+                            metadata=body.metadata,
+                            org_id=org_id,
+                            document_id=document["id"],
+                            project_id=project_id,
+                        )
+            job_id = jobs.enqueue(
+                conn,
+                kind="ingest",
+                payload={
+                    "document_id": document["id"],
+                    "dreaming": "dynamic",
+                    "container_tag": tag,
+                    "org_id": org_id,
+                    "project_id": project_id,
+                },
+            )
+            audit(
+                auth,
+                conn,
+                container_tag=tag,
+                org_id=org_id,
+                project_id=project_id,
+                action="mem0.add",
+                resource_type="document",
+                resource_id=document["id"],
+                metadata={"job_id": job_id, "infer": body.infer},
+            )
+            response = {"event_id": job_id, "status": "PENDING"}
+            _finish_idempotency(conn, claim, response=response, job_id=job_id)
+            return response
+        except Exception:
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            raise
 
     @app.get("/v1/event/{event_id}/")
     def mem0_event(event_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -605,13 +924,15 @@ def create_app(
             return _error("UNAUTHORIZED", "authentication required", 401)
         tag = _job_tag(conn, job)
         org_id = _job_org(conn, job)
-        if settings.auth_enabled and (tag is None or not may_access(auth, conn, tag, org_id)):
+        project_id = _job_project(conn, job)
+        if settings.auth_enabled and not may_access(auth, conn, tag, org_id, project_id):
             return _error("NOT_FOUND", "event not found", 404)
         status = {
             "queued": "PENDING",
             "running": "PENDING",
             "done": "SUCCEEDED",
             "failed": "FAILED",
+            "cancelled": "FAILED",
         }.get(job["status"], "PENDING")
         return {"event_id": event_id, "status": status, "results": job.get("result", {})}
 
@@ -628,32 +949,1405 @@ def create_app(
                 422,
             )
         auth = _compat_auth_header(authorization)
-        org_id = authorize(auth, conn, tag, operation="search", input_chars=len(body.query))
-        vector_store = vector_store_for(conn)
-        hits = search(
+        scope = scope_of(auth, conn)
+        project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        org_id = authorize(
+            auth,
+            conn,
+            tag,
+            project_id=project_id,
+            operation="search",
+            input_chars=len(body.query),
+        )
+        hits = search_memory_records(
             conn,
             app.state.embedder,
             body.query,
             container_tag=tag,
             org_id=org_id,
+            project_id=project_id,
             limit=body.top_k,
             threshold=body.threshold,
-            search_mode="hybrid",
-            rerank=body.rerank,
-            reranker=app.state.reranker,
-            vector_store=vector_store,
+            filters=body.filters,
+            show_expired=body.show_expired,
         )
         return {
             "results": [
                 {
                     "id": hit["id"],
-                    "memory": hit.get("memory", hit.get("chunk", "")),
-                    "score": hit.get("similarity", 0.0),
-                    "metadata": {},
+                    "memory": hit["memory"],
+                    "score": hit["similarity"],
+                    "metadata": hit["metadata"],
                 }
                 for hit in hits
             ]
         }
+
+    def _memory_response(memory: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": memory["id"],
+            "memory": memory["text"],
+            "metadata": memory["metadata"],
+            "created_at": memory["created_at"],
+            "updated_at": memory["updated_at"],
+            "version": memory["version"],
+            "expiration_date": (
+                time.strftime("%Y-%m-%d", time.gmtime(memory["expires_at"]))
+                if memory.get("expires_at") is not None
+                else None
+            ),
+        }
+
+    def _memory_history_response(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "memory_id": row["memory_id"],
+            "old_memory": row["old_text"],
+            "new_memory": row["new_text"],
+            "event": row["event"],
+            "metadata": row["metadata"],
+            "version": row["version"],
+            "created_at": row["created_at"],
+            "updated_at": row.get("updated_at") or row["created_at"],
+            **(
+                {"content_hash": row["content_hash"]} if row.get("content_hash") is not None else {}
+            ),
+        }
+
+    def _validate_batch_items(items: Any, *, update: bool) -> JSONResponse | None:
+        if not isinstance(items, list) or not items or len(items) > 1000:
+            return _error("VALIDATION_ERROR", "memories must contain 1-1000 items", 422)
+        allowed = {"memory_id", "text", "metadata"} if update else {"memory_id"}
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                return _error("VALIDATION_ERROR", f"memories[{index}] must be an object", 422)
+            unknown = set(item) - allowed
+            if unknown:
+                return _error(
+                    "VALIDATION_ERROR",
+                    f"memories[{index}] contains unsupported fields",
+                    422,
+                )
+            memory_id = item.get("memory_id")
+            if not isinstance(memory_id, str) or not memory_id.strip():
+                return _error("VALIDATION_ERROR", f"memories[{index}].memory_id is required", 422)
+            if update:
+                if "text" not in item and "metadata" not in item:
+                    return _error(
+                        "VALIDATION_ERROR",
+                        f"memories[{index}] must include text or metadata",
+                        422,
+                    )
+                if "text" in item and (
+                    not isinstance(item["text"], str) or not item["text"].strip()
+                ):
+                    return _error(
+                        "VALIDATION_ERROR", f"memories[{index}].text must be non-empty", 422
+                    )
+                if "metadata" in item and not isinstance(item["metadata"], dict):
+                    return _error(
+                        "VALIDATION_ERROR", f"memories[{index}].metadata must be an object", 422
+                    )
+        return None
+
+    def _validate_bulk_operations(
+        operations: Any,
+    ) -> tuple[list[dict[str, Any]] | None, JSONResponse | None]:
+        if not isinstance(operations, list) or not operations or len(operations) > 1000:
+            return None, _error("VALIDATION_ERROR", "operations must contain 1-1000 items", 422)
+        allowed = {"memory_id", "action", "text", "metadata"}
+        seen: set[str] = set()
+        normalized: list[dict[str, Any]] = []
+        for index, item in enumerate(operations):
+            if not isinstance(item, dict):
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}] must be an object", 422
+                )
+            unknown = set(item) - allowed
+            if unknown:
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}] contains unsupported fields", 422
+                )
+            memory_id = item.get("memory_id")
+            action = item.get("action")
+            if not isinstance(memory_id, str) or not memory_id.strip():
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}].memory_id is required", 422
+                )
+            if action not in {"update", "delete"}:
+                return None, _error(
+                    "VALIDATION_ERROR", f"operations[{index}].action must be update or delete", 422
+                )
+            if memory_id in seen:
+                return None, _error("VALIDATION_ERROR", "memory_id values must be unique", 422)
+            seen.add(memory_id)
+            if action == "update":
+                if "text" not in item and "metadata" not in item:
+                    return None, _error(
+                        "VALIDATION_ERROR",
+                        f"operations[{index}] must include text or metadata",
+                        422,
+                    )
+                if "text" in item and (
+                    not isinstance(item["text"], str) or not item["text"].strip()
+                ):
+                    return None, _error(
+                        "VALIDATION_ERROR", f"operations[{index}].text must be non-empty", 422
+                    )
+                if "metadata" in item and not isinstance(item["metadata"], dict):
+                    return None, _error(
+                        "VALIDATION_ERROR", f"operations[{index}].metadata must be an object", 422
+                    )
+            normalized.append(
+                {
+                    "memory_id": memory_id,
+                    "action": action,
+                    **({"text": item["text"]} if "text" in item else {}),
+                    **({"metadata": item["metadata"]} if "metadata" in item else {}),
+                }
+            )
+        return normalized, None
+
+    def _expiration_timestamp(value: Any) -> float | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("expiration_date must be YYYY-MM-DD")
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC).timestamp() + 86399
+        except ValueError as exc:
+            raise ValueError("expiration_date must be YYYY-MM-DD") from exc
+
+    def _event_timestamp(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                try:
+                    return datetime.fromisoformat(value).timestamp()
+                except ValueError as exc:
+                    raise ValueError(
+                        "timestamp must be a Unix timestamp or ISO-8601 string"
+                    ) from exc
+        raise ValueError("timestamp must be a Unix timestamp or ISO-8601 string")
+
+    def _get_memory_or_error(
+        memory_id: str,
+        conn: sqlite3.Connection,
+        authorization: str | None,
+        *,
+        include_deleted: bool = False,
+    ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+        memory = db.resolve_memory_reference(conn, memory_id)
+        if memory is None:
+            return None, _error("NOT_FOUND", "memory not found", 404)
+        if memory["state"] == "deleted" and not include_deleted:
+            return None, _error("NOT_FOUND", "memory not found", 404)
+        if settings.auth_enabled:
+            auth = _compat_auth_header(authorization)
+            if not credential_ok(auth, conn):
+                return None, _error("UNAUTHORIZED", "authentication required", 401)
+            if not may_access(
+                auth,
+                conn,
+                memory["container_tag"],
+                memory.get("org_id"),
+                memory.get("project_id"),
+            ):
+                return None, _error("NOT_FOUND", "memory not found", 404)
+        return memory, None
+
+    @app.post("/v4/memories/bulk", status_code=202)
+    @app.post("/v4/memories/batch", status_code=202)
+    @app.post("/v4/jobs/bulk", status_code=202)
+    def native_bulk_memories(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        operations = body.get("operations", body.get("items"))
+        normalized, validation_error = _validate_bulk_operations(operations)
+        if validation_error is not None:
+            return validation_error
+        assert normalized is not None
+        auth = _compat_auth_header(authorization)
+        project_id = effective_project(auth, conn, body.get("project_id"))
+        denied = require_project_write(auth, conn, project_id)
+        if denied is not None:
+            return denied
+        container_tag = body.get("containerTag", body.get("container_tag", "default"))
+        if not isinstance(container_tag, str) or not container_tag.strip():
+            return _error("VALIDATION_ERROR", "containerTag must be a non-empty string", 422)
+        org_id = authorize(
+            auth,
+            conn,
+            container_tag,
+            body.get("org_id"),
+            project_id=project_id,
+            operation="request",
+        )
+        resolved: list[dict[str, Any]] = []
+        for operation in normalized:
+            memory, error = _get_memory_or_error(operation["memory_id"], conn, auth)
+            if error is not None:
+                return error
+            assert memory is not None
+            if memory["container_tag"] != container_tag:
+                return _error("NOT_FOUND", "memory not found", 404)
+            if project_id is not None and memory.get("project_id") != project_id:
+                return _error("NOT_FOUND", "memory not found", 404)
+            if org_id is not None and memory.get("org_id") != org_id:
+                return _error("NOT_FOUND", "memory not found", 404)
+            resolved.append({**operation, "memory_id": str(memory["id"])})
+        job_id = jobs.enqueue(
+            conn,
+            kind="bulk_memories",
+            payload={
+                "operations": resolved,
+                "container_tag": container_tag,
+                "org_id": org_id,
+                "project_id": project_id,
+                "actor_key_hash": actor(auth, conn)[1],
+            },
+        )
+        audit(
+            auth,
+            conn,
+            container_tag=container_tag,
+            org_id=org_id,
+            project_id=project_id,
+            action="memory.bulk_queued",
+            resource_type="job",
+            resource_id=job_id,
+            metadata={"total": len(resolved)},
+        )
+        return {"job_id": job_id, "status": "PENDING", "total": len(resolved)}
+
+    @app.put("/v1/batch/")
+    def mem0_batch_update(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        items = body.get("memories") if isinstance(body, dict) else None
+        validation = _validate_batch_items(items, update=True)
+        if validation is not None:
+            return validation
+        assert isinstance(items, list)
+        auth = _compat_auth_header(authorization)
+        resolved: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        seen: set[str] = set()
+        for item in items:
+            memory_id = str(item["memory_id"])
+            if memory_id in seen:
+                return _error("VALIDATION_ERROR", "duplicate memory_id in batch", 422)
+            seen.add(memory_id)
+            memory, error = _get_memory_or_error(memory_id, conn, authorization)
+            if error is not None:
+                return error
+            assert memory is not None
+            resolved.append((item, memory))
+        for _item, memory in resolved:
+            denied = require_project_write(auth, conn, memory.get("project_id"))
+            if denied is not None:
+                return denied
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for item, memory in resolved:
+                db.update_memory(
+                    conn,
+                    str(memory["id"]),
+                    text=item.get("text"),
+                    metadata=item.get("metadata"),
+                    actor_key_hash=actor(auth, conn)[1],
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        batch_project = (
+            str(resolved[0][1]["project_id"])
+            if resolved
+            and resolved[0][1].get("project_id")
+            and all(
+                memory.get("project_id") == resolved[0][1].get("project_id")
+                for _, memory in resolved
+            )
+            else None
+        )
+        for item, memory in resolved:
+            job_id = jobs.enqueue(
+                conn,
+                kind="reindex_memory",
+                payload={
+                    "memory_id": str(memory["id"]),
+                    "container_tag": memory["container_tag"],
+                    "org_id": memory.get("org_id"),
+                    "project_id": memory.get("project_id"),
+                },
+            )
+            audit(
+                auth,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
+                action="memory.batch_updated",
+                resource_type="memory",
+                resource_id=str(memory["id"]),
+                metadata={"job_id": job_id},
+            )
+        meter(
+            auth,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=batch_project,
+            operation="request",
+        )
+        return {"message": f"Successfully updated {len(resolved)} memories"}
+
+    @app.delete("/v1/batch/")
+    def mem0_batch_delete(
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        items = body.get("memories") if isinstance(body, dict) else None
+        validation = _validate_batch_items(items, update=False)
+        if validation is not None:
+            return validation
+        assert isinstance(items, list)
+        auth = _compat_auth_header(authorization)
+        resolved: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            memory_id = str(item["memory_id"])
+            if memory_id in seen:
+                return _error("VALIDATION_ERROR", "duplicate memory_id in batch", 422)
+            seen.add(memory_id)
+            memory, error = _get_memory_or_error(memory_id, conn, authorization)
+            if error is not None:
+                return error
+            assert memory is not None
+            resolved.append(memory)
+        for memory in resolved:
+            denied = require_project_write(auth, conn, memory.get("project_id"))
+            if denied is not None:
+                return denied
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            deleted_ids: list[str] = []
+            for memory in resolved:
+                result = db.soft_delete_memory(
+                    conn, memory["id"], actor_key_hash=actor(auth, conn)[1]
+                )
+                if result["deleted"]:
+                    deleted_ids.append(memory["id"])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if deleted_ids:
+            store = vector_store_for(conn)
+            if store is not None:
+                store.delete(ids=deleted_ids)
+        batch_project = (
+            str(resolved[0]["project_id"])
+            if resolved
+            and resolved[0].get("project_id")
+            and all(
+                memory.get("project_id") == resolved[0].get("project_id") for memory in resolved
+            )
+            else None
+        )
+        for memory in resolved:
+            audit(
+                auth,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
+                action="memory.batch_deleted",
+                resource_type="memory",
+                resource_id=memory["id"],
+            )
+        meter(
+            auth,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=batch_project,
+            operation="request",
+        )
+        return {"message": f"Successfully deleted {len(deleted_ids)} memories"}
+
+    @app.delete("/v4/memories")
+    @app.delete("/v1/memories/")
+    def mem0_delete_all(
+        conn: DbConn,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+        run_id: str | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        filters = {
+            key: value
+            for key, value in (
+                ("user_id", user_id),
+                ("agent_id", agent_id),
+                ("app_id", app_id),
+                ("run_id", run_id),
+            )
+            if value is not None
+        }
+        if not filters:
+            return _error(
+                "VALIDATION_ERROR",
+                "at least one user_id, agent_id, app_id, or run_id filter is required",
+                422,
+            )
+        wildcard = any(value == "*" for value in filters.values())
+        auth = _compat_auth_header(authorization)
+        scope = scope_of(auth, conn)
+        if wildcard and settings.auth_enabled and not _is_admin(auth, settings):
+            return _error("FORBIDDEN", "an administrative key is required for wildcard delete", 403)
+        exact_tag = _mem0_entity_tag(filters) if not wildcard else None
+        org_id: str | None = None
+        scope_project = scope.get("project_id") if isinstance(scope, dict) else None
+        if exact_tag is not None:
+            org_id = authorize(
+                auth,
+                conn,
+                exact_tag,
+                project_id=scope_project,
+                operation="request",
+            )
+        elif settings.auth_enabled:
+            scope = scope_of(auth, conn)
+            if scope is False:
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            if isinstance(scope, dict):
+                org_id = scope.get("org_id")
+        payload: dict[str, Any] = {"filters": filters, "org_id": org_id, "project_id": None}
+        if isinstance(scope, dict):
+            payload["project_id"] = scope.get("project_id")
+        denied = require_project_write(auth, conn, payload["project_id"])
+        if denied is not None:
+            return denied
+        if exact_tag is not None:
+            payload["container_tag"] = exact_tag
+        event_id = jobs.enqueue(conn, kind="delete_all_memories", payload=payload)
+        audit(
+            auth,
+            conn,
+            container_tag=exact_tag,
+            org_id=org_id,
+            project_id=payload.get("project_id"),
+            action="memory.delete_all_queued",
+            resource_type="memory_scope",
+            resource_id=None,
+            metadata={"event_id": event_id, "filters": filters},
+        )
+        return {
+            "message": "Delete in progress. This may take some time.",
+            "event_id": event_id,
+        }
+
+    @app.get("/v1/ping/")
+    def mem0_ping(conn: DbConn, authorization: str | None = Header(default=None)):
+        if settings.auth_enabled and not credential_ok(authorization, conn):
+            return _error("UNAUTHORIZED", "authentication required", 401)
+        scope = scope_of(authorization, conn)
+        if isinstance(scope, dict) and scope.get("project_id"):
+            project_id = str(scope["project_id"])
+            row = conn.execute(
+                "SELECT id, org_id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if row is None:
+                return _error("NOT_FOUND", "project not found", 404)
+            org_id = str(row["org_id"])
+        else:
+            org_id, project_id = "local-org", "local-project"
+        meter(authorization, conn, container_tag=None, org_id=org_id, project_id=project_id)
+        return {
+            "status": "ok",
+            "user_email": None,
+            "org_id": org_id,
+            "project_id": project_id,
+        }
+
+    def _project_scope_error(
+        authorization: str | None,
+        conn: sqlite3.Connection,
+        org_id: str,
+        project_id: str,
+        *,
+        owner_only: bool = False,
+    ) -> JSONResponse | None:
+        """Authorize project management without treating a tag key as an admin key."""
+        if not settings.auth_enabled or _is_admin(authorization, settings):
+            return None
+        scope = scope_of(_compat_auth_header(authorization), conn)
+        if not isinstance(scope, dict):
+            return _error("UNAUTHORIZED", "authentication required", 401)
+        scope_org = scope.get("org_id")
+        if scope_org is not None and scope_org != org_id:
+            return _error("NOT_FOUND", "project not found", 404)
+        scope_project = scope.get("project_id")
+        identity = scope.get("identity_email") or scope.get("identity_subject")
+        if identity:
+            # An external identity may omit project_id and be authorized through
+            # the local membership table. A token role claim is never a substitute
+            # for that membership record.
+            if scope_project is not None and scope_project != project_id:
+                return _error("NOT_FOUND", "project not found", 404)
+            member = conn.execute(
+                "SELECT role FROM project_members WHERE project_id = ? AND email = ?",
+                (project_id, identity),
+            ).fetchone()
+            if member is None:
+                return _error("FORBIDDEN", "not a project member", 403)
+            role = str(member["role"])
+        else:
+            # Local API keys must be explicitly bound to this project. A
+            # container-tag-only key is not an organization or project admin.
+            if scope_project != project_id:
+                return _error("FORBIDDEN", "project-scoped key required", 403)
+            role = scope.get("identity_role")
+        if role not in {"OWNER", "READER"}:
+            return _error("UNAUTHORIZED", "verified project identity required", 401)
+        if owner_only and role != "OWNER":
+            return _error("FORBIDDEN", "project owner role required", 403)
+        return None
+
+    def _project_response(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "org_id": row["org_id"],
+            "name": row["name"],
+            "description": row["description"],
+            "custom_instructions": row["custom_instructions"],
+            "custom_categories": json.loads(row["custom_categories"] or "[]"),
+            "agent_custom_instructions": row["agent_custom_instructions"],
+            "multilingual": bool(row["multilingual"]),
+            "decay": bool(row["decay"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def require_project_write(
+        authorization: str | None, conn: sqlite3.Connection, project_id: str | None
+    ) -> JSONResponse | None:
+        """Require a verified project owner for data mutations."""
+        if project_id is None:
+            return None
+        row = conn.execute("SELECT org_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        return _project_scope_error(
+            authorization, conn, str(row["org_id"]), project_id, owner_only=True
+        )
+
+    def _webhook_project(authorization: str | None, conn: sqlite3.Connection, project_id: str):
+        row = conn.execute("SELECT org_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        return _project_scope_error(
+            authorization, conn, str(row["org_id"]), project_id, owner_only=True
+        )
+
+    @app.post("/api/v1/webhooks/projects/{project_id}/", status_code=201)
+    def create_webhook_route(
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        try:
+            created = webhooks.create_webhook(
+                conn,
+                project_id=project_id,
+                name=body.get("name", ""),
+                url=body.get("url", ""),
+                event_types=body.get("event_types", []),
+                allow_private=settings.webhook_allow_private_targets,
+            )
+        except (ValueError, webhooks.UnsafeWebhookTarget) as exc:
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=project_id,
+            action="webhook.created",
+            resource_type="webhook",
+            resource_id=created["id"],
+            metadata={"project_id": project_id, "event_types": created["event_types"]},
+        )
+        return created
+
+    @app.get("/api/v1/webhooks/projects/{project_id}/")
+    def list_webhooks_route(
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        return webhooks.list_webhooks(conn, project_id=project_id)
+
+    @app.get("/api/v1/webhooks/{webhook_id}/")
+    def get_webhook_route(
+        webhook_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        denied = _webhook_project(authorization, conn, str(row["project_id"]))
+        if denied is not None:
+            return denied
+        result = webhooks.get_webhook(conn, webhook_id)
+        assert result is not None
+        return result
+
+    @app.put("/api/v1/webhooks/{webhook_id}/")
+    def update_webhook_route(
+        webhook_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        project_id = str(row["project_id"])
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        try:
+            result = webhooks.update_webhook(
+                conn,
+                webhook_id=webhook_id,
+                project_id=project_id,
+                name=body.get("name"),
+                url=body.get("url"),
+                event_types=body.get("event_types"),
+                is_active=body.get("is_active"),
+                allow_private=settings.webhook_allow_private_targets,
+            )
+        except (ValueError, webhooks.UnsafeWebhookTarget) as exc:
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        if result is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=project_id,
+            action="webhook.updated",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            metadata={"project_id": project_id},
+        )
+        return {"message": "Webhook updated successfully", "webhook": result}
+
+    @app.delete("/api/v1/webhooks/{webhook_id}/")
+    def delete_webhook_route(
+        webhook_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        project_id = str(row["project_id"])
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        deleted = webhooks.delete_webhook(conn, webhook_id=webhook_id, project_id=project_id)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=project_id,
+            action="webhook.deleted",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            metadata={"project_id": project_id},
+        )
+        return {"message": "Webhook deleted successfully", "deleted": deleted}
+
+    @app.post("/v4/webhooks/{webhook_id}/rotate-secret")
+    def rotate_webhook_secret_route(
+        webhook_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute("SELECT project_id FROM webhooks WHERE id = ?", (webhook_id,)).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        project_id = str(row["project_id"])
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        secret = webhooks.rotate_secret(conn, webhook_id=webhook_id, project_id=project_id)
+        if secret is None:
+            return _error("NOT_FOUND", "webhook not found", 404)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=project_id,
+            action="webhook.secret_rotated",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            metadata={"project_id": project_id},
+        )
+        return {"id": webhook_id, "secret": secret}
+
+    @app.get("/v4/projects/{project_id}/webhooks/deliveries")
+    def list_webhook_deliveries_route(
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        denied = _webhook_project(authorization, conn, project_id)
+        if denied is not None:
+            return denied
+        return {
+            "deliveries": webhooks.list_deliveries(
+                conn,
+                project_id=project_id,
+                limit=max(1, min(limit, 500)),
+                offset=max(0, offset),
+            )
+        }
+
+    @app.post("/v4/webhooks/deliveries/{delivery_id}/replay")
+    def replay_webhook_delivery_route(
+        delivery_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        row = conn.execute(
+            "SELECT project_id FROM webhook_deliveries WHERE id = ?", (delivery_id,)
+        ).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "delivery not found", 404)
+        denied = _webhook_project(authorization, conn, str(row["project_id"]))
+        if denied is not None:
+            return denied
+        result = webhooks.replay_delivery(conn, delivery_id)
+        if result is None:
+            return _error("CONFLICT", "delivery is not replayable", 409)
+        return result
+
+    @app.get("/api/v1/orgs/organizations/{org_id}/projects/", status_code=200)
+    def list_projects_route(
+        org_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            scope = scope_of(_compat_auth_header(authorization), conn)
+            if not isinstance(scope, dict) or not scope.get("project_id"):
+                return denied
+            rows = conn.execute(
+                "SELECT * FROM projects WHERE org_id = ? AND id = ? ORDER BY updated_at DESC",
+                (org_id, scope.get("project_id")),
+            ).fetchall()
+            return [_project_response(row) for row in rows]
+        rows = conn.execute(
+            "SELECT * FROM projects WHERE org_id = ? ORDER BY updated_at DESC", (org_id,)
+        ).fetchall()
+        return [_project_response(row) for row in rows]
+
+    @app.delete("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/", status_code=202)
+    def delete_project(
+        org_id: str,
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _project_scope_error(authorization, conn, org_id, project_id, owner_only=True)
+        if denied is not None:
+            return denied
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+        ).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        if project_id == "local-project":
+            return _error("CONFLICT", "the default project cannot be deleted", 409)
+        if int(row["deleting"] or 0):
+            for existing in conn.execute(
+                "SELECT id, payload FROM jobs WHERE kind = 'purge_project'"
+                " AND status IN ('queued', 'running') ORDER BY created_at"
+            ).fetchall():
+                payload = json.loads(existing["payload"] or "{}")
+                if payload.get("project_id") == project_id:
+                    return {
+                        "job_id": str(existing["id"]),
+                        "status": "PENDING",
+                        "project_id": project_id,
+                    }
+            return _error("CONFLICT", "project deletion is already in progress", 409)
+        job_id = jobs.enqueue(
+            conn,
+            kind="purge_project",
+            payload={"project_id": project_id, "org_id": org_id},
+            commit=False,
+        )
+        changed = conn.execute(
+            "UPDATE projects SET deleting = 1, updated_at = ? WHERE id = ? AND deleting = 0",
+            (time.time(), project_id),
+        ).rowcount
+        if changed != 1:
+            conn.rollback()
+            return _error("CONFLICT", "project deletion is already in progress", 409)
+        conn.commit()
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.delete_queued",
+            resource_type="project",
+            resource_id=project_id,
+            metadata={"job_id": job_id},
+        )
+        return {"job_id": job_id, "status": "PENDING", "project_id": project_id}
+
+    @app.post("/api/v1/orgs/organizations/{org_id}/projects/", status_code=201)
+    def create_project(
+        org_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        if not isinstance(body.get("name"), str) or not body["name"].strip():
+            return _error("VALIDATION_ERROR", "name is required", 422)
+        now = time.time()
+        project_id = "project-" + secrets.token_urlsafe(12)
+        conn.execute(
+            "INSERT INTO projects(id, org_id, name, description, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, org_id, body["name"].strip(), body.get("description"), now, now),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        assert row is not None
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.created",
+            resource_id=project_id,
+        )
+        return _project_response(row)
+
+    @app.get("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/")
+    def get_project(
+        org_id: str,
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _project_scope_error(authorization, conn, org_id, project_id)
+        if denied is not None:
+            return denied
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+        ).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        meter(authorization, conn, container_tag=None, org_id=org_id, project_id=project_id)
+        return _project_response(row)
+
+    @app.patch("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/")
+    def update_project(
+        org_id: str,
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _project_scope_error(authorization, conn, org_id, project_id, owner_only=True)
+        if denied is not None:
+            return denied
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+        ).fetchone()
+        if row is None:
+            return _error("NOT_FOUND", "project not found", 404)
+        allowed = {
+            "name",
+            "description",
+            "custom_instructions",
+            "custom_categories",
+            "agent_custom_instructions",
+            "multilingual",
+            "decay",
+            # The official SDK adds the resolved routing identifiers to PATCH
+            # bodies. Accept them only when they agree with the path.
+            "org_id",
+            "project_id",
+        }
+        if not body or set(body) - allowed:
+            return _error("VALIDATION_ERROR", "unsupported project settings", 422)
+        if body.get("org_id", org_id) != org_id or body.get("project_id", project_id) != project_id:
+            return _error("VALIDATION_ERROR", "routing identifiers do not match the path", 422)
+        values = dict(row)
+        for key in ("name", "description", "custom_instructions", "agent_custom_instructions"):
+            if key in body:
+                values[key] = body[key]
+        if "custom_categories" in body:
+            if not isinstance(body["custom_categories"], list):
+                return _error("VALIDATION_ERROR", "custom_categories must be a list", 422)
+            values["custom_categories"] = json.dumps(body["custom_categories"])
+        for key in ("multilingual", "decay"):
+            if key in body:
+                values[key] = int(bool(body[key]))
+        values["updated_at"] = time.time()
+        conn.execute(
+            "UPDATE projects SET name = ?, description = ?, custom_instructions = ?,"
+            " custom_categories = ?, agent_custom_instructions = ?, multilingual = ?, decay = ?,"
+            " updated_at = ? WHERE id = ? AND org_id = ?",
+            (
+                values["name"],
+                values["description"],
+                values["custom_instructions"],
+                values["custom_categories"],
+                values["agent_custom_instructions"],
+                values["multilingual"],
+                values["decay"],
+                values["updated_at"],
+                project_id,
+                org_id,
+            ),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        assert updated is not None
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.updated",
+            resource_type="project",
+            resource_id=project_id,
+        )
+        return _project_response(updated)
+
+    @app.get("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
+    def list_project_members(
+        org_id: str,
+        project_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _project_scope_error(authorization, conn, org_id, project_id, owner_only=True)
+        if denied is not None:
+            return denied
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+            ).fetchone()
+            is None
+        ):
+            return _error("NOT_FOUND", "project not found", 404)
+        meter(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+        )
+        rows = conn.execute(
+            "SELECT email, role, created_at, updated_at FROM project_members WHERE project_id = ? ORDER BY email",
+            (project_id,),
+        ).fetchall()
+        return {"members": [dict(row) for row in rows]}
+
+    @app.post("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/", status_code=201)
+    def add_project_member(
+        org_id: str,
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _project_scope_error(authorization, conn, org_id, project_id, owner_only=True)
+        if denied is not None:
+            return denied
+        email = body.get("email")
+        role = body.get("role", "READER")
+        if not isinstance(email, str) or "@" not in email or role not in {"OWNER", "READER"}:
+            return _error("VALIDATION_ERROR", "email and role are required", 422)
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE id = ? AND org_id = ?", (project_id, org_id)
+            ).fetchone()
+            is None
+        ):
+            return _error("NOT_FOUND", "project not found", 404)
+        now = time.time()
+        conn.execute(
+            "INSERT INTO project_members(project_id, email, role, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, email) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at",
+            (project_id, email, role, now, now),
+        )
+        conn.commit()
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.member_upserted",
+            resource_type="project_member",
+            resource_id=email,
+            metadata={"role": role},
+        )
+        return {"email": email, "role": role, "project_id": project_id}
+
+    @app.put("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
+    def update_project_member(
+        org_id: str,
+        project_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        return add_project_member(org_id, project_id, body, conn, authorization)
+
+    @app.delete("/api/v1/orgs/organizations/{org_id}/projects/{project_id}/members/")
+    def remove_project_member(
+        org_id: str,
+        project_id: str,
+        email: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        denied = _project_scope_error(authorization, conn, org_id, project_id, owner_only=True)
+        if denied is not None:
+            return denied
+        changed = conn.execute(
+            "DELETE FROM project_members WHERE project_id = ? AND email = ?", (project_id, email)
+        ).rowcount
+        conn.commit()
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=org_id,
+            project_id=project_id,
+            action="project.member_removed",
+            resource_type="project_member",
+            resource_id=email,
+            outcome="succeeded" if changed else "not_found",
+        )
+        return {"removed": bool(changed)}
+
+    @app.get("/v4/memories/{memory_id}")
+    @app.get("/v1/memories/{memory_id}/")
+    def mem0_get(memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        memory_id = str(memory["id"])
+        meter(
+            authorization,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
+        )
+        return _memory_response(memory)
+
+    @app.put("/v4/memories/{memory_id}")
+    @app.patch("/v4/memories/{memory_id}")
+    @app.put("/v1/memories/{memory_id}/")
+    def mem0_update(
+        memory_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        denied = require_project_write(authorization, conn, memory.get("project_id"))
+        if denied is not None:
+            return denied
+        allowed = {"text", "metadata", "timestamp", "expiration_date"}
+        unknown = set(body) - allowed
+        if unknown or not body:
+            return _error(
+                "VALIDATION_ERROR",
+                "provide at least one of text, metadata, timestamp, or expiration_date",
+                422,
+            )
+        if "text" in body and (not isinstance(body["text"], str) or not body["text"].strip()):
+            return _error("VALIDATION_ERROR", "text must be non-empty", 422)
+        if "metadata" in body and not isinstance(body["metadata"], dict):
+            return _error("VALIDATION_ERROR", "metadata must be an object", 422)
+        memory_id = str(memory["id"])
+        auth = _compat_auth_header(authorization)
+        claim, claim_error = _begin_idempotency(
+            auth,
+            conn,
+            idempotency_key,
+            operation="mem0.update",
+            payload={"memory_id": memory_id, "body": body},
+        )
+        if claim_error is not None:
+            return claim_error
+        if claim is not None and claim.status == "replay":
+            return claim.response
+        try:
+            old_text = memory["text"]
+            new_text = body.get("text", old_text)
+            expires_at = memory.get("expires_at")
+            if "expiration_date" in body:
+                expires_at = _expiration_timestamp(body["expiration_date"])
+            timestamp = _event_timestamp(body.get("timestamp")) if "timestamp" in body else None
+            db.update_memory(
+                conn,
+                memory_id,
+                text=new_text if "text" in body else None,
+                metadata=body.get("metadata"),
+                timestamp=timestamp,
+                expires_at=expires_at if "expiration_date" in body else db._UNSET,
+                actor_key_hash=actor(auth, conn)[1],
+            )
+            conn.commit()
+        except (TypeError, ValueError) as exc:
+            conn.rollback()
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        except Exception:
+            conn.rollback()
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            raise
+        updated = db.get_memory(conn, memory_id)
+        job_id = jobs.enqueue(
+            conn,
+            kind="reindex_memory",
+            payload={
+                "memory_id": memory_id,
+                "container_tag": updated["container_tag"],
+                "org_id": updated.get("org_id"),
+                "project_id": updated.get("project_id"),
+            },
+        )
+        audit(
+            auth,
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
+            action="memory.updated",
+            resource_type="memory",
+            resource_id=memory_id,
+            metadata={"job_id": job_id},
+        )
+        response = _memory_response(updated)
+        response["job_id"] = job_id
+        _finish_idempotency(conn, claim, response=response, job_id=job_id)
+        return response
+
+    @app.post("/v4/memories/{memory_id}/categorize")
+    @app.post("/v1/memories/{memory_id}/categorize")
+    def categorize_memory_route(
+        memory_id: str,
+        body: dict[str, Any],
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        denied = require_project_write(authorization, conn, memory.get("project_id"))
+        if denied is not None:
+            return denied
+        category = body.get("category", body.get("memory_type"))
+        if not isinstance(category, str) or not category.strip():
+            return _error("VALIDATION_ERROR", "category is required", 422)
+        try:
+            updated = db.categorize_memory(
+                conn,
+                str(memory["id"]),
+                category=category,
+                actor_key_hash=actor(_compat_auth_header(authorization), conn)[1],
+            )
+            conn.commit()
+        except KeyError:
+            return _error("NOT_FOUND", "memory not found", 404)
+        except ValueError as exc:
+            conn.rollback()
+            return _error("VALIDATION_ERROR", str(exc), 422)
+        job_id = jobs.enqueue(
+            conn,
+            kind="reindex_memory",
+            payload={
+                "memory_id": str(updated["id"]),
+                "container_tag": updated["container_tag"],
+                "org_id": updated.get("org_id"),
+                "project_id": updated.get("project_id"),
+            },
+        )
+        audit(
+            _compat_auth_header(authorization),
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
+            action="memory.categorized",
+            resource_type="memory",
+            resource_id=str(updated["id"]),
+            metadata={"category": category.strip(), "job_id": job_id},
+        )
+        meter(
+            _compat_auth_header(authorization),
+            conn,
+            container_tag=updated["container_tag"],
+            org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
+        )
+        response = _memory_response(updated)
+        response["job_id"] = job_id
+        return response
+
+    @app.delete("/v1/memories/{memory_id}/")
+    def mem0_delete(
+        memory_id: str,
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        delete_linked: bool = False,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization)
+        if error is not None:
+            return error
+        assert memory is not None
+        denied = require_project_write(authorization, conn, memory.get("project_id"))
+        if denied is not None:
+            return denied
+        memory_id = str(memory["id"])
+        auth = _compat_auth_header(authorization)
+        claim, claim_error = _begin_idempotency(
+            auth,
+            conn,
+            idempotency_key,
+            operation="mem0.delete",
+            payload={"memory_id": memory_id, "delete_linked": delete_linked},
+        )
+        if claim_error is not None:
+            return claim_error
+        if claim is not None and claim.status == "replay":
+            return claim.response
+        try:
+            result = db.soft_delete_memory(
+                conn,
+                memory_id,
+                actor_key_hash=actor(auth, conn)[1],
+                delete_linked=delete_linked,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            if claim is not None and claim.status == "claimed":
+                db.release_idempotency(conn, scope=claim.scope, key=claim.key)
+            raise
+        store = vector_store_for(conn)
+        if store is not None:
+            store.delete(ids=result["deleted_ids"])
+        audit(
+            auth,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
+            action="memory.deleted",
+            resource_type="memory",
+            resource_id=memory_id,
+            metadata={"cascade_count": result["cascade_count"]},
+        )
+        meter(
+            auth,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
+        )
+        response = {
+            "message": "Memory deleted successfully!",
+            "cascade_count": result["cascade_count"],
+        }
+        _finish_idempotency(conn, claim, response=response)
+        return response
+
+    @app.get("/v4/memories/{memory_id}/history")
+    @app.get("/v1/memories/{memory_id}/history/")
+    def mem0_history(
+        memory_id: str, conn: DbConn, authorization: str | None = Header(default=None)
+    ):
+        memory, error = _get_memory_or_error(memory_id, conn, authorization, include_deleted=True)
+        if error is not None:
+            return error
+        assert memory is not None
+        memory_id = str(memory["id"])
+        meter(
+            authorization,
+            conn,
+            container_tag=memory["container_tag"],
+            org_id=memory.get("org_id"),
+            project_id=memory.get("project_id"),
+        )
+        return [
+            _memory_history_response(row)
+            for row in db.list_memory_history(
+                conn, memory_id, container_tag=memory["container_tag"]
+            )
+        ]
 
     @app.get("/v1/memories/")
     def mem0_list(
@@ -671,18 +2365,55 @@ def create_app(
         if tag is None:
             return _error("VALIDATION_ERROR", "an entity id is required", 422)
         auth = _compat_auth_header(authorization)
-        org_id = authorize(auth, conn, tag, operation="request")
-        facts = list_facts(conn, tag, org_id=org_id)[: max(1, min(limit, 100))]
+        scope = scope_of(auth, conn)
+        project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        org_id = authorize(auth, conn, tag, project_id=project_id, operation="request")
+        memories = db.list_memories(
+            conn,
+            tag,
+            org_id=org_id,
+            project_id=project_id,
+            show_expired=False,
+            limit=max(1, min(limit, 100)),
+        )
         return {
-            "results": [
-                {
-                    "id": fact["id"],
-                    "memory": f"{fact['subject']} {fact['predicate']} {fact['object']}",
-                    "metadata": fact["metadata"],
-                    "created_at": fact["created_at"],
-                }
-                for fact in facts
-            ]
+            "results": [_memory_response(memory) for memory in memories],
+            "count": len(memories),
+            "next": None,
+            "previous": None,
+        }
+
+    @app.post("/v3/memories/")
+    def mem0_get_all(
+        body: dict[str, Any],
+        conn: DbConn,
+        page: int = 1,
+        page_size: int = 100,
+        authorization: str | None = Header(default=None),
+    ):
+        filters = body.get("filters")
+        if not isinstance(filters, dict):
+            return _error("VALIDATION_ERROR", "filters must be an object", 422)
+        tag = _mem0_entity_tag(filters)
+        if tag is None:
+            return _error("VALIDATION_ERROR", "an entity id is required", 422)
+        if page < 1 or not 1 <= page_size <= 200:
+            return _error("VALIDATION_ERROR", "invalid pagination", 422)
+        auth = _compat_auth_header(authorization)
+        scope = scope_of(auth, conn)
+        project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        org_id = authorize(auth, conn, tag, project_id=project_id, operation="request")
+        show_expired = bool(body.get("show_expired", False))
+        all_memories = db.list_memories(
+            conn, tag, org_id=org_id, project_id=project_id, show_expired=show_expired
+        )
+        start = (page - 1) * page_size
+        page_items = all_memories[start : start + page_size]
+        return {
+            "count": len(all_memories),
+            "next": page + 1 if start + page_size < len(all_memories) else None,
+            "previous": page - 1 if page > 1 else None,
+            "results": [_memory_response(memory) for memory in page_items],
         }
 
     @app.get("/v3/documents/{doc_id}")
@@ -694,7 +2425,11 @@ def create_app(
         except KeyError:
             return _error("NOT_FOUND", "document not found", 404)
         if settings.auth_enabled and not _may_access(
-            authorization, conn, doc["container_tag"], doc.get("org_id")
+            authorization,
+            conn,
+            doc["container_tag"],
+            doc.get("org_id"),
+            doc.get("project_id"),
         ):
             return _error("NOT_FOUND", "document not found", 404)
         meter(
@@ -702,6 +2437,7 @@ def create_app(
             conn,
             container_tag=doc["container_tag"],
             org_id=doc.get("org_id"),
+            project_id=doc.get("project_id"),
         )
         return {"id": doc["id"], "containerTag": doc["container_tag"], "status": doc["status"]}
 
@@ -723,7 +2459,11 @@ def create_app(
         if settings.auth_enabled and not _authorized(authorization, conn):
             return _error("UNAUTHORIZED", "authentication required", 401)
         if settings.auth_enabled and not _may_access(
-            authorization, conn, document["container_tag"], document.get("org_id")
+            authorization,
+            conn,
+            document["container_tag"],
+            document.get("org_id"),
+            document.get("project_id"),
         ):
             return _error("NOT_FOUND", "document not found", 404)
         org_id = authorize(
@@ -731,8 +2471,12 @@ def create_app(
             conn,
             document["container_tag"],
             document.get("org_id"),
+            project_id=document.get("project_id"),
             operation="request",
         )
+        denied = require_project_write(authorization, conn, document.get("project_id"))
+        if denied is not None:
+            return denied
         actor_kind, key_hash = actor(authorization, conn)
         token = "share_" + secrets.token_urlsafe(32)
         link = db.create_share_link(
@@ -747,6 +2491,7 @@ def create_app(
             conn,
             container_tag=document["container_tag"],
             org_id=org_id,
+            project_id=document.get("project_id"),
             action="share.created",
             resource_type="share_link",
             resource_id=link["id"],
@@ -773,7 +2518,11 @@ def create_app(
         if settings.auth_enabled and not _authorized(authorization, conn):
             return _error("UNAUTHORIZED", "authentication required", 401)
         if settings.auth_enabled and not _may_access(
-            authorization, conn, document["container_tag"], document.get("org_id")
+            authorization,
+            conn,
+            document["container_tag"],
+            document.get("org_id"),
+            document.get("project_id"),
         ):
             return _error("NOT_FOUND", "share link not found", 404)
         org_id = authorize(
@@ -781,14 +2530,19 @@ def create_app(
             conn,
             document["container_tag"],
             document.get("org_id"),
+            project_id=document.get("project_id"),
             operation="request",
         )
+        denied = require_project_write(authorization, conn, document.get("project_id"))
+        if denied is not None:
+            return denied
         revoked = db.revoke_share_link(conn, link_id)
         audit(
             authorization,
             conn,
             container_tag=document["container_tag"],
             org_id=org_id,
+            project_id=document.get("project_id"),
             action="share.revoked",
             resource_type="share_link",
             resource_id=link_id,
@@ -825,13 +2579,23 @@ def create_app(
         if settings.auth_enabled:
             if not _authorized(authorization, conn):
                 return _error("UNAUTHORIZED", "authentication required", 401)
-            if not _may_access(authorization, conn, doc["container_tag"], doc.get("org_id")):
+            if not _may_access(
+                authorization,
+                conn,
+                doc["container_tag"],
+                doc.get("org_id"),
+                doc.get("project_id"),
+            ):
                 return _error("NOT_FOUND", "document not found", 404)
+        denied = require_project_write(authorization, conn, doc.get("project_id"))
+        if denied is not None:
+            return denied
         meter(
             authorization,
             conn,
             container_tag=doc["container_tag"],
             org_id=doc.get("org_id"),
+            project_id=doc.get("project_id"),
             operation="document",
             input_chars=len(patch.content or doc["content"]),
         )
@@ -842,7 +2606,9 @@ def create_app(
             ).fetchall()
         ]
         if old_chunk_ids:
-            vector_store_for(conn).delete(ids=old_chunk_ids)
+            store = vector_store_for(conn)
+            if store is not None:
+                store.delete(ids=old_chunk_ids)
         updated = db.update_document(conn, doc_id, content=patch.content, metadata=patch.metadata)
         job_id = jobs.enqueue(
             conn,
@@ -851,6 +2617,7 @@ def create_app(
                 "document_id": updated["id"],
                 "container_tag": updated["container_tag"],
                 "org_id": updated.get("org_id"),
+                "project_id": updated.get("project_id"),
             },
         )
         audit(
@@ -858,6 +2625,7 @@ def create_app(
             conn,
             container_tag=updated["container_tag"],
             org_id=updated.get("org_id"),
+            project_id=updated.get("project_id"),
             action="document.updated",
             resource_type="document",
             resource_id=updated["id"],
@@ -870,24 +2638,29 @@ def create_app(
         conn: DbConn,
         containerTag: str = "default",
         org_id: str | None = None,
+        project_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
         authorization: str | None = Header(default=None),
     ):
-        org_id = authorize(authorization, conn, containerTag, org_id)
+        project_id = effective_project(authorization, conn, project_id)
+        org_id = authorize(authorization, conn, containerTag, org_id, project_id=project_id)
         limit = max(1, min(limit, 100))
         offset = max(0, offset)
         where = "container_tag = ?"
-        params: tuple[Any, ...] = (containerTag,)
+        params: list[Any] = [containerTag]
         if org_id is not None:
             where += " AND org_id = ?"
-            params += (org_id,)
+            params.append(org_id)
+        if project_id is not None:
+            where += " AND project_id = ?"
+            params.append(project_id)
         total = conn.execute(
             f"SELECT COUNT(*) AS n FROM documents WHERE {where}", params
         ).fetchone()["n"]
         rows = conn.execute(
             f"SELECT id, container_tag, custom_id, status, created_at FROM documents WHERE {where} ORDER BY created_at LIMIT ? OFFSET ?",
-            params + (limit, offset),
+            [*params, limit, offset],
         ).fetchall()
         return {
             "documents": [
@@ -904,11 +2677,13 @@ def create_app(
 
     @app.post("/v4/search")
     def run_search(query: SearchIn, conn: DbConn, authorization: str | None = Header(default=None)):
+        project_id = effective_project(authorization, conn, query.project_id)
         org_id = authorize(
             authorization,
             conn,
             query.containerTag,
             query.org_id,
+            project_id=project_id,
             operation="search",
             input_chars=len(query.q),
         )
@@ -926,6 +2701,7 @@ def create_app(
                 q,
                 container_tag=query.containerTag,
                 org_id=org_id,
+                project_id=project_id,
                 limit=query.limit,
                 threshold=query.threshold,
                 search_mode=query.searchMode,
@@ -944,10 +2720,14 @@ def create_app(
         conn: DbConn,
         containerTag: str = "default",
         org_id: str | None = None,
+        project_id: str | None = None,
         authorization: str | None = Header(default=None),
     ):
-        org_id = authorize(authorization, conn, containerTag, org_id)
-        facts = list_facts(conn, container_tag=containerTag, org_id=org_id)[:20]
+        project_id = effective_project(authorization, conn, project_id)
+        org_id = authorize(authorization, conn, containerTag, org_id, project_id=project_id)
+        facts = list_facts(conn, container_tag=containerTag, org_id=org_id, project_id=project_id)[
+            :20
+        ]
         doc_where = "container_tag = ?"
         doc_params: tuple[Any, ...] = (containerTag,)
         chunk_where = "d.container_tag = ?"
@@ -955,6 +2735,10 @@ def create_app(
             doc_where += " AND org_id = ?"
             chunk_where += " AND d.org_id = ?"
             doc_params += (org_id,)
+        if project_id is not None:
+            doc_where += " AND project_id = ?"
+            chunk_where += " AND d.project_id = ?"
+            doc_params += (project_id,)
         docs = conn.execute(
             f"SELECT COUNT(*) AS n FROM documents WHERE {doc_where}", doc_params
         ).fetchone()["n"]
@@ -968,6 +2752,9 @@ def create_app(
         if org_id is not None:
             fact_where += " AND org_id = ?"
             fact_params += (org_id,)
+        if project_id is not None:
+            fact_where += " AND project_id = ?"
+            fact_params += (project_id,)
         nfacts = conn.execute(
             f"SELECT COUNT(*) AS n FROM facts WHERE {fact_where}", fact_params
         ).fetchone()["n"]
@@ -980,28 +2767,50 @@ def create_app(
     @app.post("/v4/keys", status_code=201)
     def issue_key(body: KeyIn, conn: DbConn, authorization: str | None = Header(default=None)):
         if not settings.auth_enabled or _is_admin(authorization, settings):
-            raw = db.create_api_key(conn, container_tag=body.containerTag, org_id=body.org_id)
+            if body.project_id is not None:
+                project = conn.execute(
+                    "SELECT org_id FROM projects WHERE id = ?", (body.project_id,)
+                ).fetchone()
+                if project is None:
+                    return _error("NOT_FOUND", "project not found", 404)
+                if body.org_id is not None and body.org_id != project["org_id"]:
+                    return _error("VALIDATION_ERROR", "project does not belong to org_id", 422)
+                body = body.model_copy(update={"org_id": str(project["org_id"])})
+            raw = db.create_api_key(
+                conn,
+                container_tag=body.containerTag,
+                org_id=body.org_id,
+                project_id=body.project_id,
+                role=body.role,
+            )
             meter(
                 authorization,
                 conn,
                 container_tag=body.containerTag,
                 org_id=body.org_id,
+                project_id=body.project_id,
             )
             audit(
                 authorization,
                 conn,
                 container_tag=body.containerTag,
                 org_id=body.org_id,
+                project_id=body.project_id,
                 action="key.issued",
                 resource_type="api_key",
                 resource_id=db.hash_key(raw)[:16],
-                metadata={"containerTag": body.containerTag, "org_id": body.org_id},
+                metadata={
+                    "containerTag": body.containerTag,
+                    "org_id": body.org_id,
+                    "project_id": body.project_id,
+                },
             )
             return {"key": raw}
+        normalized = _compat_auth_header(authorization)
         if (
-            authorization
-            and authorization.startswith("Bearer ")
-            and db.lookup_key(conn, authorization[len("Bearer ") :]) is not None
+            normalized
+            and normalized.startswith("Bearer ")
+            and db.lookup_key(conn, normalized[len("Bearer ") :]) is not None
         ):
             return _error("FORBIDDEN", "admin key required", 403)
         return _error("UNAUTHORIZED", "authentication required", 401)
@@ -1015,13 +2824,23 @@ def create_app(
         key = body.get("key") if isinstance(body, dict) else None
         if not isinstance(key, str) or not key:
             return _error("VALIDATION_ERROR", "key is required", 422)
+        key_row = db.lookup_key(conn, key)
         revoked = db.revoke_key(conn, key)
-        meter(authorization, conn, container_tag=None, org_id=None)
+        key_org = key_row.get("org_id") if key_row else None
+        key_project = key_row.get("project_id") if key_row else None
+        meter(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=key_org,
+            project_id=key_project,
+        )
         audit(
             authorization,
             conn,
             container_tag=None,
-            org_id=None,
+            org_id=key_org,
+            project_id=key_project,
             action="key.revoked",
             resource_type="api_key",
             resource_id=db.hash_key(key)[:16],
@@ -1034,24 +2853,94 @@ def create_app(
         try:
             fact = fact_store.get_fact(conn, fact_id)
         except KeyError:
-            return _error("NOT_FOUND", "fact not found", 404)
+            memory = db.resolve_memory_reference(conn, fact_id)
+            if memory is None:
+                return _error("NOT_FOUND", "fact not found", 404)
+            if settings.auth_enabled:
+                if not credential_ok(authorization, conn):
+                    return _error("UNAUTHORIZED", "authentication required", 401)
+                if not may_access(
+                    authorization,
+                    conn,
+                    memory["container_tag"],
+                    memory.get("org_id"),
+                    memory.get("project_id"),
+                ):
+                    return _error("NOT_FOUND", "fact not found", 404)
+            denied = require_project_write(authorization, conn, memory.get("project_id"))
+            if denied is not None:
+                return denied
+            result = db.soft_delete_memory(
+                conn, str(memory["id"]), actor_key_hash=actor(authorization, conn)[1]
+            )
+            conn.commit()
+            if result["deleted_ids"]:
+                store = vector_store_for(conn)
+                if store is not None:
+                    store.delete(ids=result["deleted_ids"])
+            meter(
+                authorization,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
+            )
+            audit(
+                authorization,
+                conn,
+                container_tag=memory["container_tag"],
+                org_id=memory.get("org_id"),
+                project_id=memory.get("project_id"),
+                action="memory.deleted",
+                resource_type="memory",
+                resource_id=str(memory["id"]),
+            )
+            return {"deleted": str(memory["id"]), "cascade_count": result["cascade_count"]}
         if settings.auth_enabled:
             if not credential_ok(authorization, conn):
                 return _error("UNAUTHORIZED", "authentication required", 401)
-            if not may_access(authorization, conn, fact["container_tag"], fact.get("org_id")):
+            if not may_access(
+                authorization,
+                conn,
+                fact["container_tag"],
+                fact.get("org_id"),
+                fact.get("project_id"),
+            ):
                 return _error("NOT_FOUND", "fact not found", 404)
+        # Native fact deletion must remove the canonical projection and its
+        # vectors as well as the legacy fact row. Keep the tombstone/history
+        # semantics of the memory lifecycle route.
+        denied = require_project_write(authorization, conn, fact.get("project_id"))
+        if denied is not None:
+            return denied
+        memory = db.resolve_memory_reference(conn, fact_id)
+        deleted_memory_ids: list[str] = []
+        if memory is not None:
+            result = db.soft_delete_memory(
+                conn,
+                str(memory["id"]),
+                actor_key_hash=actor(authorization, conn)[1],
+            )
+            if result["deleted"]:
+                deleted_memory_ids = list(result["deleted_ids"])
         fact_store.delete_fact(conn, fact_id)
+        if deleted_memory_ids:
+            store = vector_store_for(conn)
+            if store is not None:
+                store.delete(ids=deleted_memory_ids)
         meter(
             authorization,
             conn,
             container_tag=fact["container_tag"],
             org_id=fact.get("org_id"),
+            project_id=fact.get("project_id"),
         )
         audit(
             authorization,
             conn,
             container_tag=fact["container_tag"],
             org_id=fact.get("org_id"),
+            project_id=fact.get("project_id"),
             action="fact.deleted",
             resource_type="fact",
             resource_id=fact_id,
@@ -1063,18 +2952,36 @@ def create_app(
         if settings.auth_enabled and not credential_ok(authorization, conn):
             return _error("UNAUTHORIZED", "authentication required", 401)
         try:
-            org_id = authorize(authorization, conn, tag)
+            project_id = effective_project(authorization, conn, None)
+            org_id = authorize(authorization, conn, tag, project_id=project_id)
+            if (
+                org_id is None
+                and project_id is None
+                and settings.auth_enabled
+                and not _is_admin(authorization, settings)
+            ):
+                legacy_only = True
+            else:
+                legacy_only = False
         except HTTPException as exc:
-            if exc.status_code == 403:
+            if exc.status_code in {403, 404}:
                 return _error("NOT_FOUND", "tag not found", 404)
             raise
-        vector_store_for(conn).delete(container_tag=tag, org_id=org_id)
-        counts = db.purge_tag(conn, tag, org_id=org_id)
+        store = vector_store_for(conn)
+        if store is not None:
+            if legacy_only:
+                store.delete(container_tag=tag, org_id=None, project_id=None, unscoped_only=True)
+            else:
+                store.delete(container_tag=tag, org_id=org_id, project_id=project_id)
+        counts = db.purge_tag(
+            conn, tag, org_id=org_id, project_id=project_id, legacy_only=legacy_only
+        )
         audit(
             authorization,
             conn,
             container_tag=tag,
             org_id=org_id,
+            project_id=project_id,
             action="tag.purged",
             resource_type="tag",
             resource_id=tag,
@@ -1084,11 +2991,16 @@ def create_app(
 
     @app.post("/v4/facts", status_code=201)
     def create_fact(body: FactIn, conn: DbConn, authorization: str | None = Header(default=None)):
+        project_id = effective_project(authorization, conn, body.project_id)
+        denied = require_project_write(authorization, conn, project_id)
+        if denied is not None:
+            return denied
         org_id = authorize(
             authorization,
             conn,
             body.containerTag,
             body.org_id,
+            project_id=project_id,
             operation="fact",
             input_chars=len(body.subject) + len(body.predicate) + len(body.object),
         )
@@ -1104,6 +3016,7 @@ def create_app(
             expires_at=body.expires_at,
             memory_type=body.memory_type,
             org_id=org_id,
+            project_id=project_id,
         )
         try:
             if not body.skipEmbedding:
@@ -1120,6 +3033,7 @@ def create_app(
             conn,
             container_tag=body.containerTag,
             org_id=org_id,
+            project_id=project_id,
             action="fact.created",
             resource_type="fact",
             resource_id=fact["id"],
@@ -1142,9 +3056,11 @@ def create_app(
         offset: int = 0,
         memory_type: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
         authorization: str | None = Header(default=None),
     ):
-        org_id = authorize(authorization, conn, containerTag, org_id)
+        project_id = effective_project(authorization, conn, project_id)
+        org_id = authorize(authorization, conn, containerTag, org_id, project_id=project_id)
         page_limit = max(1, min(limit, 500))
         facts = list_facts(
             conn,
@@ -1152,6 +3068,7 @@ def create_app(
             include_superseded=include_superseded,
             memory_type=memory_type,
             org_id=org_id,
+            project_id=project_id,
             limit=page_limit,
             offset=max(0, offset),
         )
@@ -1177,6 +3094,7 @@ def create_app(
                 include_superseded=include_superseded,
                 memory_type=memory_type,
                 org_id=org_id,
+                project_id=project_id,
             ),
         }
 
@@ -1187,11 +3105,16 @@ def create_app(
         # Server-local path by design (single-host tool). Any authenticated caller
         # may import, but only into tags they can write.
         slug = body.tag.removeprefix("graphify:")
+        project_id = effective_project(authorization, conn, body.project_id)
+        denied = require_project_write(authorization, conn, project_id)
+        if denied is not None:
+            return denied
         org_id = authorize(
             authorization,
             conn,
             f"graphify:{slug}",
             body.org_id,
+            project_id=project_id,
             operation="document",
         )
         graph_path = os.path.join(os.path.abspath(body.graph_dir), "graph.json")
@@ -1213,18 +3136,71 @@ def create_app(
                 pass
         from memoratum.bridge import sync_records
 
-        counts = sync_records(conn, graph, slug, org_id=org_id)
+        counts = sync_records(conn, graph, slug, org_id=org_id, project_id=project_id)
         audit(
             authorization,
             conn,
             container_tag=f"graphify:{slug}",
             org_id=org_id,
+            project_id=project_id,
             action="graph.imported",
             resource_type="graph",
             resource_id=slug,
             metadata=counts,
         )
         return counts
+
+    @app.post("/v4/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
+        job = jobs.get(conn, job_id)
+        if job is None:
+            return _error("NOT_FOUND", "job not found", 404)
+        if settings.auth_enabled:
+            if not credential_ok(authorization, conn):
+                return _error("UNAUTHORIZED", "authentication required", 401)
+            tag = _job_tag(conn, job)
+            org_id = _job_org(conn, job)
+            project_id = _job_project(conn, job)
+            if not may_access(authorization, conn, tag, org_id, project_id):
+                return _error("NOT_FOUND", "job not found", 404)
+            if project_id and not _is_admin(authorization, settings):
+                denied = _project_scope_error(
+                    authorization, conn, str(org_id or ""), str(project_id), owner_only=True
+                )
+                if denied is not None:
+                    return denied
+        if job["status"] != "queued":
+            return _error("CONFLICT", "only queued jobs can be cancelled", 409)
+        if not jobs.cancel(conn, job_id):
+            return _error("CONFLICT", "job is no longer queued", 409)
+        payload = job.get("payload") or {}
+        project_id = _job_project(conn, job)
+        if job["kind"] == "purge_project" and project_id:
+            conn.execute(
+                "UPDATE projects SET deleting = 0, updated_at = ? WHERE id = ?",
+                (time.time(), project_id),
+            )
+            conn.commit()
+        if job["kind"] == "ingest" and project_id:
+            webhooks.record_event(
+                conn,
+                project_id=str(project_id),
+                event_type="ingest_job_cancelled",
+                data={"job_id": job_id, "status": "cancelled"},
+            )
+            if payload.get("document_id"):
+                db.set_status(conn, str(payload["document_id"]), "cancelled")
+        audit(
+            authorization,
+            conn,
+            container_tag=_job_tag(conn, job),
+            org_id=_job_org(conn, job),
+            project_id=project_id,
+            action="job.cancelled",
+            resource_type="job",
+            resource_id=job_id,
+        )
+        return {"id": job_id, "status": "cancelled"}
 
     @app.get("/v4/jobs/{job_id}")
     def get_job(job_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
@@ -1236,9 +3212,10 @@ def create_app(
                 return _error("UNAUTHORIZED", "authentication required", 401)
             tag = _job_tag(conn, job)
             org_id = _job_org(conn, job)
-            if tag is None or not may_access(authorization, conn, tag, org_id):
+            project_id = _job_project(conn, job)
+            if not may_access(authorization, conn, tag, org_id, project_id):
                 return _error("NOT_FOUND", "job not found", 404)
-            meter(authorization, conn, container_tag=tag, org_id=org_id)
+            meter(authorization, conn, container_tag=tag, org_id=org_id, project_id=project_id)
         return {
             "id": job["id"],
             "kind": job["kind"],
@@ -1253,6 +3230,7 @@ def create_app(
         conn: DbConn,
         containerTag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
         authorization: str | None = Header(default=None),
@@ -1264,6 +3242,7 @@ def create_app(
             conn,
             container_tag=containerTag,
             org_id=org_id,
+            project_id=project_id,
             limit=max(1, min(limit, 200)),
             offset=max(0, offset),
         )
@@ -1276,6 +3255,7 @@ def create_app(
                     "actorKeyFingerprint": event["actor_key_hash"],
                     "containerTag": event["container_tag"],
                     "orgId": event["org_id"],
+                    "projectId": event.get("project_id"),
                     "action": event["action"],
                     "resourceType": event["resource_type"],
                     "resourceId": event["resource_id"],
@@ -1284,7 +3264,9 @@ def create_app(
                 }
                 for event in events
             ],
-            "total": db.count_audit_events(conn, container_tag=containerTag, org_id=org_id),
+            "total": db.count_audit_events(
+                conn, container_tag=containerTag, org_id=org_id, project_id=project_id
+            ),
         }
 
     @app.get("/v4/usage")
@@ -1292,6 +3274,7 @@ def create_app(
         conn: DbConn,
         containerTag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
         authorization: str | None = Header(default=None),
@@ -1303,6 +3286,7 @@ def create_app(
             conn,
             container_tag=containerTag,
             org_id=org_id,
+            project_id=project_id,
             limit=max(1, min(limit, 500)),
             offset=max(0, offset),
         )
@@ -1312,6 +3296,7 @@ def create_app(
                     "keyFingerprint": row["key_hash"][:16],
                     "containerTag": row["container_tag"],
                     "orgId": row["org_id"],
+                    "projectId": row.get("project_id"),
                     "requests": row["requests"],
                     "searches": row["searches"],
                     "documentWrites": row["document_writes"],
@@ -1322,7 +3307,9 @@ def create_app(
                 }
                 for row in counters
             ],
-            "total": db.count_usage(conn, container_tag=containerTag, org_id=org_id),
+            "total": db.count_usage(
+                conn, container_tag=containerTag, org_id=org_id, project_id=project_id
+            ),
         }
 
     @app.get("/health")

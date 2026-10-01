@@ -1,0 +1,24 @@
+{
+  "contract": "mem0-self-hosted-v0.2",
+  "fixtures": [
+    "add_request.json",
+    "add_response.json",
+    "get_response.json",
+    "update_request.json",
+    "update_response.json",
+    "delete_response.json",
+    "delete_all_response.json",
+    "history_response.json",
+    "batch_update_request.json",
+    "batch_update_response.json",
+    "batch_delete_request.json",
+    "batch_delete_response.json",
+    "get_all_request.json",
+    "get_all_response.json",
+    "ping_response.json",
+    "error_response.json",
+    "webhook_create_request.json",
+    "webhook_create_response.json",
+    "webhook_event_payload.json"
+  ]
+}

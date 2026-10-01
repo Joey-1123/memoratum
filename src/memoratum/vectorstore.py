@@ -31,6 +31,7 @@ class VectorRecord:
     org_id: str | None = None
     metadata: dict[str, Any] | None = None
     created_at: float = 0.0
+    project_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -53,6 +54,7 @@ class VectorHit:
     org_id: str | None
     metadata: dict[str, Any]
     created_at: float
+    project_id: str | None = None
 
 
 class VectorStore(Protocol):
@@ -68,6 +70,7 @@ class VectorStore(Protocol):
         org_id: str | None = None,
         limit: int = 10,
         filters: dict[str, Any] | None = None,
+        project_id: str | None = None,
     ) -> list[VectorHit]: ...
 
     def delete(
@@ -76,6 +79,8 @@ class VectorStore(Protocol):
         ids: Sequence[str] | None = None,
         container_tag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int: ...
 
     def close(self) -> None: ...
@@ -108,6 +113,7 @@ def _rank(
             kind=record.kind,
             container_tag=record.container_tag,
             org_id=record.org_id,
+            project_id=record.project_id,
             metadata=dict(record.metadata or {}),
             created_at=record.created_at or time.time(),
         )
@@ -146,11 +152,14 @@ class InMemoryVectorStore:
         org_id: str | None = None,
         limit: int = 10,
         filters: dict[str, Any] | None = None,
+        project_id: str | None = None,
     ) -> list[VectorHit]:
         records = [
             record
             for record in self._records.values()
-            if record.container_tag == container_tag and (org_id is None or record.org_id == org_id)
+            if record.container_tag == container_tag
+            and (org_id is None or record.org_id == org_id)
+            and (project_id is None or record.project_id == project_id)
         ]
         return _rank(records, vector, limit, filters)
 
@@ -160,6 +169,8 @@ class InMemoryVectorStore:
         ids: Sequence[str] | None = None,
         container_tag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         if ids is not None:
             targets = set(ids)
@@ -169,6 +180,8 @@ class InMemoryVectorStore:
                 for record in self._records.values()
                 if record.container_tag == container_tag
                 and (org_id is None or record.org_id == org_id)
+                and (project_id is None or record.project_id == project_id)
+                and (not unscoped_only or (record.org_id is None and record.project_id is None))
             }
         else:
             raise ValueError("delete requires ids or a container tag")
@@ -194,14 +207,15 @@ class SQLiteVectorStore:
         self.conn.executemany(
             """
             INSERT INTO vector_points(
-              id, kind, text, vector, container_tag, org_id, metadata, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              id, kind, text, vector, container_tag, org_id, project_id, metadata, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               kind = excluded.kind,
               text = excluded.text,
               vector = excluded.vector,
               container_tag = excluded.container_tag,
               org_id = excluded.org_id,
+              project_id = excluded.project_id,
               metadata = excluded.metadata,
               created_at = excluded.created_at
             """,
@@ -213,6 +227,7 @@ class SQLiteVectorStore:
                     _pack(record.vector),
                     record.container_tag,
                     record.org_id,
+                    record.project_id,
                     json.dumps(record.metadata or {}, separators=(",", ":")),
                     record.created_at or time.time(),
                 )
@@ -229,14 +244,18 @@ class SQLiteVectorStore:
         org_id: str | None = None,
         limit: int = 10,
         filters: dict[str, Any] | None = None,
+        project_id: str | None = None,
     ) -> list[VectorHit]:
         where = ["container_tag = ?"]
         params: list[Any] = [container_tag]
         if org_id is not None:
             where.append("org_id = ?")
             params.append(org_id)
+        if project_id is not None:
+            where.append("project_id = ?")
+            params.append(project_id)
         rows = self.conn.execute(
-            "SELECT id, kind, text, vector, container_tag, org_id, metadata, created_at"
+            "SELECT id, kind, text, vector, container_tag, org_id, project_id, metadata, created_at"
             f" FROM vector_points WHERE {' AND '.join(where)}",
             params,
         ).fetchall()
@@ -253,6 +272,7 @@ class SQLiteVectorStore:
                     kind=item["kind"],
                     container_tag=item["container_tag"],
                     org_id=item["org_id"],
+                    project_id=item["project_id"],
                     metadata=item["metadata"],
                     created_at=item["created_at"],
                 )
@@ -265,6 +285,8 @@ class SQLiteVectorStore:
         ids: Sequence[str] | None = None,
         container_tag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         conditions: list[str] = []
         params: list[Any] = []
@@ -279,6 +301,11 @@ class SQLiteVectorStore:
             if org_id is not None:
                 conditions.append("org_id = ?")
                 params.append(org_id)
+            if project_id is not None:
+                conditions.append("project_id = ?")
+                params.append(project_id)
+            if unscoped_only:
+                conditions.extend(["org_id IS NULL", "project_id IS NULL"])
         else:
             raise ValueError("delete requires ids or a container tag")
         deleted = self.conn.execute(
@@ -366,6 +393,7 @@ class QdrantVectorStore:
             "kind": record.kind,
             "container_tag": record.container_tag,
             "org_id": record.org_id,
+            "project_id": record.project_id,
             "metadata_json": json.dumps(record.metadata or {}, separators=(",", ":")),
             "created_at": record.created_at or time.time(),
         }
@@ -389,13 +417,31 @@ class QdrantVectorStore:
         ]
         self.client.upsert(collection_name=self.collection_name, points=points)
 
-    def _filter(self, container_tag: str, org_id: str | None) -> Any:
+    def _filter(
+        self,
+        container_tag: str,
+        org_id: str | None,
+        project_id: str | None = None,
+        *,
+        unscoped_only: bool = False,
+    ) -> Any:
         models = self._require_models()
         must = [
             models.FieldCondition(key="container_tag", match=models.MatchValue(value=container_tag))
         ]
         if org_id is not None:
             must.append(models.FieldCondition(key="org_id", match=models.MatchValue(value=org_id)))
+        if project_id is not None:
+            must.append(
+                models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id))
+            )
+        if unscoped_only:
+            null_condition = getattr(models, "IsNullCondition", None)
+            for key in ("org_id", "project_id"):
+                if null_condition is not None:
+                    must.append(null_condition(key=key))
+                else:
+                    must.append(models.FieldCondition(key=key, match=models.MatchValue(value=None)))
         return models.Filter(must=must)
 
     def _hit(self, point: Any) -> VectorHit | None:
@@ -415,6 +461,7 @@ class QdrantVectorStore:
             kind=str(payload.get("kind", "")),
             container_tag=str(payload.get("container_tag", "")),
             org_id=payload.get("org_id"),
+            project_id=payload.get("project_id"),
             metadata=metadata if isinstance(metadata, dict) else {},
             created_at=float(payload.get("created_at", 0.0) or 0.0),
         )
@@ -427,10 +474,11 @@ class QdrantVectorStore:
         org_id: str | None = None,
         limit: int = 10,
         filters: dict[str, Any] | None = None,
+        project_id: str | None = None,
     ) -> list[VectorHit]:
         if not self._collection_ready:
             return []
-        query_filter = self._filter(container_tag, org_id)
+        query_filter = self._filter(container_tag, org_id, project_id)
         kwargs = {
             "collection_name": self.collection_name,
             "query_vector": list(vector),
@@ -456,6 +504,8 @@ class QdrantVectorStore:
         ids: Sequence[str] | None = None,
         container_tag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         if not self._collection_ready:
             return 0
@@ -471,9 +521,13 @@ class QdrantVectorStore:
             )
         elif container_tag is not None:
             selector = (
-                models.FilterSelector(filter=self._filter(container_tag, org_id))
+                models.FilterSelector(
+                    filter=self._filter(
+                        container_tag, org_id, project_id, unscoped_only=unscoped_only
+                    )
+                )
                 if hasattr(models, "FilterSelector")
-                else self._filter(container_tag, org_id)
+                else self._filter(container_tag, org_id, project_id, unscoped_only=unscoped_only)
             )
         else:
             raise ValueError("delete requires ids or a container tag")
@@ -544,6 +598,7 @@ class ChromaVectorStore:
             "kind": record.kind,
             "container_tag": record.container_tag,
             "org_id": record.org_id or "",
+            "project_id": record.project_id or "",
             "metadata_json": json.dumps(record.metadata or {}, separators=(",", ":")),
         }
 
@@ -558,10 +613,22 @@ class ChromaVectorStore:
             metadatas=[self._metadata(record) for record in records],
         )
 
-    def _where(self, container_tag: str, org_id: str | None) -> dict[str, Any]:
-        if org_id is None:
-            return {"container_tag": container_tag}
-        return {"$and": [{"container_tag": container_tag}, {"org_id": org_id}]}
+    def _where(
+        self,
+        container_tag: str,
+        org_id: str | None,
+        project_id: str | None = None,
+        *,
+        unscoped_only: bool = False,
+    ) -> dict[str, Any]:
+        conditions: list[dict[str, Any]] = [{"container_tag": container_tag}]
+        if org_id is not None:
+            conditions.append({"org_id": org_id})
+        if project_id is not None:
+            conditions.append({"project_id": project_id})
+        if unscoped_only:
+            conditions.extend([{"org_id": ""}, {"project_id": ""}])
+        return conditions[0] if len(conditions) == 1 else {"$and": conditions}
 
     @staticmethod
     def _column(result: dict[str, Any], name: str, index: int, default: Any) -> Any:
@@ -576,11 +643,12 @@ class ChromaVectorStore:
         org_id: str | None = None,
         limit: int = 10,
         filters: dict[str, Any] | None = None,
+        project_id: str | None = None,
     ) -> list[VectorHit]:
         result = self._ensure_collection().query(
             query_embeddings=[list(vector)],
             n_results=max(0, limit),
-            where=self._where(container_tag, org_id),
+            where=self._where(container_tag, org_id, project_id),
             include=["documents", "metadatas", "distances"],
         )
         ids = self._column(result, "ids", 0, [])
@@ -606,6 +674,7 @@ class ChromaVectorStore:
                     kind=str(metadata.get("kind", "")),
                     container_tag=str(metadata.get("container_tag", "")),
                     org_id=metadata.get("org_id") or None,
+                    project_id=metadata.get("project_id") or None,
                     metadata=original_metadata,
                     created_at=0.0,
                 )
@@ -620,6 +689,8 @@ class ChromaVectorStore:
         ids: Sequence[str] | None = None,
         container_tag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         collection = self._ensure_collection()
         if ids is not None:
@@ -629,7 +700,9 @@ class ChromaVectorStore:
             return len(ids)
         if container_tag is None:
             raise ValueError("delete requires ids or a container tag")
-        collection.delete(where=self._where(container_tag, org_id))
+        collection.delete(
+            where=self._where(container_tag, org_id, project_id, unscoped_only=unscoped_only)
+        )
         return 0
 
     def close(self) -> None:
@@ -689,11 +762,16 @@ class PgVectorStore:
               embedding {vector_type} NOT NULL,
               container_tag TEXT NOT NULL,
               org_id TEXT,
+              project_id TEXT,
               metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
               created_at DOUBLE PRECISION NOT NULL
             )
             """
         )
+        # Existing installations predate project-scoped vectors. Migrate them
+        # additively; NULL project ids remain unscoped and are never returned to a
+        # project-scoped query until a reindex backfills them.
+        cursor.execute(f"ALTER TABLE {self.table} ADD COLUMN IF NOT EXISTS project_id TEXT")
         self.conn.commit()
         self._ready = True
 
@@ -712,14 +790,15 @@ class PgVectorStore:
             cursor.execute(
                 f"""
                 INSERT INTO {self.table}(
-                  id, kind, text, embedding, container_tag, org_id, metadata, created_at
-                ) VALUES (%s, %s, %s, %s::vector, %s, %s, %s::jsonb, %s)
+                  id, kind, text, embedding, container_tag, org_id, project_id, metadata, created_at
+                ) VALUES (%s, %s, %s, %s::vector, %s, %s, %s, %s::jsonb, %s)
                 ON CONFLICT(id) DO UPDATE SET
                   kind = EXCLUDED.kind,
                   text = EXCLUDED.text,
                   embedding = EXCLUDED.embedding,
                   container_tag = EXCLUDED.container_tag,
                   org_id = EXCLUDED.org_id,
+                  project_id = EXCLUDED.project_id,
                   metadata = EXCLUDED.metadata,
                   created_at = EXCLUDED.created_at
                 """,
@@ -730,6 +809,7 @@ class PgVectorStore:
                     self._vector_literal(record.vector),
                     record.container_tag,
                     record.org_id,
+                    record.project_id,
                     json.dumps(record.metadata or {}, separators=(",", ":")),
                     record.created_at or time.time(),
                 ),
@@ -750,6 +830,7 @@ class PgVectorStore:
         org_id: str | None = None,
         limit: int = 10,
         filters: dict[str, Any] | None = None,
+        project_id: str | None = None,
     ) -> list[VectorHit]:
         self._ensure_schema()
         conditions = ["container_tag = %s"]
@@ -757,11 +838,14 @@ class PgVectorStore:
         if org_id is not None:
             conditions.append("org_id = %s")
             query_params.append(org_id)
+        if project_id is not None:
+            conditions.append("project_id = %s")
+            query_params.append(project_id)
         query_params.extend([self._vector_literal(vector), max(0, limit)])
         cursor = self.conn.cursor()
         cursor.execute(
             f"""
-            SELECT id, kind, text, container_tag, org_id, metadata, created_at,
+            SELECT id, kind, text, container_tag, org_id, project_id, metadata, created_at,
                    1 - (embedding <=> %s::vector) AS score
             FROM {self.table}
             WHERE {" AND ".join(conditions)}
@@ -772,7 +856,7 @@ class PgVectorStore:
         )
         hits = []
         for row in cursor.fetchall():
-            metadata = self._row_value(row, 5, "metadata", {})
+            metadata = self._row_value(row, 6, "metadata", {})
             if isinstance(metadata, str):
                 try:
                     metadata = json.loads(metadata)
@@ -785,13 +869,14 @@ class PgVectorStore:
             hits.append(
                 VectorHit(
                     id=str(self._row_value(row, 0, "id")),
-                    score=float(self._row_value(row, 7, "score", 0.0) or 0.0),
+                    score=float(self._row_value(row, 8, "score", 0.0) or 0.0),
                     text=str(self._row_value(row, 2, "text", "")),
                     kind=str(self._row_value(row, 1, "kind", "")),
                     container_tag=str(self._row_value(row, 3, "container_tag", "")),
                     org_id=self._row_value(row, 4, "org_id"),
+                    project_id=self._row_value(row, 5, "project_id"),
                     metadata=metadata,
-                    created_at=float(self._row_value(row, 6, "created_at", 0.0) or 0.0),
+                    created_at=float(self._row_value(row, 7, "created_at", 0.0) or 0.0),
                 )
             )
         return hits
@@ -802,6 +887,8 @@ class PgVectorStore:
         ids: Sequence[str] | None = None,
         container_tag: str | None = None,
         org_id: str | None = None,
+        project_id: str | None = None,
+        unscoped_only: bool = False,
     ) -> int:
         self._ensure_schema()
         if ids is not None:
@@ -816,6 +903,11 @@ class PgVectorStore:
             if org_id is not None:
                 query += " AND org_id = %s"
                 params.append(org_id)
+            if project_id is not None:
+                query += " AND project_id = %s"
+                params.append(project_id)
+            if unscoped_only:
+                query += " AND org_id IS NULL AND project_id IS NULL"
         else:
             raise ValueError("delete requires ids or a container tag")
         cursor = self.conn.cursor()

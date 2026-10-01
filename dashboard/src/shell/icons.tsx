@@ -73,3 +73,21 @@ export function ExportIcon({ label }: { label: string }) {
     </Frame>
   );
 }
+
+export function MemoryIcon({ label }: { label: string }) {
+  return (
+    <Frame label={label}>
+      <rect x="4" y="3.5" width="12" height="13" rx="2" />
+      <path d="M7 7h6M7 10h6M7 13h3" />
+    </Frame>
+  );
+}
+
+export function WebhookIcon({ label }: { label: string }) {
+  return (
+    <Frame label={label}>
+      <path d="M5 6.5a5 5 0 0 1 10 0c0 2-1 3-2 4H7c-1-1-2-2-2-4Z" />
+      <path d="M8 14.5h4M10 13v4" />
+    </Frame>
+  );
+}

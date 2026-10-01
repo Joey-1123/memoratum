@@ -22,6 +22,9 @@ class Identity:
     container_tag: str | None = None
     org_id: str | None = None
     scopes: frozenset[str] = frozenset()
+    email: str | None = None
+    project_id: str | None = None
+    role: str | None = None
 
 
 class IdentityProvider(Protocol):

@@ -12,6 +12,33 @@ import time
 import uuid
 from typing import Any
 
+from memoratum import db
+
+
+def _ensure_memory(
+    conn: sqlite3.Connection,
+    *,
+    fact_id: str,
+    text: str,
+    container_tag: str,
+    metadata: dict[str, Any],
+    org_id: str | None,
+    document_id: str | None,
+    expires_at: float | None,
+    project_id: str | None = None,
+) -> str:
+    return db.ensure_fact_memory(
+        conn,
+        fact_id=fact_id,
+        text=text,
+        container_tag=container_tag,
+        metadata=metadata,
+        org_id=org_id,
+        document_id=document_id,
+        expires_at=expires_at,
+        project_id=project_id,
+    )
+
 
 def add_fact(
     conn: sqlite3.Connection,
@@ -26,6 +53,7 @@ def add_fact(
     expires_at: float | None = None,
     memory_type: str = "semantic",
     org_id: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """Add a fact. Same (s,p,o) re-asserts (reviving a superseded row).
     Same (s,p) with a different object supersedes live rows only when
@@ -33,29 +61,43 @@ def add_fact(
     (calls/contains/imports) pass supersede=False and coexist."""
     now = time.time()
     org_clause = "org_id IS NULL" if org_id is None else "org_id = ?"
+    project_clause = "project_id IS NULL" if project_id is None else "project_id = ?"
     org_params: tuple[Any, ...] = () if org_id is None else (org_id,)
+    project_params: tuple[Any, ...] = () if project_id is None else (project_id,)
     same = conn.execute(
-        "SELECT id, valid_to FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND object = ?"
-        f" AND {org_clause} ORDER BY created_at DESC LIMIT 1",
-        (container_tag, subject, predicate, object, *org_params),
+        "SELECT id, valid_to, subject, predicate, object FROM facts"
+        " WHERE container_tag = ? AND subject = ? AND predicate = ? AND object = ?"
+        f" AND {org_clause} AND {project_clause} ORDER BY created_at DESC LIMIT 1",
+        (container_tag, subject, predicate, object, *org_params, *project_params),
     ).fetchone()
     if same is not None:
         if same["valid_to"] is not None:
             conn.execute(
                 "UPDATE facts SET valid_to = NULL, superseded_by = NULL WHERE id = ?", (same["id"],)
             )
-            conn.commit()
+        _ensure_memory(
+            conn,
+            fact_id=same["id"],
+            text=f"{same['subject']} {same['predicate']} {same['object']}",
+            container_tag=container_tag,
+            metadata=metadata or {},
+            org_id=org_id,
+            document_id=document_id,
+            expires_at=expires_at,
+            project_id=project_id,
+        )
+        conn.commit()
         return get_fact(conn, same["id"])
     current = conn.execute(
         "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL"
-        f" AND {org_clause}",
-        (container_tag, subject, predicate, *org_params),
+        f" AND {org_clause} AND {project_clause}",
+        (container_tag, subject, predicate, *org_params, *project_params),
     ).fetchall()
     fact_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO facts(id, container_tag, subject, predicate, object, document_id, valid_from, valid_to,"
-        " superseded_by, created_at, metadata, expires_at, memory_type, org_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)",
+        " superseded_by, created_at, metadata, expires_at, memory_type, org_id, project_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)",
         (
             fact_id,
             container_tag,
@@ -69,6 +111,7 @@ def add_fact(
             expires_at,
             memory_type,
             org_id,
+            project_id,
         ),
     )
     for row in current:
@@ -77,6 +120,17 @@ def add_fact(
                 "UPDATE facts SET valid_to = ?, superseded_by = ? WHERE id = ?",
                 (now, fact_id, row["id"]),
             )
+    _ensure_memory(
+        conn,
+        fact_id=fact_id,
+        text=f"{subject} {predicate} {object}",
+        container_tag=container_tag,
+        metadata=metadata or {},
+        org_id=org_id,
+        document_id=document_id,
+        expires_at=expires_at,
+        project_id=project_id,
+    )
     conn.commit()
     return get_fact(conn, fact_id)
 
@@ -111,6 +165,7 @@ def list_facts(
     filters: dict[str, Any] | None = None,
     memory_type: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
@@ -126,6 +181,9 @@ def list_facts(
     if org_id is not None:
         where += " AND org_id = ?"
         params.append(org_id)
+    if project_id is not None:
+        where += " AND project_id = ?"
+        params.append(project_id)
     query = f"SELECT * FROM facts WHERE {where} ORDER BY created_at"
     if limit is not None:
         query += " LIMIT ? OFFSET ?"
@@ -147,6 +205,7 @@ def count_facts(
     include_superseded: bool = False,
     memory_type: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
 ) -> int:
     """Count facts using the same visibility scope as list_facts."""
     now = time.time()
@@ -161,6 +220,9 @@ def count_facts(
     if org_id is not None:
         where += " AND org_id = ?"
         params.append(org_id)
+    if project_id is not None:
+        where += " AND project_id = ?"
+        params.append(project_id)
     return int(
         conn.execute(f"SELECT COUNT(*) AS n FROM facts WHERE {where}", params).fetchone()["n"]
     )

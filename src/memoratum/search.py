@@ -69,6 +69,63 @@ def merge_hits(batches: list[list[dict[str, Any]]], *, limit: int) -> list[dict[
     return sorted(best.values(), key=lambda h: h.get("similarity", 0), reverse=True)[:limit]
 
 
+def search_memory_records(
+    conn: sqlite3.Connection,
+    embedder: Embedder,
+    query: str,
+    *,
+    container_tag: str,
+    org_id: str | None = None,
+    project_id: str | None = None,
+    limit: int = 10,
+    threshold: float = 0.0,
+    filters: dict[str, Any] | None = None,
+    show_expired: bool = False,
+) -> list[dict[str, Any]]:
+    """Search canonical memory records without mixing in document chunks."""
+    memories = db.list_memories(
+        conn,
+        container_tag,
+        org_id=org_id,
+        project_id=project_id,
+        show_expired=show_expired,
+    )
+    if filters:
+        entity_fields = {"user_id", "agent_id", "app_id", "run_id"}
+        metadata_filters = {
+            key: value for key, value in filters.items() if key not in entity_fields
+        }
+        if metadata_filters:
+            memories = [
+                memory
+                for memory in memories
+                if all(
+                    memory["metadata"].get(key) == value for key, value in metadata_filters.items()
+                )
+            ]
+    if not memories:
+        return []
+    query_vector = embedder.embed([query])[0]
+    vectors = embedder.embed([memory["text"] for memory in memories])
+    hits = []
+    for memory, vector in zip(memories, vectors, strict=True):
+        score = max(_cosine(query_vector, vector), _token_overlap(query, memory["text"]))
+        if score < threshold:
+            continue
+        hits.append(
+            {
+                "id": memory["id"],
+                "memory": memory["text"],
+                "similarity": round(score, 6),
+                "metadata": memory["metadata"],
+                "created_at": memory["created_at"],
+                "updated_at": memory["updated_at"],
+            }
+        )
+    hits.sort(key=lambda hit: (-hit["similarity"], hit["id"]))
+    return hits[: max(0, limit)]
+
+
 def expand_query(llm, query: str, *, variants: int = 2) -> list[str]:
     """LLM-generated alternative queries; falls back to [query] on any failure."""
     import json as _json
@@ -94,6 +151,7 @@ def search(
     *,
     container_tag: str,
     org_id: str | None = None,
+    project_id: str | None = None,
     limit: int = 10,
     threshold: float = 0.0,
     keyword_limit: int = 50,
@@ -119,6 +177,9 @@ def search(
         if org_id is not None:
             doc_where += " AND d.org_id = ?"
             doc_params += (org_id,)
+        if project_id is not None:
+            doc_where += " AND d.project_id = ?"
+            doc_params += (project_id,)
         rows = conn.execute(
             "SELECT c.id, c.text, c.embedding, c.created_at, d.metadata FROM chunks c"
             " JOIN documents d ON d.id = c.document_id"
@@ -133,15 +194,28 @@ def search(
             kinds[key] = "chunk"
             stamped[key] = r["created_at"]
     fact_list: list[dict[str, Any]] = []
+    fact_keys: dict[str, str] = {}
+    fact_texts: dict[str, str] = {}
     if want_facts:
-        fact_list = [
-            f for f in list_facts(conn, container_tag, org_id=org_id) if _matches(f["metadata"])
+        candidates = [
+            f
+            for f in list_facts(conn, container_tag, org_id=org_id, project_id=project_id)
+            if _matches(f["metadata"])
         ]
-        for f in fact_list:
-            key = f"mem_{f['id']}"
-            texts[key] = _fact_text(f)
+        for f in candidates:
+            memory = db.resolve_memory_reference(conn, f["id"])
+            if memory is None or memory.get("state") == "deleted":
+                continue
+            expires_at = memory.get("expires_at")
+            if expires_at is not None and float(expires_at) <= now:
+                continue
+            fact_list.append(f)
+            key = str(memory["id"])
+            fact_keys[f["id"]] = key
+            fact_texts[f["id"]] = str(memory["text"])
+            texts[key] = str(memory["text"])
             kinds[key] = "memory"
-            stamped[key] = f["created_at"]
+            stamped[key] = float(memory.get("updated_at") or memory.get("created_at") or now)
 
     scores: dict[str, float] = {}
     vec_items: list[tuple[str, list[float]]] = []
@@ -154,6 +228,7 @@ def search(
                 qvec,
                 container_tag=container_tag,
                 org_id=org_id,
+                project_id=project_id,
                 limit=max(limit * 3, keyword_limit),
                 filters=filters,
             )
@@ -176,10 +251,14 @@ def search(
         chunk_embs = embedder.embed([texts[k] for k in chunk_keys])
         vec_items.extend(zip(chunk_keys, chunk_embs, strict=True))
     if want_facts and fact_list:
-        missing = [f for f in fact_list if f.get("embedding") is None]
+        missing = [
+            f
+            for f in fact_list
+            if f.get("embedding") is None or _fact_text(f) != fact_texts[f["id"]]
+        ]
         for i in range(0, len(missing), 512):
             window = missing[i : i + 512]
-            vecs = embedder.embed([_fact_text(f) for f in window])
+            vecs = embedder.embed([fact_texts[f["id"]] for f in window])
             for f, vec in zip(window, vecs, strict=True):
                 blob = pack_vector(vec)
                 conn.execute("UPDATE facts SET embedding = ? WHERE id = ?", (blob, f["id"]))
@@ -187,7 +266,7 @@ def search(
             conn.commit()
         for f in fact_list:
             if f.get("embedding") is not None:
-                vec_items.append((f"mem_{f['id']}", _unpack(bytes(f["embedding"]))))
+                vec_items.append((fact_keys[f["id"]], _unpack(bytes(f["embedding"]))))
     if texts:
         if qvec is None:
             qvec = embedder.embed([query])[0]
@@ -202,12 +281,17 @@ def search(
     kw_ranked: list[tuple[str, float]] = []
     if want_chunks:
         for r in db.keyword_search(
-            conn, query, container_tag=container_tag, org_id=org_id, limit=keyword_limit
+            conn,
+            query,
+            container_tag=container_tag,
+            org_id=org_id,
+            project_id=project_id,
+            limit=keyword_limit,
         ):
             kw_ranked.append((f"chunk_{r['id']}", 1.0))
     if want_facts:
         scored = sorted(
-            ((f"mem_{f['id']}", _token_overlap(query, _fact_text(f))) for f in fact_list),
+            ((fact_keys[f["id"]], _token_overlap(query, fact_texts[f["id"]])) for f in fact_list),
             key=lambda t: t[1],
             reverse=True,
         )

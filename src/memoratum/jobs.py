@@ -13,15 +13,33 @@ import uuid
 from typing import Any
 
 
-def enqueue(conn: sqlite3.Connection, *, kind: str, payload: dict[str, Any]) -> str:
+def enqueue(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    payload: dict[str, Any],
+    run_after: float | None = None,
+    commit: bool = True,
+) -> str:
     job_id = uuid.uuid4().hex
     now = time.time()
+    project_id = payload.get("project_id")
     conn.execute(
-        "INSERT INTO jobs(id, kind, payload, status, attempts, result, error, worker, created_at, updated_at)"
-        " VALUES (?, ?, ?, 'queued', 0, NULL, NULL, NULL, ?, ?)",
-        (job_id, kind, json.dumps(payload), now, now),
+        "INSERT INTO jobs(id, kind, payload, project_id, status, attempts, result, error, worker,"
+        " created_at, updated_at, run_after)"
+        " VALUES (?, ?, ?, ?, 'queued', 0, NULL, NULL, NULL, ?, ?, ?)",
+        (
+            job_id,
+            kind,
+            json.dumps(payload),
+            project_id if isinstance(project_id, str) else None,
+            now,
+            now,
+            run_after or 0.0,
+        ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return job_id
 
 
@@ -29,7 +47,8 @@ def claim(conn: sqlite3.Connection, *, worker: str) -> dict[str, Any] | None:
     """Atomically move one queued job to running. Returns None when empty."""
     now = time.time()
     row = conn.execute(
-        "SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+        "SELECT id FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY created_at LIMIT 1",
+        (now,),
     ).fetchone()
     if row is None:
         return None
@@ -54,6 +73,15 @@ def complete(
     conn.commit()
 
 
+def update_result(conn: sqlite3.Connection, job_id: str, result: dict[str, Any]) -> None:
+    """Persist intermediate progress for a long-running job."""
+    conn.execute(
+        "UPDATE jobs SET result = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(result, separators=(",", ":")), time.time(), job_id),
+    )
+    conn.commit()
+
+
 def fail(conn: sqlite3.Connection, job_id: str, *, error: str) -> None:
     conn.execute(
         "UPDATE jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ?",
@@ -62,12 +90,23 @@ def fail(conn: sqlite3.Connection, job_id: str, *, error: str) -> None:
     conn.commit()
 
 
-def requeue(conn: sqlite3.Connection, job_id: str) -> None:
+def requeue(conn: sqlite3.Connection, job_id: str, *, run_after: float | None = None) -> None:
     conn.execute(
-        "UPDATE jobs SET status = 'queued', worker = NULL, updated_at = ? WHERE id = ?",
-        (time.time(), job_id),
+        "UPDATE jobs SET status = 'queued', worker = NULL, run_after = ?, updated_at = ? WHERE id = ?",
+        (run_after or 0.0, time.time(), job_id),
     )
     conn.commit()
+
+
+def cancel(conn: sqlite3.Connection, job_id: str) -> bool:
+    """Cancel a queued job; running work is never interrupted."""
+    changed = conn.execute(
+        "UPDATE jobs SET status = 'cancelled', worker = NULL, updated_at = ?"
+        " WHERE id = ? AND status = 'queued'",
+        (time.time(), job_id),
+    ).rowcount
+    conn.commit()
+    return changed == 1
 
 
 def get(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:

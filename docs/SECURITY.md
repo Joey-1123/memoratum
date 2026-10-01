@@ -11,9 +11,19 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
 ## Trust boundaries
 
 - **HTTP API**: Bearer-gated when configured; scoped keys are confined to one
-  `containerTag` and, when supplied, one `org_id` (403 outside, 401 for unknown).
-  Document fetch returns uniform 404 for missing-or-forbidden so IDs can't be
-  probed across scopes.
+  `containerTag` and, when supplied, one `org_id`/`project_id` (403 outside, 401
+  for unknown). New project keys default to `READER`; only an explicitly bound
+  `OWNER` key can mutate project data or manage the project, members, or
+  webhooks. Document fetch
+  returns uniform 404 for missing-or-forbidden so IDs can't be probed across
+  scopes.
+- **Outbound webhooks**: disabled by default. Project-scoped endpoints are
+  validated at creation and delivery; production requires HTTPS, rejects
+  private/loopback/link-local/reserved/metadata DNS targets, disables redirects,
+  bounds response size and timeout, signs a timestamped body with HMAC-SHA256,
+  and keeps delivery/audit state in the local SQLite database. Local HTTP
+  targets require an explicit development-only setting. See
+  [`runbooks/webhooks.md`](runbooks/webhooks.md).
 - **MCP server (stdio)**: no auth by design — local-process trust only. Do not
   expose it over a network transport.
 - **LLM contexts**: indexed content is untrusted. Dreaming extracts facts from
@@ -22,14 +32,21 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
 ## Data handling
 
 - Content, facts, and metadata are stored **plaintext** in one SQLite file.
-  Protect the file (`chmod 600`, encrypted volume for sensitive use).
+  Protect the file (`chmod 600`, encrypted volume for sensitive use). Webhook
+  signing secrets are the exception: they are encrypted with Fernet before
+  insertion. Set `MEMORATUM_WEBHOOK_ENCRYPTION_KEY` to a Fernet key (comma-
+  separated keys are accepted for rotation); when unset, Memoratum creates a
+  mode-600 `.webhook-encryption-key` in `MEMORATUM_DATA_DIR`. Losing that key
+  makes existing webhook secrets unrecoverable.
 - API keys are stored as SHA-256 hashes. Secrets/keys travel only via env and
   are never logged.
 - Audit events and usage counters stay in the local SQLite file as operational
   accountability; they are not sent to an external service.
 - Contradictions supersede facts (history kept). True erasure exists too:
-  `DELETE /v4/memories/{id}`, `DELETE /v4/tags/{tag}`, and key revocation via
-  `POST /v4/keys/revoke` — use these for secret spills and erasure requests.
+  `DELETE /v4/memories/{id}`, `DELETE /v4/tags/{tag}`, project purge via
+  `DELETE /api/v1/orgs/organizations/{org_id}/projects/{project_id}/`, and key
+  revocation via `POST /v4/keys/revoke` — use these for secret spills and
+  erasure requests.
 
 ## Audit gates
 
@@ -62,7 +79,9 @@ sqlite3 "$MEMORATUM_DATA_DIR/memoratum.db" ".backup '$MEMORATUM_DATA_DIR/memorat
 Restore by stopping the server, swapping the file back, and restarting. Key
 material (hashes, revocations) lives in the same file — guard backups like the
 live copy. Personal data lives wherever you ingested it; erasure (`DELETE`
-endpoints) does not rewrite backup files you already took.
+endpoints) does not rewrite backup files you already took. After upgrading an
+external vector index, run `python scripts/reindex_vectors.py` to restore
+provider scope payloads from the authoritative database.
 
 ## Abuse limits (current ceilings)
 
@@ -70,8 +89,9 @@ endpoints) does not rewrite backup files you already took.
   bypass for local bulk importers, `Retry-After` header + SDK backoff); request
   body caps (`content` ≤ 500k chars, `q` ≤ 2000). Bulk importers should stay under
   these or run against localhost.
-- No background queue: ingest + dreaming run synchronously in the request
-  path. Do not expose an open instance to untrusted writers.
+- Durable local jobs: ingest, dreaming, reindexing, webhook delivery, and native
+  bulk work run through SQLite-backed worker jobs. Do not expose an open
+  instance to untrusted writers.
 - Search is brute-force over a tag's chunks (documented upgrade path:
   sqlite-vec). Embeddingdims changes fail loudly instead of silently corrupting
   ranking — rotate via a fresh database.

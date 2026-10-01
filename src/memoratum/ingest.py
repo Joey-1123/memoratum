@@ -28,6 +28,8 @@ def process_document(
     *,
     vector_store: VectorStore | None = None,
 ) -> dict[str, Any]:
+    doc: dict[str, Any] | None = None
+    chunk_ids: list[int] = []
     try:
         doc = db.get_document(conn, doc_id)
         chunks = split_markdown(doc["content"])
@@ -56,6 +58,7 @@ def process_document(
                         kind="chunk",
                         container_tag=doc["container_tag"],
                         org_id=doc.get("org_id"),
+                        project_id=doc.get("project_id"),
                         metadata=metadata,
                         created_at=time.time(),
                     )
@@ -63,8 +66,27 @@ def process_document(
                 ]
             )
         db.set_status(conn, doc_id, "done")
-    except Exception:
+    except Exception as exc:
+        previous_status = doc.get("status") if doc is not None else None
+        if doc is None:
+            raise
         db.set_status(conn, doc_id, "failed")
+        if previous_status != "failed" and doc.get("project_id"):
+            from memoratum.webhooks import record_event
+
+            partial = bool(chunk_ids)
+            record_event(
+                conn,
+                project_id=str(doc["project_id"]),
+                event_type=("ingest_job_partially_completed" if partial else "ingest_job_failed"),
+                data={
+                    "document_id": doc["id"],
+                    "status": "partially_completed" if partial else "failed",
+                    "container_tag": doc["container_tag"],
+                    "error_type": type(exc).__name__,
+                    "indexed_chunks": len(chunk_ids),
+                },
+            )
         raise
     return db.get_document(conn, doc_id)
 

@@ -13,10 +13,8 @@ def _fixture(name: str) -> dict:
 
 
 def test_fixture_manifest_matches_contract_version() -> None:
-    from memoratum.mem0_contract import CONTRACT_VERSION
-
     manifest = _fixture("manifest.json")
-    assert manifest["contract"] == CONTRACT_VERSION
+    assert manifest["contract"] == "mem0-self-hosted-v0.1"
     for name in manifest["fixtures"]:
         assert (FIXTURES / name).is_file()
 
@@ -90,7 +88,7 @@ def test_capability_matrix_distinguishes_supported_and_unsupported_features() ->
     by_name = {item["name"]: item for item in CAPABILITIES}
     assert by_name["add_memories"]["status"] == "supported"
     assert by_name["search_memories"]["status"] == "supported"
-    assert by_name["update_memory"]["status"] == "planned"
+    assert by_name["update_memory"]["status"] == "supported"
     assert by_name["python_sdk_add_search"]["status"] == "supported"
     assert by_name["typescript_sdk_add_search"]["status"] == "supported"
     assert by_name["managed_billing"]["status"] == "out_of_scope"

@@ -81,6 +81,7 @@ def dream_document(conn: sqlite3.Connection, llm: ChatModel, doc_id: str) -> lis
             container_tag=doc["container_tag"],
             document_id=doc_id,
             org_id=doc.get("org_id"),
+            project_id=doc.get("project_id"),
             **f,
         )
         for f in extract_facts(llm, doc["content"])
@@ -99,9 +100,10 @@ def dream_pending(
     mode: str = "instant",
     container_tag: str | None = None,
     org_id: str | None = None,
+    project_id: str | None = None,
 ) -> int:
     """Dream undreamed documents, optionally scoped to one tag and organization."""
-    query = "SELECT id, container_tag, content, org_id FROM documents WHERE dreamed_at IS NULL"
+    query = "SELECT id, container_tag, content, org_id, project_id FROM documents WHERE dreamed_at IS NULL"
     params: tuple[Any, ...] = ()
     if container_tag is not None:
         query += " AND container_tag = ?"
@@ -109,15 +111,20 @@ def dream_pending(
     if org_id is not None:
         query += " AND org_id = ?"
         params += (org_id,)
+    if project_id is not None:
+        query += " AND project_id = ?"
+        params += (project_id,)
     rows = conn.execute(query + " ORDER BY created_at", params).fetchall()
     if not rows:
         return 0
     calls = 0
     if mode == "dynamic":
-        by_scope: dict[tuple[str, str | None], list[sqlite3.Row]] = {}
+        by_scope: dict[tuple[str, str | None, str | None], list[sqlite3.Row]] = {}
         for row in rows:
-            by_scope.setdefault((row["container_tag"], row["org_id"]), []).append(row)
-        for (tag, scope_org), docs in by_scope.items():
+            by_scope.setdefault(
+                (row["container_tag"], row["org_id"], row["project_id"]), []
+            ).append(row)
+        for (tag, scope_org, scope_project), docs in by_scope.items():
             windows: list[tuple[str, int]] = []
             for doc in docs:
                 text = doc["content"] or " "
@@ -127,12 +134,12 @@ def dream_pending(
             used = 0
             for text, doc_id in windows:
                 if bundle and used + len(text) > _BUDGET:
-                    calls += _dream_bundle(conn, llm, tag, scope_org, bundle)
+                    calls += _dream_bundle(conn, llm, tag, scope_org, scope_project, bundle)
                     bundle, used = [], 0
                 bundle.append((text, doc_id))
                 used += len(text)
             if bundle:
-                calls += _dream_bundle(conn, llm, tag, scope_org, bundle)
+                calls += _dream_bundle(conn, llm, tag, scope_org, scope_project, bundle)
     else:
         for row in rows:
             dream_document(conn, llm, row["id"])
@@ -145,10 +152,18 @@ def _dream_bundle(
     llm: ChatModel,
     tag: str,
     org_id: str | None,
+    project_id: str | None,
     bundle: list[tuple[str, int]],
 ) -> int:
     text = "\n\n---\n\n".join(t for t, _ in bundle)
     for f in extract_facts(llm, text):
-        add_fact(conn, container_tag=tag, document_id=None, org_id=org_id, **f)
+        add_fact(
+            conn,
+            container_tag=tag,
+            document_id=None,
+            org_id=org_id,
+            project_id=project_id,
+            **f,
+        )
     _mark_dreamed(conn, list({doc_id for _, doc_id in bundle}))
     return 1

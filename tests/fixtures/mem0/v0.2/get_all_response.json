@@ -1,0 +1,16 @@
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "mem_contract",
+      "memory": "I moved to Paris.",
+      "metadata": {"source": "v0.2"},
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "version": 1,
+      "expiration_date": null
+    }
+  ]
+}

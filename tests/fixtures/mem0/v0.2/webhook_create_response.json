@@ -1,0 +1,8 @@
+{
+  "id": "wh_contract",
+  "name": "Memory Logger",
+  "url": "https://example.com/webhooks/mem0",
+  "event_types": ["memory_add", "memory_update"],
+  "is_active": true,
+  "secret": "whsec_returned_once"
+}
