@@ -97,17 +97,17 @@ Goal: an interrupted migration rolls back whole and is retryable.
 
 ### Tests *(write first)*
 
-- [ ] T030 [P] [US4] `tests/test_migrations.py::test_failed_migration_rolls_back_whole` *(fail first — currently leaves partial DDL)*
-- [ ] T031 [P] [US4] `tests/test_migrations.py::test_migration_retry_succeeds` *(fail first — currently hard-fails with `duplicate column name`)*
-- [ ] T032 [P] [US4] `tests/test_migrations.py::test_migrations_containing_foreign_keys_pragma` — identify and cover every existing migration using `PRAGMA foreign_keys=OFF`, which is a no-op inside a transaction
-- [ ] T033 [P] [US4] `tests/test_migrations.py::test_post_apply_verification` — `integrity_check` and `foreign_key_check` must pass after apply
+- [X] T030 [P] [US4] `tests/test_migrations.py::test_failed_migration_rolls_back_whole` *(fail first — currently leaves partial DDL)*
+- [X] T031 [P] [US4] `tests/test_migrations.py::test_migration_retry_succeeds` *(fail first — currently hard-fails with `duplicate column name`)*
+- [X] T032 [P] [US4] `tests/test_migrations.py::test_migrations_containing_foreign_keys_pragma` — identify and cover every existing migration using `PRAGMA foreign_keys=OFF`, which is a no-op inside a transaction
+- [X] T033 [P] [US4] `tests/test_migrations.py::test_post_apply_verification` — `integrity_check` and `foreign_key_check` must pass after apply
 
 ### Implementation
 
-- [ ] T034 [US4] Audit all 27 existing entries of `_MIGRATIONS` in `src/memoratum/db.py`; list every one containing `PRAGMA foreign_keys=OFF` in the PR description before touching the runner
-- [ ] T035 [US4] Replace `executescript()` in `connect()` in `src/memoratum/db.py` with an explicit transaction per migration; write `schema_migrations.version` in the same transaction as the DDL
-- [ ] T036 [US4] Add post-apply verification to `connect()` in `src/memoratum/db.py`; fail startup loudly on mismatch
-- [ ] T037 [US4] Add a disable/enable-around-transaction form for the `PRAGMA foreign_keys` migrations identified in T034
+- [X] T034 [US4] Audit all 27 existing entries of `_MIGRATIONS` in `src/memoratum/db.py`; list every one containing `PRAGMA foreign_keys=OFF` in the PR description before touching the runner
+- [X] T035 [US4] Replace `executescript()` in `connect()` in `src/memoratum/db.py` with an explicit transaction per migration; write `schema_migrations.version` in the same transaction as the DDL
+- [X] T036 [US4] Add post-apply verification to `connect()` in `src/memoratum/db.py`; fail startup loudly on mismatch
+- [X] T037 [US4] Add a disable/enable-around-transaction form for the `PRAGMA foreign_keys` migrations identified in T034
 
 **Checkpoint**: quickstart Scenario 10 passes; an upgrade from a v0.9.0 database
 preserves all records.
