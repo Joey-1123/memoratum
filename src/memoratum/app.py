@@ -1803,18 +1803,41 @@ def create_app(
         if project_id == "local-project":
             return _error("CONFLICT", "the default project cannot be deleted", 409)
         if int(row["deleting"] or 0):
+            # Report an in-flight purge only when a live worker actually holds it.
+            # Returning the id of a job whose worker died used to look like progress
+            # while being a dead end: nothing would ever run it, and the project
+            # stayed wedged at 409 forever.
             for existing in conn.execute(
-                "SELECT id, payload FROM jobs WHERE kind = 'purge_project'"
+                "SELECT id, payload, status, lease_expires_at FROM jobs WHERE kind = 'purge_project'"
                 " AND status IN ('queued', 'running') ORDER BY created_at"
             ).fetchall():
                 payload = json.loads(existing["payload"] or "{}")
-                if payload.get("project_id") == project_id:
+                if payload.get("project_id") != project_id:
+                    continue
+                # A queued job is legitimately in flight, and a running one counts
+                # only while a live worker holds it. Either way, returning its id is
+                # honest idempotency rather than a dead end.
+                in_flight = (
+                    existing["status"] == "queued"
+                    or float(existing["lease_expires_at"] or 0.0) >= time.time()
+                )
+                if in_flight:
                     return {
                         "job_id": str(existing["id"]),
                         "status": "PENDING",
                         "project_id": project_id,
                     }
-            return _error("CONFLICT", "project deletion is already in progress", 409)
+            stranded = jobs.wedged_projects(conn)
+            return _error(
+                "CONFLICT",
+                "project deletion is stranded: no live purge job holds it."
+                + (
+                    " Recover with POST /v4/maintenance/reap-jobs or scripts/recover_stuck_jobs.py."
+                    if project_id in stranded
+                    else ""
+                ),
+                409,
+            )
         job_id = jobs.enqueue(
             conn,
             kind="purge_project",
@@ -3150,6 +3173,35 @@ def create_app(
         )
         return counts
 
+    @app.post("/v4/maintenance/reap-jobs")
+    def reap_jobs(conn: DbConn, authorization: str | None = Header(default=None)):
+        """Force one reaper pass and report what was recovered.
+
+        Exists because the API alone cannot always clear a wedged project: if a
+        stranded job's lease is somehow still in the future, cancel legitimately
+        refuses because a worker may be alive. This endpoint reports those cases so
+        an operator knows to reach for scripts/recover_stuck_jobs.py --force.
+        """
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        reaped = jobs.reap_stale(conn)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=None,
+            action="maintenance.jobs_reaped",
+            resource_type="job",
+            resource_id=None,
+            metadata={"reaped": len(reaped)},
+        )
+        return {
+            "reaped": reaped,
+            "wedged_projects": jobs.wedged_projects(conn),
+        }
+
     @app.post("/v4/jobs/{job_id}/cancel")
     def cancel_job(job_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
         job = jobs.get(conn, job_id)
@@ -3169,10 +3221,14 @@ def create_app(
                 )
                 if denied is not None:
                     return denied
-        if job["status"] != "queued":
-            return _error("CONFLICT", "only queued jobs can be cancelled", 409)
+        if job["status"] not in {"queued", "running"}:
+            return _error("CONFLICT", "job is no longer cancellable", 409)
+        if job["status"] == "running" and not jobs.is_stuck(conn, job_id):
+            # A live lease means a worker is genuinely making progress. Live work
+            # is never interrupted; the reaper will deal with it if the worker dies.
+            return _error("CONFLICT", "job is actively progressing", 409)
         if not jobs.cancel(conn, job_id):
-            return _error("CONFLICT", "job is no longer queued", 409)
+            return _error("CONFLICT", "job is no longer cancellable", 409)
         payload = job.get("payload") or {}
         project_id = _job_project(conn, job)
         if job["kind"] == "purge_project" and project_id:

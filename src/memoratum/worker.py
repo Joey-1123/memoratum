@@ -55,6 +55,9 @@ def run_once(
     job = jobs.claim(conn, worker=worker_id)
     if job is None:
         return None
+    # Renew the lease before doing any work. Long jobs renew again via
+    # jobs.update_result (see the bulk_memories loop), which doubles as a heartbeat.
+    jobs.heartbeat(conn, job["id"])
     try:
         result = _dispatch(
             conn,
@@ -408,9 +411,11 @@ def main() -> None:
             dims=settings.vector_store_dims or settings.embeddings_dims,
         )
     print(f"memoratum-worker: {worker_id} polling {settings.db_path}")
+    backoff = 1.0
     while not _stop:
-        conn = db.connect(settings.db_path)
+        conn = None
         try:
+            conn = db.connect(settings.db_path)
             vector_store = shared_vector_store or build_vector_store(
                 settings.vector_store,
                 conn=conn,
@@ -420,6 +425,14 @@ def main() -> None:
                 collection_name=settings.vector_store_collection,
                 dims=settings.vector_store_dims or settings.embeddings_dims,
             )
+            # Recover work whose worker died. Without this a SIGKILLed worker's job
+            # is stranded forever, which for purge_project wedges a project.
+            reaped = jobs.reap_stale(conn)
+            if reaped:
+                print(
+                    f"memoratum-worker: reaped {len(reaped)} stale job(s): "
+                    + ", ".join(f"{r['kind']}:{r['id'][:8]}" for r in reaped)
+                )
             if (
                 run_once(
                     conn,
@@ -432,8 +445,24 @@ def main() -> None:
                 is None
             ):
                 time.sleep(interval)
+            backoff = 1.0
+        except Exception as exc:  # noqa: BLE001 — a worker must not die on one bad job
+            # A transient SQLite lock or a provider blip used to kill the process
+            # outright, which also stranded whatever job it was holding. Log, wait,
+            # and keep going. The lease makes the interrupted job recoverable.
+            print(
+                f"memoratum-worker: {worker_id} iteration failed "
+                f"({type(exc).__name__}: {exc}); retrying in {backoff:.0f}s"
+            )
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60.0)
         finally:
-            conn.close()
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception as close_exc:  # noqa: BLE001
+                    # Never let a close failure mask the original error.
+                    print(f"memoratum-worker: connection close failed: {close_exc}")
     if shared_vector_store is not None:
         shared_vector_store.close()
 

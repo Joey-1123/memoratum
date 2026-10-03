@@ -384,6 +384,16 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'READER';
     """,
+    # 28: job leases. A claim without a deadline is unrecoverable -- an
+    # uncatchable worker kill (SIGKILL, OOM) leaves the row `running` forever,
+    # a fresh claim() returns None, and cancel() refuses it. lease_expires_at
+    # defaults to 0, meaning "no lease held", so pre-existing running rows are
+    # treated as dead and recovered by the reaper on first pass.
+    """
+    ALTER TABLE jobs ADD COLUMN lease_expires_at REAL NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN heartbeat_at REAL;
+    CREATE INDEX IF NOT EXISTS idx_jobs_lease ON jobs(status, lease_expires_at);
+    """,
     """
     PRAGMA foreign_keys=OFF;
     DROP TABLE IF EXISTS documents_project_scoped;

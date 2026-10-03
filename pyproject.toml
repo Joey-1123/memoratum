@@ -32,6 +32,7 @@ pgvector = [
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-cov>=6",
     "ruff>=0.8",
     "httpx>=0.28",
     "mem0ai==2.2.0",
@@ -49,3 +50,29 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The coverage gate rides on the existing `uv run pytest -q` in CI, so no
+# workflow change is needed to enforce it.
+addopts = "--cov --cov-report=term-missing"
+
+[tool.coverage.run]
+# Branch coverage, not statement coverage: it penalises the untested error paths
+# where this codebase's real risk lives (webhook delivery, SSRF guard, job
+# recovery) and is structurally harder to pad.
+branch = true
+source_pkgs = ["memoratum"]
+# __main__.py is a 671-byte CLI shim. Nothing else. Ever — omitting app.py or the
+# eval_* modules would be the easy way to make the number look better.
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+# measure-and-hold. Baseline measured on main @ 2dddbb4 was 75.5% branch-aware
+# (3998/5029 statements, 1246/1916 branches). The gate is floor(baseline) - 1 so
+# run-to-run noise can never fail an unrelated PR.
+#
+# RAISE ONLY in the same PR that adds the tests, to new_measurement - 1.
+# LOWERING REQUIRES a constitution amendment plus a CI guard, because this file
+# must not be the easy lever.
+fail_under = 74
+show_missing = true
+skip_covered = false
+precision = 1
