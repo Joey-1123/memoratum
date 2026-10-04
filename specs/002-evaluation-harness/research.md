@@ -1,0 +1,467 @@
+# Phase 0 Research: Evaluation Harness — Scope, Cost, Latency, Grounding
+
+**Feature**: `002-evaluation-harness` | **Date**: 2026-10-04
+**Inputs**: `spec.md`, `.specify/memory/constitution.md` (v1.0.0), two dispatched
+research agents, and first-hand probes of this repository.
+
+Where a decision rests on a measurement, the measurement is quoted with its
+hardware. Where it rests on a probe I ran myself, the probe is named. Where it
+could not be verified, that is stated rather than papered over.
+
+---
+
+## Measured baselines for this repository
+
+Corpus: the on-disk `data/longmemeval_s_cleaned.json`. Timing hardware for every
+figure below unless stated: Intel i3-7020U @ 2.30 GHz, 4 vCPU, 3 GB RAM,
+Python 3.12.14, `HashEmbedder(dims=64)`, `search_mode="documents"`, `limit=10`.
+
+### Existing harness, verified
+
+| Property | Value |
+|---|---|
+| Harnesses | `eval_longmemeval`, `eval_locomo`, `eval_mc10` |
+| Metrics implemented | `partial_recall`, `full_recall`, `mrr`, `session_ids_of` — retrieval only |
+| Latency / cost / grounding | **absent**; zero references in `src/memoratum/eval_*.py` |
+| Ingest scope | `container_tag="bench"` only; no `project_id`, no `org_id` |
+| Attribution precedent | `hit_session()` re-resolves `chunk_<id>` → `documents.custom_id` by indexed join |
+| Manifest | `schema, seed, requested_n, n, ks, modes, embedder, vector_store, data_sha256` |
+
+### Isolation already holds — it was simply never measured
+
+Probe: two projects, one container tag, near-identical lexical content, scoped
+query as project A.
+
+```
+scoped query as project A -> 1 hits
+hit keys : ['chunk', 'id', 'similarity']
+carries project_id: False
+measured cross-scope leaks for a scoped query: 0
+```
+
+The invariant holds today. Two consequences for the design:
+
+- Search hits carry **no** scope attribution (`{id, chunk, similarity}` only), so
+  the isolation metric must re-resolve ids. `hit_session()` already does exactly
+  this, so re-resolution is the harness's own idiom rather than a new mechanism,
+  and the public search response shape stays untouched.
+- The metric's job is regression detection, not discovery. It must be capable of
+  failing, so its gate cannot be "0 leaks observed" on an unscoped corpus.
+
+### A defect in already-committed results
+
+The research flagged a denominator mismatch in the existing harness. Verified
+first-hand:
+
+```
+$ grep -n "limit=max(max(ks)" src/memoratum/eval_longmemeval.py
+181:                        limit=max(max(ks) * 2, 10),
+
+$ cat eval/RESULTS-n10.md
+## hybrid
+- partial-R@5: 0.800 | full-R@5: 0.500
+- partial-R@10: 0.800 | full-R@10: 0.500
+```
+
+`session_ids_of()` dedupes **before** the `[:k]` slice, so `R@k` counts *distinct
+sessions*, while the harness fetches `max(2*max(ks), 10)` = **20 hits**. Measured
+chunks/session on this corpus is ~7.6 (median 8, p95 14), so 20 hits cover at
+most ~2.6 distinct sessions when chunks cluster. The saturation is visible in the
+committed `RESULTS-n10.md`, where `R@5` and `R@10` are identical to three decimal
+places.
+
+`RESULTS-n50.md` does not show it (0.780 vs 0.880) because a larger sample spreads
+further within the same 20-hit budget.
+
+**Consequence**: `R@k` beyond roughly k=3 is not measuring k-deep retrieval, and a
+cost metric counting *hits* placed next to a recall metric counting *distinct
+sessions* would overstate cost by 3–7x. This feature must fix the retrieval budget
+and declare one unit for both. It must not silently restate committed results.
+
+---
+
+## D1 — Scope isolation as a gated axis
+
+**Decision.** Extend ingestion and querying with `project_id`/`org_id`, attribute
+every hit by id re-resolution, gate on the **absolute count** `leaked_hits == 0`,
+and report rate and leaked-query-fraction alongside it for trends.
+
+**Rationale.** Every scope filter in the codebase is conditional on `is not None`
+(`db.keyword_search`, `db.list_memories`, `facts.list_facts`,
+`SQLiteVectorStore.query`, `search`), so `project_id=None` genuinely means "caller
+requested no scope" and genuinely returns cross-project hits. Scoring that as a
+leak would make the metric unfixable. Gating on the absolute count sidesteps the
+whole question: the correct value is exactly zero, so there is no tolerance to
+tune and no false-positive surface.
+
+Per query: `{scope, returned_hits, leaked_hits, leak_rate}`. Per leak:
+`{hit_id, document_id, originating_project_id, rank}`. `returned_hits` is always
+emitted next to `leak_rate`, because 0.5% over 2 hits and 0.5% over 200 hits are
+different facts.
+
+**Reporting shape.** `leaked_queries / scoped_queries` is the number that survives
+varying hits-per-query; `leaked_hits / returned_hits` is the trend line. Unscoped
+queries live in their own bucket and appear in **neither** the gate numerator nor
+the denominator.
+
+**Footgun, specific to this schema.** `create_document`'s natural key is
+`(container_tag, custom_id, org_clause, project_clause)`. Reusing `custom_id`
+across projects while omitting `project_id` on one side does **not** collide — it
+silently creates a third NULL-scope document, growing the unscoped corpus and
+making leak counts look clean while reproducing the exact defect from feature 001.
+The harness must therefore assert the expected document count per project after
+ingest, and must never infer it from a zero leak count.
+
+**Alternatives considered.**
+- *Add `project_id` to search hits* — rejected: changes the public response shape
+  for the harness's benefit, and `hit_session()` already establishes re-resolution
+  as the convention.
+- *Rate as the gate* — rejected: a rate over a variable denominator is exactly the
+  shape that hides a leak.
+- *Score unscoped queries as clean* — rejected: it would let the
+  unscoped-scope-widening regression register as a pass.
+
+---
+
+## D2 — Token cost: characters canonical
+
+**Decision.** Report `retrieved_chars` as the canonical cost unit, with
+`retrieved_ws_tokens` as a companion. Reject bytes as a reported unit. Record the
+**measured** chars-per-whitespace-token ratio for the corpus in the manifest and
+derive a token estimate from it, clearly labelled.
+
+Measured on 690 real sessions:
+
+| proxy | chars/unit | sd | p05 | p95 |
+|---|---:|---:|---:|---:|
+| whitespace token (`str.split()`) | **6.27** | 0.47 | 5.63 | 6.97 |
+| regex token `[A-Za-z0-9]+` | 6.14 | 0.46 | 5.55 | 6.90 |
+| UTF-8 byte | 1.00 (sd 0.00, max 1.10) | | | |
+
+**Rationale.**
+- Bytes carry zero information here (corpus is pure ASCII, bytes/char = 1.000) yet
+  silently inflate 1.1–3x on non-ASCII input with nothing visible in the report.
+- The whitespace-token coefficient of variation is **7.5%**, so a chars-based gate
+  is a sound proxy for a tokens-based gate when detecting *regressions* — the only
+  thing a CI gate needs.
+- Characters are the unit the codebase already spends: `eval_mc10.py:71`
+  truncates with `context[:12000]`. A token number nobody can compare to a
+  truncation constant is a worse metric.
+
+**Honest limit.** A real BPE tokenizer gives roughly 4.0–4.2 chars/token for
+English prose, so whitespace tokens overcount by ~1.5x. That figure could not be
+verified here — tiktoken, sentencepiece and tokenizers are absent from `.venv`, and
+adding them is what Principle V forbids. So it is a **calibration constant, not a
+fact**: record the measured ratio (6.27 for this corpus) in the manifest and never
+hardcode 4.0.
+
+The estimate is defensible **only as a ratio between two runs on the same
+corpus**. "This query costs 1,850 tokens" would be a guess inheriting every
+tokenizer difference the project refuses to depend on.
+
+Tokenizer counts are reported **only** in a separate non-gating field, and only
+when a tokenizer happens to be installed — reporting the gated metric differently
+across machines would violate FR-007.
+
+**Alternatives considered.**
+- *Bytes* — rejected above.
+- *Hardcode a 4.0 chars/token conversion* — rejected: unverifiable here and would
+  be a fabricated constant in a committed artifact.
+- *Require tiktoken* — rejected under Principle V.
+
+---
+
+## D3 — Latency: gate on cost-per-unit, not milliseconds
+
+**Decision.** Three gates. Absolute milliseconds are a smoke bound only.
+
+1. **Gate on µs/chunk.** Per-chunk cost is hardware-independent in a way raw
+   milliseconds are not, and sub-linear growth shows up as a *falling* number
+   while a regression to O(n) shows up as a *rising* one.
+
+   Measured: 100 chunks 35.6 µs → 400: 30.1 → 1,600: 8.2 → 6,400: 7.3.
+   Gate: `µs_per_chunk(N*4) < 1.5 × µs_per_chunk(N)`.
+
+2. **Absolute ms smoke bound.** `median_of_30 ≤ baseline_median × 1.40`.
+
+3. **Record hardware with every figure** (FR-008).
+
+**Sample-size rationale.** Bootstrap of median-of-n against the true median, 2,000
+resamples:
+
+| n | 95% CI | headroom a 1.0x gate needs |
+|---:|---|---:|
+| 5 | [0.80, 1.69] | +69% |
+| 10 | [0.91, 1.16] | +16% |
+| 20 | [0.94, 1.09] | +9% |
+| 30 | [0.96, 1.07] | **+7%** |
+| 50 | [0.96, 1.06] | +6% |
+
+n=30 is the sweet spot: +7% statistical headroom against a +40% band leaves ~33%
+for real drift and hardware variation. **n=20 is the floor** — below that the gate
+is theatre, since n=5 would need a +69% band and could not detect anything smaller
+than a 70% regression. Loosen to ±60% for phases under 2 ms and tighten to ±25%
+for phases over 50 ms, where statistical headroom shrinks.
+
+Single-sample relative MAD is 5–16% and max/median over 200 samples is 2.11x, so
+**the mean is never usable**; aggregate raw samples and take the percentile
+afterwards. p95-of-p95 is not a p95.
+
+**The threshold trap, which this repository has already fallen into.** The 400→1,600
+step measures a **3.38x → 1.09x → 3.55x** wobble because `PREFILTER_MIN_CANDIDATES
+= 512` sits inside that interval: the step changes the *algorithm*, not the size.
+A ladder that crosses the threshold measures the switch. This already produced one
+false result here — a prefilter comparison that ran identical code and was reported
+as "bounding is free" (`tests/benchmarks/search.md`). Therefore:
+
+- Every corpus size in the ladder sits on one side of the threshold, **or**
+- `MEMORATUM_SEARCH_PREFILTER_MIN` is set explicitly per size and recorded in the
+  manifest.
+- The harness asserts the prefilter actually engaged, by the `set_trace_callback`
+  technique already used in `tests/test_search_perf.py`.
+
+**Two measurement hygiene rules.** Never time a remote embedder inside the timed
+region — network jitter (100 ms ± 80 ms) dwarfs everything measured here; use
+`HashEmbedder` and record it, which FR-011 already requires. And warm up with 5
+discarded iterations, or the first call pays FTS5 tokenizer setup and statement
+compilation.
+
+**Alternatives considered.**
+- *Gate on absolute ms only* — rejected: not portable, and the tail is the
+  problem, not the timer (`perf_counter` resolves to 1e-09 s).
+- *Gate on p95 only* — rejected: still hardware-bound.
+
+---
+
+## D4 — Grounding: provenance by row identity, not text overlap
+
+**Decision.** Tier 1 gates; Tier 2 is diagnostic only.
+
+- **Tier 1 (gates).** For each hit, resolve `hit.id` → source row by the same join
+  `hit_session()` uses, then confirm the text matches that row under that hit
+  kind's construction rule, after NFKC normalisation, whitespace collapse and
+  casefold. Any mismatch fails.
+- **Tier 2 (never gates).** Longest-common-substring ratio for graceful
+  degradation, 3-gram shingle overlap, and FTS5 `snippet()`/`highlight()` as
+  token-level trace.
+
+**The measurement that decides this.** Candidate text versus corpus:
+
+| candidate | exact substring | ws-normalised | token containment | Jaccard |
+|---|---:|---:|---:|---:|
+| prefix truncation, 98%→10% kept | 100% | 100% | 0.982–0.998 | 0.205–0.985 |
+| mid-string window, 50/25/10% | 100% | 100% | 0.982–0.994 | 0.207–0.638 |
+| **same vocabulary, reassembled** | **0%** | 1% | **1.000** | 0.116 |
+| unrelated document | 0% | 0% | mean 0.251, **p95 0.433, max 0.739** | mean 0.123, max 0.250 |
+
+**Token-set containment cannot separate grounded from fabricated.** Text assembled
+from a document's own words but not present in it scores containment **1.000** —
+identical to a perfect prefix truncation — while genuinely unrelated documents
+reach **0.739**, inside any sane 0.8 gate. Any containment or Jaccard threshold
+produces false positives on paraphrase-shaped fabrication *and* false negatives on
+short windows. **Set overlap is unusable as a primary signal**, which eliminates the
+most commonly proposed design.
+
+Exact substring is 100% precise and near-100% sensitive for every truncation shape,
+because a truncated or windowed hit is still a *contiguous* substring. Its only true
+failure mode is non-contiguous reconstruction.
+
+**Two non-obvious traps, both verified.**
+
+1. *Never grade chunk text against `documents.content`.* Over 5,268 real chunks,
+   exact substring is 99.7% (5,250/5,268), and NFKC+casefold does not change it.
+   All 18 failures come from `split_markdown`'s heading rewrite
+   (`# **Heading**` for `### **Heading**`), and the failure is **catastrophic, not
+   graceful**: the longest in-document prefix was 68 of 1,498 characters (5%). A
+   per-item containment ratio would score a perfectly grounded chunk at 0.05.
+   Grade against `chunks.text` — the indexed row the retriever actually returns.
+2. *The fact leg can never pass exact substring.* `search.py:_fact_text` renders
+   `"subject predicate object"`, and `"Alice lives in Lisbon" in corpus` is `False`.
+   A single global grounding threshold would score `memories` mode 0.0 and
+   `documents` mode 1.0 for identical evidence. Each hit kind is therefore grounded
+   against its own construction rule: `chunk_*` → `chunks.text`; memory hit →
+   `memories.text`; fact-rendered → reconstructed `s p o` from the fact row.
+
+**Cost.** The obvious implementation is a nested substring scan and it dominates
+the harness: measured 51.6 ms/query against 690 documents versus **0.78 ms/query**
+with a line-keyed index built once per corpus — 66x. Jaccard with per-hit
+re-tokenisation is 1,336 ms versus 176 ms with a precomputed corpus token cache.
+The index is built once per corpus, never per hit. Harness bookkeeping must also
+stay **outside** the timed region, or the harness benchmarks itself.
+
+**Scope attribution is a separate axis.** Byte-identical content across two
+projects produces two distinct document rows with distinct ids, so text-based
+grounding *cannot* attribute scope and must not try. Scope is `hit.id` →
+`chunks.document_id` → `documents.project_id`, which belongs to D1 alone. Keeping
+the axes separate is what stops a grounding false positive being read as a
+security finding.
+
+**FTS5 note.** `snippet(chunks_fts, 0, '[', ']', '...', 8)` works on this project's
+external-content FTS5 table through stdlib `sqlite3` and is the best available
+zero-dependency proof that tokens are in the index. `matchinfo()` does **not** work
+in `SELECT` context; `bm25()`/`rank` do, since `db.py` already uses `rank`.
+
+**Alternatives considered.**
+- *Jaccard / token containment as primary* — rejected on the measurement above.
+- *LLM judge for grounding* — rejected: non-deterministic and credentialed, so it
+  cannot gate under FR-007.
+
+---
+
+## D5 — BEAM: rejected as a gating benchmark
+
+**Decision.** Do not adopt BEAM. Defer a clearly-labelled non-official
+retrieval-only subset.
+
+**What it is.** *Beyond a Million Tokens: Benchmarking and Enhancing Long-Term
+Memory in LLMs* — Tavakoli et al., arXiv:2510.27246, ICLR 2026, repo
+`github.com/mohammadtavakoli78/BEAM`. Dataset (100 synthetic conversations at
+128K/500K/1M/10M tokens, 2,000 human-validated questions, 10 abilities) plus a
+harness. Code MIT, dataset **CC BY-SA 4.0**.
+
+**Why rejected.** Grading is **100% LLM-judge**: `gpt-4.1-mini` in all 10 of 10
+`evaluate_*` scorers, with no deterministic branch. The judge prompt is explicitly
+anti-reproducible — *"Judge by meaning, not exact wording. Accept paraphrases and
+synonyms"*. No pinned judge, no seed, no offline path. Re-runs drift, so it cannot
+gate CI under FR-007. Answer generation is a second LLM stage, and
+`initialize_models()` pulls further HuggingFace models plus `nltk.download`.
+
+Data is ~449 MiB across two repos (~1.19 GiB resident). Vendoring a normalised
+extract would be an **adaptation** under CC BY-SA 4.0, so ShareAlike would attach
+to it — real licence friction in an AGPL repository. This project's own precedent
+already handles it correctly: `data/` holds only a `download.log`, not the 277 MB
+LongMemEval file.
+
+**Overlap.** BEAM's own comparison table concedes LongMemEval and LoCoMo on
+information extraction, multi-session reasoning, knowledge update, temporal
+reasoning, abstention and summarisation — six of the ten abilities this project
+already measures.
+
+**The narrow subset.** Probing questions carry `source_chat_ids`, giving gold
+evidence for 6 of 10 abilities and mapping onto existing recall/MRR. Abstention
+has no `source_chat_ids` at all; summarization, instruction following and
+preference following grade generated output. Any such subset **must be labelled
+non-official**, because it is not BEAM's metric.
+
+**Could not verify.** Whether the HuggingFace `probing_questions` string field is
+byte-equivalent to the repo's own file (`BEAM-10M` types `user_questions` as
+`sequence<null>`, suggesting a lossy conversion); that `source_chat_ids` are
+well-formed across all 100 conversations (one file inspected); whether those ids map
+cleanly onto this project's document/chunk scheme (ids repeat within a question,
+and 10M nests turns under `plan-N`); the clone size of the repo's `chats/` tree.
+
+---
+
+## D6 — HotPotQA: promoted, and I was wrong to dismiss it
+
+**Decision.** Adopt HotPotQA `fullwiki` validation as a retrieval harness, scoped
+to **evidence recall**, not answer correctness.
+
+**This reverses a position I took in conversation.** I dismissed HotPotQA as
+"aimed at the wrong layer" because multi-hop reasoning needs an LLM. That is wrong
+once the metric is evidence retrieval: HotPotQA ships gold `supporting_facts` and a
+**deterministic stdlib scorer** — `normalize_answer` (lowercase, strip
+punctuation, drop articles, collapse whitespace), `exact_match_score`, `f1_score`,
+`update_sp` over `(title, sent_id)` sets, joint as the elementwise product. No
+model, no network. I had already reframed "correctness" as retrieval precision and
+recall, then failed to check whether HotPotQA's evidence was measurable that way.
+It is.
+
+**Verified properties.** HF `hotpotqa/hotpot_qa`,
+`fullwiki/validation-00000-of-00001.parquet` = 28,041,820 bytes, `num_rows_total`
+7,405, public and ungated. A live row: 10 context paragraphs, gold
+`supporting_facts` `{title: [...], sent_id: [...]}`, `level: "hard"`. Scorer lives
+at `hotpotqa/hotpot@master/hotpot_evaluate_v1.py`, pure stdlib. Licence
+CC BY-SA 4.0 (same ShareAlike consideration as D5); scorer repo Apache-2.0.
+`pyarrow` is needed only for a one-time offline parquet→JSONL conversion — the same
+pattern as the existing `longmemeval_s_cleaned.json`.
+
+**What it adds that the current harness cannot.** Sentence-level gold evidence
+rather than session-level, giving strict partial credit; explicit multi-hop
+`bridge`/`comparison` at `level: hard`, isolating retrieval chains that
+session-recall metrics cannot; and a non-conversational corpus that actually
+exercises FTS5 lexical matching against Wikipedia titles instead of chat filler.
+
+**Honest caveat.** Indexing the union of provided contexts (~74K paragraphs) is
+*easier* than true full-wiki (~5M articles, separate multi-GB dump), so this is
+multi-hop evidence recall under a ~74K-paragraph distractor load — not full-wiki
+scale. And `distractor` (10 paragraphs, ~1.2K tokens) does **not** force
+out-of-window retrieval, so `fullwiki` is the correct config.
+
+**Still rejected.** HotPotQA and MuSiQue as *answer*-correctness benchmarks. No
+LLM here.
+
+---
+
+## D7 — Fix the retrieval budget before adding cost
+
+**Decision.** Declare one unit for both cost and recall, and size the retrieval
+budget from measured chunks-per-document.
+
+**Rationale.** This is the highest-damage item in the whole design, and it is a
+defect in existing committed output rather than a new feature. `session_ids_of()`
+dedupes before slicing, so `R@k` counts distinct sessions; the harness fetches
+`max(2*max(ks), 10)` = 20 **hits**; measured chunks/session is ~7.6. Twenty hits
+therefore cover at most ~2.6 distinct sessions when chunks cluster — which is why
+`RESULTS-n10.md` shows `R@5 == R@10` exactly.
+
+Placing a cost metric that counts hits beside a recall metric that counts distinct
+sessions would overstate cost by 3–7x. Both metrics must declare their unit, and
+the budget must be `limit >= max(ks) * mean_chunks_per_document`, with the mean
+recorded in the manifest.
+
+**Alternatives considered.**
+- *Leave the budget and label R@k as "sessions within 20 hits"* — rejected: the
+  number is still not k-deep retrieval, and it is mislabelled in a committed
+  artifact.
+- *Restate the committed results* — rejected for this feature: existing results
+  are a historical record. The fix is forward-only, with the defect recorded.
+
+---
+
+## D8 — Manifest mismatches hard-fail comparisons
+
+**Decision.** `eval_compare` must **fail**, not warn, when manifests disagree on
+embedder, vector store, modes, seed, corpus hash, or corpus size.
+
+**Rationale.** `HashEmbedder(64)`, `HashEmbedder(768)` and a remote provider differ
+in recall, latency *and* per-chunk cost. A comparison run across mismatched
+manifests is worse than no comparison, because it produces a confident number that
+means nothing.
+
+**Also enforced.** A metric that fails to record MUST report `null`, never `0`, and
+`null` MUST fail the gate — a skipped metric that reads as a pass is worse than a
+missing metric.
+
+---
+
+## Resolved clarifications
+
+Every question deferred by the spec is now closed. Nothing remains open.
+
+| Spec question | Resolution | Section |
+|---|---|---|
+| Characters or a tokenizer | Characters canonical, whitespace tokens companion, bytes rejected; ratio recorded, never hardcoded | D2 |
+| Do latency gates block or only report | Three gates: µs/chunk primary, absolute ms smoke bound at n≥30, hardware recorded | D3 |
+| Leak metric as rate or count | Count gates (`== 0`); rate and leaked-query fraction reported; unscoped in its own bucket | D1 |
+| BEAM viability | Rejected as gating; non-official subset deferred | D5 |
+| HotPotQA | Promoted for evidence recall; my earlier dismissal was wrong | D6 |
+| Existing `R@k` denominator defect | Forward-only budget fix; defect recorded, committed results not restated | D7 |
+| Grounding without a judge | Provenance by row identity, gated; set overlap rejected on measurement | D4 |
+
+## What cannot be measured reliably, stated plainly
+
+- **Absolute token cost**, and therefore real context-window fit. Only a
+  chars↔token calibration constant, itself unverifiable without the dependency
+  Principle V forbids. Report `retrieved_chars` and let the operator convert.
+- **Absolute latency as a portable claim.** Every millisecond figure is
+  hardware-bound. Only ratios and per-unit costs travel.
+- **Whether a grounded answer is correct.** Grounding proves provenance. Recall and
+  MRR own relevance. A grounded answer built from the wrong document is caught by
+  D1 and D7, not by grounding.
+- **True cross-tenant attribution from text.** Byte-identical content across
+  projects is verified real; only id-based attribution is sound.
+- **Whether a `memories`-mode hit is grounded**, unless the metric knows the
+  `subject predicate object` rendering rule.
+- **BEAM's HF↔repo field equivalence**, and `source_chat_ids` coverage across all
+  100 conversations.
