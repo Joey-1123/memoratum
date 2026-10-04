@@ -83,7 +83,7 @@ FR-004, D3.
 
 ```
 uv run python -m memoratum.eval_latency \
-  --ladder 100,400,1600,6400 \
+  --ladder 100,200,400 \
   --samples 30 --warmup 5 \
   --pin-prefilter \
   --baseline eval/BASELINES.md \
@@ -92,11 +92,35 @@ uv run python -m memoratum.eval_latency \
 
 | flag | type | default | meaning |
 |---|---|---|---|
-| `--ladder` | csv int | `100,400,1600,6400` | corpus sizes in chunks. ≥3 required (FR-004) |
+| `--ladder` | csv int | `100,200,400` | corpus sizes in chunks. ≥3 required (FR-004). **Must not straddle `PREFILTER_MIN_CANDIDATES`** (default 512) unless `prefilter_min` is recorded — see below |
 | `--samples` | int | `30` | **floor is 20**; below that the gate is theatre (`L2`) |
 | `--warmup` | int | `5` | discarded iterations (`L4`) |
-| `--pin-prefilter` | flag | on | set `MEMORATUM_SEARCH_PREFILTER_MIN` per size and record it (`L7`) |
+| `--pin-prefilter` | flag | **off** | set `MEMORATUM_SEARCH_PREFILTER_MIN` per size and record `prefilter_min` (`L7`). Off by default so a ladder measures the real production threshold |
 | `--phases` | csv | `ingest,embed,index,retrieve` | FR-004 requires these four reported separately |
+
+**Why the default ladder stops at 400.** `search.PREFILTER_MIN_CANDIDATES` is **512**.
+A ladder spanning 400 → 1600 crosses it, which changes the *algorithm* — whether the
+FTS5 leg bounds the candidate set — rather than the corpus size. `research.md` D3 records
+the measured consequence: that step produced a **3.38x → 1.09x → 3.55x** wobble. This
+repository has already shipped one false result from this class (`tests/benchmarks/search.md`,
+a prefilter comparison that ran identical code and was reported as "bounding is free").
+
+So the default is entirely below the threshold. Two documented options:
+
+| approach | ladder | when |
+|---|---|---|
+| **default** — stay below the threshold | `100,200,400` | normal use; measures the real production configuration |
+| pin the threshold | any, with `--pin-prefilter` and `prefilter_min` recorded | deliberately measuring across 512, e.g. to compare bounding on vs off |
+
+`eval_axes._validate_ladder` **rejects** a straddling ladder that does not record
+`prefilter_min`, so the error is loud rather than a silently misleading number.
+
+Measured microseconds-per-chunk across the default ladder (`research.md` D3), which is
+the sub-linear shape the `us_per_chunk` gate keys on:
+
+| chunks | 100 | 200 | 400 |
+|---|---:|---:|---:|
+| µs/chunk | 35.6 | ~33 | 30.1 |
 
 **Exit codes**: `0` within tolerance · `1` regression, naming the phase · `2`
 missing baseline or missing hardware (`B1`) · `3` bad input.
@@ -190,7 +214,7 @@ Existing keys unchanged: `schema`, `seed`, `requested_n`, `n`, `ks`, `modes`,
   "latency_config": {
     "samples": 30,
     "warmup": 5,
-    "ladder": [100, 400, 1600, 6400],
+    "ladder": [100, 200, 400],
     "prefilter_min": null,
     "hardware": {
       "cpu": "Intel i3-7020U @ 2.30GHz",
@@ -278,12 +302,19 @@ only**. It appears in neither the gate numerator nor the denominator (`I2`).
           "prefilter_engaged": null
         }
       }
-    }
+    },
+    { "corpus_chunks": 400, "phases": { "retrieve": { "median_ms": 12.03, "us_per_chunk": 30.1 } } }
   ],
   "gate": {
     "status": "pass",
     "checks": [
-      { "name": "us_per_chunk_sublinear", "value": 7.3, "bound": 53.4, "status": "pass" }
+      {
+        "name": "us_per_chunk_sublinear",
+        "value": 30.1,
+        "bound": 53.4,
+        "status": "pass",
+        "reason": "4x corpus growth cost 0.85x per chunk, so growth is sub-linear"
+      }
     ]
   }
 }

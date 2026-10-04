@@ -288,25 +288,31 @@ silently passes (`B3`, `M3`).
 
 ```bash
 uv run python -m memoratum.eval_latency \
-  --ladder 100,400,1600,6400 --samples 30 --warmup 5 --pin-prefilter \
+  --ladder 100,200,400 --samples 30 --warmup 5 \
   --out-md eval/RESULTS-latency.md --out-json eval/latency.json
 ```
 
 **Pass**: four phases per corpus size (FR-004); `samples_ms` holds **raw** samples;
 `median_ms`, `p95_ms`, `us_per_chunk` present; `hardware` recorded; `exit 0`.
 
-**Per-chunk cost must fall, not rise.** Expected shape from Phase 0:
+**Per-chunk cost must fall, not rise.** Expected shape from Phase 0, all below the
+`PREFILTER_MIN_CANDIDATES = 512` threshold:
 
-| chunks | µs/chunk |
-|---:|---:|
-| 100 | ~35.6 |
-| 400 | ~30.1 |
-| 1,600 | ~8.2 |
-| 6,400 | ~7.3 |
+| chunks | 100 | 200 | 400 |
+|---|---:|---:|---:|
+| µs/chunk | ~35.6 | ~33 | ~30.1 |
 
-A **rising** `us_per_chunk` means a regression to O(n). A flat-then-rising step
-between 400 and 1,600 means the ladder crossed `PREFILTER_MIN_CANDIDATES = 512` and
-measured an algorithm switch rather than a size change (`L7`).
+A **rising** `us_per_chunk` means a regression to O(n).
+
+To measure across the threshold deliberately, pin it and record `prefilter_min`:
+
+```bash
+MEMORATUM_SEARCH_PREFILTER_MIN=512 uv run python -m memoratum.eval_latency \
+  --ladder 100,400,1600,6400 --samples 30 --pin-prefilter
+```
+
+Without the pin, a straddling ladder is **rejected** rather than silently measured,
+because that step changes the algorithm rather than the corpus size (`L7`).
 
 ### 4.1 Assert the prefilter actually engaged
 
@@ -325,12 +331,24 @@ exceeds the prefilter threshold is a defect.
 ### 4.2 Sampling floor
 
 ```bash
-uv run python -m memoratum.eval_latency --ladder 100,400,1600 --samples 5
+uv run python -m memoratum.eval_latency --ladder 100,200,400 --samples 5
 echo "exit=$?"     # MUST be non-zero: below n=20 the gate is theatre
 ```
 
 Rejecting `--samples 5` is part of the contract. At n=5 a 1.0x gate needs a +69%
 band and cannot detect anything smaller than a 70% regression.
+
+### 4.3 A straddling ladder is rejected
+
+```bash
+uv run python -m memoratum.eval_latency --ladder 100,400,1600,6400
+echo "exit=$?"     # MUST be non-zero
+```
+
+The default threshold is 512, so the 400 → 1600 step changes the *algorithm* rather
+than the corpus size. Measured, that step produced a **3.38x → 1.09x → 3.55x** wobble,
+and this repository has already shipped one false result from this class. Reject the
+ladder, or pin the threshold and record `prefilter_min` (see §4).
 
 ---
 

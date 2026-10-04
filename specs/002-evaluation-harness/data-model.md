@@ -299,7 +299,11 @@ token-level trace.
   reported as "bounding is free" (`tests/benchmarks/search.md`). Sizes sit on one
   side of the threshold, **or** the env var is pinned per size and recorded; and
   `prefilter_engaged` is asserted via the `set_trace_callback` technique already
-  used in `tests/test_search_perf.py`.
+  used in `tests/test_search_perf.py`. **Enforced** by
+  `eval_axes._validate_ladder`, which raises `ManifestError` for a straddling ladder
+  that does not record `prefilter_min`. The contract's documented default is therefore
+  `100,200,400` — entirely below the default 512 — since a default that straddles the
+  threshold would make the axis refuse its own documented invocation.
 - `L8` Hardware is recorded with every figure (FR-008). Without it, "+40%" means
   nothing.
 

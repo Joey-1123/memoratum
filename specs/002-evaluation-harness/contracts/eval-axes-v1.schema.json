@@ -144,11 +144,11 @@
               "type": "array",
               "minItems": 3,
               "items": { "type": "integer", "minimum": 1 },
-              "description": "FR-004 requires at least three corpus sizes."
+              "description": "FR-004 requires at least three corpus sizes. Must not straddle PREFILTER_MIN_CANDIDATES unless prefilter_min is recorded: crossing the threshold changes the algorithm (whether the FTS5 leg bounds candidates), not the corpus size. Default 100,200,400 stays below the default 512."
             },
             "prefilter_min": {
               "type": ["integer", "null"],
-              "description": "MEMORATUM_SEARCH_PREFILTER_MIN when pinned. The default 512 sits between 400 and 1600, so a ladder crossing it measures an algorithm switch rather than a size change."
+              "description": "MEMORATUM_SEARCH_PREFILTER_MIN when pinned. Required (non-null) if the ladder straddles that threshold. eval_axes._validate_ladder enforces this."
             },
             "hardware": { "$ref": "#/$defs/hardware" }
           }
