@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 import struct
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from memoratum import db
@@ -35,11 +37,54 @@ def pack_vector(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
 
+def _unpack_view(blob: bytes) -> memoryview:
+    """Zero-copy float32 view of a packed vector.
+
+    ``list(struct.unpack(...))`` allocated a Python float per component on every
+    row, which was measurable at corpus scale. Scoring reads through the view.
+    """
+    return memoryview(blob).cast("f")
+
+
 def _unpack(blob: bytes) -> list[float]:
     return list(struct.unpack(f"{len(blob) // 4}f", blob))
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
+# Above this many chunk candidates, the vector leg is bounded by the FTS5 leg
+# instead of scoring the whole corpus. Below it, scoring everything is cheap and
+# costs no recall, so the corpus is left alone -- most self-hosted deployments
+# never reach this and keep exact semantic behaviour.
+PREFILTER_MIN_CANDIDATES = 512
+
+
+def prefilter_min_candidates() -> int:
+    """Threshold at which the FTS5 leg bounds the candidate set.
+
+    Operator-tunable because it is a recall/latency trade-off, and tunable is what
+    makes it measurable: set it very high to disable bounding and compare recall
+    against the eval harness.
+    """
+    raw = os.environ.get("MEMORATUM_SEARCH_PREFILTER_MIN", "").strip()
+    if not raw:
+        return PREFILTER_MIN_CANDIDATES
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return PREFILTER_MIN_CANDIDATES
+
+
+# How many FTS5 hits may reach vector scoring. Roughly limit*20, floored so that
+# short result sets are still well covered.
+PREFILTER_FLOOR = 200
+
+
+def _width(blob: bytes) -> int:
+    """Vector width from a packed float32 blob, or 0 if it is not one."""
+    return len(blob) // 4 if blob else 0
+
+
+def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
+    """Cosine similarity over any float sequence, memoryview included."""
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
     nb = math.sqrt(sum(y * y for y in b)) or 1.0
@@ -171,6 +216,9 @@ def search(
     kinds: dict[str, str] = {}
     stamped: dict[str, float] = {}
     now = time.time()
+    # Chunk embeddings persisted at ingest, keyed by chunk key. Reused instead
+    # of re-embedding the corpus on every query.
+    stored_vectors: dict[str, bytes] = {}
     if want_chunks:
         doc_where = "d.container_tag = ? AND (d.expires_at IS NULL OR d.expires_at > ?)"
         doc_params: tuple[Any, ...] = (container_tag, now)
@@ -180,6 +228,33 @@ def search(
         if project_id is not None:
             doc_where += " AND d.project_id = ?"
             doc_params += (project_id,)
+
+        # The FTS5 leg runs first so it can bound BOTH the vector scoring and the
+        # row fetch. Previously every chunk row was read and json.loads'd before
+        # any ranking happened, so bounding only the scoring left the real cost --
+        # per-row parsing -- untouched.
+        lexical_ids: list[int] = []
+        kw_hits: list[Any] = []
+        if want_chunks:
+            kw_hits = db.keyword_search(
+                conn,
+                query,
+                container_tag=container_tag,
+                org_id=org_id,
+                project_id=project_id,
+                limit=keyword_limit,
+            )
+            total_chunks = conn.execute(
+                "SELECT COUNT(*) FROM chunks c"
+                " JOIN documents d ON d.id = c.document_id"
+                f" WHERE {doc_where}",
+                doc_params,
+            ).fetchone()[0]
+            if total_chunks > prefilter_min_candidates() and kw_hits:
+                lexical_ids = [int(r["id"]) for r in kw_hits]
+                doc_where += f" AND c.id IN ({','.join('?' * len(lexical_ids))})"
+                doc_params = (*doc_params, *lexical_ids)
+
         rows = conn.execute(
             "SELECT c.id, c.text, c.embedding, c.created_at, d.metadata FROM chunks c"
             " JOIN documents d ON d.id = c.document_id"
@@ -193,6 +268,11 @@ def search(
             texts[key] = r["text"]
             kinds[key] = "chunk"
             stamped[key] = r["created_at"]
+            # Ingest already persists this. It used to be SELECTed and thrown away,
+            # so every search re-embedded the entire corpus -- 157 provider calls at
+            # 10k chunks, given batch_size 64.
+            if r["embedding"]:
+                stored_vectors[key] = bytes(r["embedding"])
     fact_list: list[dict[str, Any]] = []
     fact_keys: dict[str, str] = {}
     fact_texts: dict[str, str] = {}
@@ -218,6 +298,7 @@ def search(
             stamped[key] = float(memory.get("updated_at") or memory.get("created_at") or now)
 
     scores: dict[str, float] = {}
+    kw_ranked: list[tuple[str, float]] = []
     vec_items: list[tuple[str, list[float]]] = []
     qvec: list[float] | None = None
     store_ranked: list[tuple[str, float]] = []
@@ -246,10 +327,28 @@ def search(
     for rank, (key, _similarity) in enumerate(store_ranked, start=1):
         scores[key] = scores.get(key, 0.0) + 0.6 / (_RRF_K + rank)
 
+    # Bound the vector leg with the FTS5 leg when the corpus is large enough for it
+    # to matter. Below PREFILTER_MIN_CANDIDATES everything is scored, so small
+    # deployments keep exact semantic recall and pay nothing.
     chunk_keys = [k for k in texts if kinds[k] == "chunk"]
+
     if chunk_keys and not store_ranked:
-        chunk_embs = embedder.embed([texts[k] for k in chunk_keys])
-        vec_items.extend(zip(chunk_keys, chunk_embs, strict=True))
+        dims = len(qvec) if qvec is not None else None
+        reusable: list[str] = []
+        missing: list[str] = []
+        for key in chunk_keys:
+            blob = stored_vectors.get(key)
+            # memoryview: no Python float allocated per component per row
+            vector = _unpack_view(blob) if blob and (dims is None or _width(blob) == dims) else None
+            if vector is None:
+                missing.append(key)
+            else:
+                reusable.append(key)
+                vec_items.append((key, vector))
+        if missing:
+            # Only rows without a usable stored vector cost a provider call.
+            chunk_embs = embedder.embed([texts[k] for k in missing])
+            vec_items.extend(zip(missing, chunk_embs, strict=True))
     if want_facts and fact_list:
         missing = [
             f
@@ -278,16 +377,9 @@ def search(
         for rank, (key, _sim) in enumerate(vec_ranked, start=1):
             scores[key] = scores.get(key, 0.0) + 0.6 / (_RRF_K + rank)
 
-    kw_ranked: list[tuple[str, float]] = []
     if want_chunks:
-        for r in db.keyword_search(
-            conn,
-            query,
-            container_tag=container_tag,
-            org_id=org_id,
-            project_id=project_id,
-            limit=keyword_limit,
-        ):
+        # kw_hits was already fetched above; do not run the FTS query twice.
+        for r in kw_hits[:keyword_limit]:
             kw_ranked.append((f"chunk_{r['id']}", 1.0))
     if want_facts:
         scored = sorted(

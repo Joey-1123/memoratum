@@ -35,6 +35,12 @@ class Settings:
     oidc_jwks_url: str
     dashboard_dir: str
     webhook_allow_private_targets: bool
+    lenient_compat: bool
+    log_level: str
+    log_format: str
+    metrics_enabled: bool
+    retention_days: int
+    host: str
     environment: str
 
     @classmethod
@@ -77,6 +83,16 @@ class Settings:
                 and _get("MEMORATUM_ENV", "production").lower() in {"development", "test"}
             ),
             environment=_get("MEMORATUM_ENV", "production"),
+            lenient_compat=_get("MEMORATUM_LENIENT_COMPAT", "false").lower()
+            in {"1", "true", "yes", "on"},
+            log_level=_get("MEMORATUM_LOG_LEVEL", "INFO"),
+            log_format=_get("MEMORATUM_LOG_FORMAT", "json"),
+            metrics_enabled=_get("MEMORATUM_METRICS_ENABLED", "true").lower()
+            in {"1", "true", "yes", "on"},
+            # 0 means the automatic sweep is off: silently deleting audit or
+            # memory-history data would be a worse failure than a growing file.
+            retention_days=int(_get("MEMORATUM_RETENTION_DAYS", "0") or 0),
+            host=_get("MEMORATUM_HOST", "127.0.0.1"),
         )
 
     @property

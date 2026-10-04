@@ -18,10 +18,10 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from memoratum import db, jobs, webhooks
+from memoratum import db, jobs, logging_setup, metrics, webhooks
 from memoratum import facts as fact_store
 from memoratum.auth import IdentityProvider, token_fingerprint
 from memoratum.config import Settings
@@ -34,7 +34,46 @@ from memoratum.search import expand_query, merge_hits, pack_vector, search, sear
 from memoratum.vectorstore import build_vector_store as build_provider_vector_store
 
 
-class DocumentIn(BaseModel):
+class StrictModel(BaseModel):
+    """Request base that rejects unknown fields.
+
+    Pydantic's default is to silently discard them. For a multi-tenant store that
+    is the worst failure mode available: a caller who misspells ``project_id``
+    receives 201 and their data is written to the *global* scope, readable by any
+    unscoped key. Failing closed turns a silent tenant-isolation break into a
+    visible 422.
+
+    ``MEMORATUM_LENIENT_COMPAT=true`` relaxes this for operators whose
+    Mem0-compatible clients send additional fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _apply_lenient_compat(cls, data, handler):
+        """Honour MEMORATUM_LENIENT_COMPAT without giving up strictness by default.
+
+        Unknown keys are dropped only for this one validation run when the operator
+        has opted in. ``model_config`` is never mutated, so the strict default is
+        unaffected.
+        """
+        if isinstance(data, dict) and _lenient_compat_enabled():
+            known = set(cls.model_fields)
+            data = {key: value for key, value in data.items() if key in known}
+        return handler(data)
+
+
+def _lenient_compat_enabled() -> bool:
+    from memoratum.config import Settings
+
+    try:
+        return Settings.load().lenient_compat
+    except Exception:  # noqa: BLE001 — never let the escape hatch break startup
+        return False
+
+
+class DocumentIn(StrictModel):
     content: str = Field(min_length=1, max_length=500_000)
     containerTag: str = "default"
     customId: str | None = None
@@ -45,7 +84,7 @@ class DocumentIn(BaseModel):
     project_id: str | None = None
 
 
-class SearchIn(BaseModel):
+class SearchIn(StrictModel):
     q: str = Field(min_length=1, max_length=2000)
     containerTag: str = "default"
     limit: int = Field(default=10, ge=1, le=100)
@@ -66,29 +105,29 @@ def _error(
     )
 
 
-class KeyIn(BaseModel):
+class KeyIn(StrictModel):
     containerTag: str | None = None
     org_id: str | None = None
     project_id: str | None = None
     role: Literal["OWNER", "READER"] = "READER"
 
 
-class DocPatch(BaseModel):
+class DocPatch(StrictModel):
     content: str | None = Field(default=None, min_length=1, max_length=500_000)
     metadata: dict[str, Any] | None = None
 
 
-class ShareIn(BaseModel):
+class ShareIn(StrictModel):
     document_id: str = Field(min_length=1, max_length=128)
     expires_in: int = Field(default=7 * 24 * 60 * 60, ge=60, le=365 * 24 * 60 * 60)
 
 
-class Mem0Message(BaseModel):
+class Mem0Message(StrictModel):
     role: Literal["user", "assistant", "system"] = "user"
     content: str = Field(min_length=1, max_length=100_000)
 
 
-class Mem0AddIn(BaseModel):
+class Mem0AddIn(StrictModel):
     messages: list[Mem0Message] = Field(min_length=1, max_length=500)
     user_id: str | None = None
     agent_id: str | None = None
@@ -97,18 +136,24 @@ class Mem0AddIn(BaseModel):
     metadata: dict[str, Any] | None = None
     infer: bool = True
     containerTag: str | None = None
+    # Previously absent, so an admin explicitly targeting a project got 200 and
+    # the write silently landed in the global NULL scope.
+    org_id: str | None = None
+    project_id: str | None = None
 
 
-class Mem0SearchIn(BaseModel):
+class Mem0SearchIn(StrictModel):
     query: str = Field(min_length=1, max_length=2000)
     filters: dict[str, Any] = Field(default_factory=dict)
     top_k: int = Field(default=10, ge=1, le=100)
     threshold: float = Field(default=0.0, ge=0.0, le=1.0)
     rerank: bool = False
     show_expired: bool = False
+    org_id: str | None = None
+    project_id: str | None = None
 
 
-class FactIn(BaseModel):
+class FactIn(StrictModel):
     subject: str = Field(min_length=1)
     predicate: str = Field(min_length=1)
     object: str = Field(min_length=1)
@@ -122,7 +167,7 @@ class FactIn(BaseModel):
     project_id: str | None = None
 
 
-class ImportIn(BaseModel):
+class ImportIn(StrictModel):
     graph_dir: str = Field(min_length=1)
     tag: str = Field(min_length=1, max_length=128)
     org_id: str | None = None
@@ -183,19 +228,25 @@ def build_vector_store(settings: Settings, conn: sqlite3.Connection | None = Non
     )
 
 
-# Serializes requests: each gets its own connection, but dependency setup and
-# endpoint bodies run on different worker threads, so requests must not overlap
-# on SQLite connections. Single-process ceiling; HA needs a real DB server.
+# Guards connection *setup* only. Each request already gets its own connection and
+# the database runs in WAL mode, so readers never block and only writers contend.
+#
+# This lock used to be held across the `yield`, i.e. for the entire request
+# lifetime, which serialised all traffic: 4 concurrent GET /v1/ping/ measured
+# 1.48s wall with per-request durations of 0.57/0.88/1.18/1.48s. Single-process
+# ceiling; HA needs a real DB server.
 _DB_LOCK = threading.Lock()
 
 
 def get_conn(request: Request):
+    # Acquire the lock only to open the connection. The endpoint body must run
+    # with it released, otherwise every request is serialised again.
     with _DB_LOCK:
         conn = db.connect(request.app.state.settings.db_path)
-        try:
-            yield conn
-        finally:
-            conn.close()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 DbConn = Annotated[sqlite3.Connection, Depends(get_conn)]
@@ -216,6 +267,21 @@ def _ensure_boot_key(settings: Settings) -> None:
         conn.close()
 
 
+def _warn_if_lenient(settings: Settings) -> None:
+    """A relaxed deployment must announce itself.
+
+    With MEMORATUM_LENIENT_COMPAT on, a misspelled `project_id` is discarded again
+    and the write lands in global scope. That is a tenant-isolation hazard, so it
+    must never be active silently.
+    """
+    if settings.lenient_compat:
+        print(
+            "memoratum: WARNING - MEMORATUM_LENIENT_COMPAT is ON; unknown request"
+            " fields are being ignored, so a misspelled project_id/org_id will"
+            " silently write to global scope. Do not use this in production."
+        )
+
+
 def _is_loopback(ip: str) -> bool:
     return ip == "localhost" or ip.startswith("127.") or ip in ("::1", "::ffff:127.0.0.1")
 
@@ -229,6 +295,9 @@ def create_app(
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
     webhooks.set_encryption_data_dir(settings.data_dir)
+    _warn_if_lenient(settings)
+    logging_setup.configure(settings)
+    metrics.REGISTRY.set_enabled(settings.metrics_enabled)
     app = FastAPI(title="Memoratum")
     app.state.settings = settings
     if rate_limit_per_minute:
@@ -392,6 +461,7 @@ def create_app(
         *,
         response: Any,
         job_id: str | None = None,
+        commit: bool = True,
     ) -> None:
         if claim is None or claim.status != "claimed":
             return
@@ -438,7 +508,13 @@ def create_app(
         resource_id: str | None = None,
         outcome: str = "succeeded",
         metadata: dict[str, Any] | None = None,
+        commit: bool = True,
     ) -> None:
+        """Record an audit entry.
+
+        ``commit=False`` joins the caller's transaction so the audit row shares the
+        commit boundary of the operation it describes.
+        """
         actor_kind, key_hash = actor(authorization, conn)
         db.append_audit_event(
             conn,
@@ -451,6 +527,7 @@ def create_app(
             resource_type=resource_type,
             resource_id=resource_id,
             outcome=outcome,
+            commit=commit,
             metadata=metadata,
         )
 
@@ -829,7 +906,10 @@ def create_app(
                 422,
             )
         auth = _compat_auth_header(authorization)
-        project_id = effective_project(auth, conn, None)
+        # The Mem0-compatible route now accepts explicit scope. Previously it
+        # hard-coded None, so an admin targeting a project got 200 and the write
+        # silently landed in the global NULL scope.
+        project_id = effective_project(auth, conn, body.project_id)
         denied = require_project_write(auth, conn, project_id)
         if denied is not None:
             return denied
@@ -862,52 +942,63 @@ def create_app(
             return claim_error
         if claim is not None and claim.status == "replay":
             return claim.response
+        # One logical add, one commit boundary. Previously the document, each input
+        # memory, the ingest job and the audit row each committed independently, so
+        # a crash in between left durable content with no job to ever process it
+        # (measured: documents=1, memories=1, jobs=0).
         try:
-            content = "\n".join(f"{message.role}: {message.content}" for message in body.messages)
-            document = db.create_document(
-                conn,
-                container_tag=tag,
-                content=content,
-                metadata=body.metadata,
-                org_id=org_id,
-                project_id=project_id,
-            )
-            if not body.infer or app.state.llm is None:
-                for message in body.messages:
-                    if message.role != "system":
-                        db.ensure_input_memory(
-                            conn,
-                            text=message.content,
-                            container_tag=tag,
-                            metadata=body.metadata,
-                            org_id=org_id,
-                            document_id=document["id"],
-                            project_id=project_id,
-                        )
-            job_id = jobs.enqueue(
-                conn,
-                kind="ingest",
-                payload={
-                    "document_id": document["id"],
-                    "dreaming": "dynamic",
-                    "container_tag": tag,
-                    "org_id": org_id,
-                    "project_id": project_id,
-                },
-            )
-            audit(
-                auth,
-                conn,
-                container_tag=tag,
-                org_id=org_id,
-                project_id=project_id,
-                action="mem0.add",
-                resource_type="document",
-                resource_id=document["id"],
-                metadata={"job_id": job_id, "infer": body.infer},
-            )
-            response = {"event_id": job_id, "status": "PENDING"}
-            _finish_idempotency(conn, claim, response=response, job_id=job_id)
+            with db.transaction(conn):
+                content = "\n".join(
+                    f"{message.role}: {message.content}" for message in body.messages
+                )
+                document = db.create_document(
+                    conn,
+                    container_tag=tag,
+                    content=content,
+                    metadata=body.metadata,
+                    org_id=org_id,
+                    project_id=project_id,
+                    commit=False,
+                )
+                if not body.infer or app.state.llm is None:
+                    for message in body.messages:
+                        if message.role != "system":
+                            db.ensure_input_memory(
+                                conn,
+                                text=message.content,
+                                container_tag=tag,
+                                metadata=body.metadata,
+                                org_id=org_id,
+                                document_id=document["id"],
+                                project_id=project_id,
+                                commit=False,
+                            )
+                job_id = jobs.enqueue(
+                    conn,
+                    kind="ingest",
+                    payload={
+                        "document_id": document["id"],
+                        "dreaming": "dynamic",
+                        "container_tag": tag,
+                        "org_id": org_id,
+                        "project_id": project_id,
+                    },
+                    commit=False,
+                )
+                audit(
+                    auth,
+                    conn,
+                    container_tag=tag,
+                    org_id=org_id,
+                    project_id=project_id,
+                    action="mem0.add",
+                    resource_type="document",
+                    resource_id=document["id"],
+                    metadata={"job_id": job_id, "infer": body.infer},
+                    commit=False,
+                )
+                response = {"event_id": job_id, "status": "PENDING"}
+                _finish_idempotency(conn, claim, response=response, job_id=job_id, commit=False)
             return response
         except Exception:
             if claim is not None and claim.status == "claimed":
@@ -950,7 +1041,10 @@ def create_app(
             )
         auth = _compat_auth_header(authorization)
         scope = scope_of(auth, conn)
+        # Key scope wins; an admin may narrow to an explicit project, which the
+        # Mem0-compatible search route previously could not express at all.
         project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        project_id = effective_project(auth, conn, body.project_id) or project_id
         org_id = authorize(
             auth,
             conn,
@@ -1803,18 +1897,41 @@ def create_app(
         if project_id == "local-project":
             return _error("CONFLICT", "the default project cannot be deleted", 409)
         if int(row["deleting"] or 0):
+            # Report an in-flight purge only when a live worker actually holds it.
+            # Returning the id of a job whose worker died used to look like progress
+            # while being a dead end: nothing would ever run it, and the project
+            # stayed wedged at 409 forever.
             for existing in conn.execute(
-                "SELECT id, payload FROM jobs WHERE kind = 'purge_project'"
+                "SELECT id, payload, status, lease_expires_at FROM jobs WHERE kind = 'purge_project'"
                 " AND status IN ('queued', 'running') ORDER BY created_at"
             ).fetchall():
                 payload = json.loads(existing["payload"] or "{}")
-                if payload.get("project_id") == project_id:
+                if payload.get("project_id") != project_id:
+                    continue
+                # A queued job is legitimately in flight, and a running one counts
+                # only while a live worker holds it. Either way, returning its id is
+                # honest idempotency rather than a dead end.
+                in_flight = (
+                    existing["status"] == "queued"
+                    or float(existing["lease_expires_at"] or 0.0) >= time.time()
+                )
+                if in_flight:
                     return {
                         "job_id": str(existing["id"]),
                         "status": "PENDING",
                         "project_id": project_id,
                     }
-            return _error("CONFLICT", "project deletion is already in progress", 409)
+            stranded = jobs.wedged_projects(conn)
+            return _error(
+                "CONFLICT",
+                "project deletion is stranded: no live purge job holds it."
+                + (
+                    " Recover with POST /v4/maintenance/reap-jobs or scripts/recover_stuck_jobs.py."
+                    if project_id in stranded
+                    else ""
+                ),
+                409,
+            )
         job_id = jobs.enqueue(
             conn,
             kind="purge_project",
@@ -3150,6 +3267,67 @@ def create_app(
         )
         return counts
 
+    @app.post("/v4/maintenance/prune")
+    def prune(
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        dry_run: bool = False,
+    ):
+        """Run the retention sweep. Admin only.
+
+        Only terminal rows are eligible: a queued webhook delivery is an
+        outstanding obligation, not a log line, and deleting it would drop it
+        silently. ``dry_run=true`` reports what would go without deleting.
+        """
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        from memoratum import retention
+
+        days = settings.retention_days or None
+        result = retention.sweep(conn, dry_run=dry_run, days=days)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=None,
+            action="maintenance.prune",
+            resource_type="retention",
+            resource_id=None,
+            metadata={"dry_run": dry_run},
+        )
+        return result
+
+    @app.post("/v4/maintenance/reap-jobs")
+    def reap_jobs(conn: DbConn, authorization: str | None = Header(default=None)):
+        """Force one reaper pass and report what was recovered.
+
+        Exists because the API alone cannot always clear a wedged project: if a
+        stranded job's lease is somehow still in the future, cancel legitimately
+        refuses because a worker may be alive. This endpoint reports those cases so
+        an operator knows to reach for scripts/recover_stuck_jobs.py --force.
+        """
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        reaped = jobs.reap_stale(conn)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=None,
+            action="maintenance.jobs_reaped",
+            resource_type="job",
+            resource_id=None,
+            metadata={"reaped": len(reaped)},
+        )
+        return {
+            "reaped": reaped,
+            "wedged_projects": jobs.wedged_projects(conn),
+        }
+
     @app.post("/v4/jobs/{job_id}/cancel")
     def cancel_job(job_id: str, conn: DbConn, authorization: str | None = Header(default=None)):
         job = jobs.get(conn, job_id)
@@ -3169,10 +3347,14 @@ def create_app(
                 )
                 if denied is not None:
                     return denied
-        if job["status"] != "queued":
-            return _error("CONFLICT", "only queued jobs can be cancelled", 409)
+        if job["status"] not in {"queued", "running"}:
+            return _error("CONFLICT", "job is no longer cancellable", 409)
+        if job["status"] == "running" and not jobs.is_stuck(conn, job_id):
+            # A live lease means a worker is genuinely making progress. Live work
+            # is never interrupted; the reaper will deal with it if the worker dies.
+            return _error("CONFLICT", "job is actively progressing", 409)
         if not jobs.cancel(conn, job_id):
-            return _error("CONFLICT", "job is no longer queued", 409)
+            return _error("CONFLICT", "job is no longer cancellable", 409)
         payload = job.get("payload") or {}
         project_id = _job_project(conn, job)
         if job["kind"] == "purge_project" and project_id:
@@ -3312,8 +3494,89 @@ def create_app(
             ),
         }
 
+    @app.middleware("http")
+    async def _instrument(request: Request, call_next):
+        """Record latency and status under the registered path template.
+
+        The concrete path is never used as a label: it embeds memory and document
+        ids, which is both unbounded cardinality and an identifier leak.
+        """
+        if request.url.path in metrics.SELF_EXEMPT_PATHS:
+            return await call_next(request)
+        started = time.perf_counter()
+        response = await call_next(request)
+        route = request.scope.get("route")
+        template = getattr(route, "path", None) or metrics.UNMATCHED
+        duration = time.perf_counter() - started
+        metrics.record_request(request.method, template, response.status_code, duration)
+        logging_setup.request_completed(
+            request.method, template, response.status_code, duration * 1000
+        )
+        return response
+
+    def _readiness() -> tuple[bool, dict[str, str]]:
+        """Coarse readiness. Names and status only -- no paths, counts, or errors."""
+        checks = {"database": "ok", "migrations": "ok"}
+        healthy = True
+        try:
+            probe = db.connect(settings.db_path)
+            try:
+                probe.execute("SELECT 1").fetchone()
+                expected = len(db._MIGRATIONS)
+                actual = probe.execute(
+                    "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+                ).fetchone()[0]
+                if actual < expected:
+                    checks["migrations"] = "pending"
+                    healthy = False
+                elif actual > expected:
+                    checks["migrations"] = "diverged"
+                    healthy = False
+            finally:
+                probe.close()
+        except Exception:  # noqa: BLE001 - readiness must never raise
+            checks["database"] = "unavailable"
+            healthy = False
+        return healthy, checks
+
     @app.get("/health")
     def health() -> dict[str, Any]:
+        """Legacy alias for liveness.
+
+        The container HEALTHCHECK probes this path; replacing its behaviour would
+        break every existing deployment's health monitoring.
+        """
         return {"ok": True}
+
+    @app.get("/health/live")
+    def health_live() -> dict[str, Any]:
+        """Liveness: the process is running. Never fails on a degraded dependency."""
+        return {"ok": True}
+
+    @app.get("/health/ready")
+    def health_ready() -> JSONResponse:
+        """Readiness: this process can serve traffic right now."""
+        healthy, checks = _readiness()
+        return JSONResponse(
+            status_code=200 if healthy else 503, content={"ok": healthy, "checks": checks}
+        )
+
+    @app.get("/metrics")
+    def prometheus_metrics() -> Response:
+        """Local Prometheus exposition. Loopback-scoped like /health; no egress."""
+        conn = db.connect(settings.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS n, MIN(created_at) AS oldest FROM jobs GROUP BY status"
+            ).fetchall()
+            by_status = {str(r["status"]): int(r["n"]) for r in rows}
+            now = time.time()
+            oldest = min(
+                (float(r["oldest"]) for r in rows if r["status"] == "queued"), default=None
+            )
+            metrics.record_job_depth(by_status, (now - oldest) if oldest is not None else 0.0)
+        finally:
+            conn.close()
+        return Response(content=metrics.render(), media_type=metrics.CONTENT_TYPE)
 
     return app

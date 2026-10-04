@@ -55,6 +55,9 @@ def run_once(
     job = jobs.claim(conn, worker=worker_id)
     if job is None:
         return None
+    # Renew the lease before doing any work. Long jobs renew again via
+    # jobs.update_result (see the bulk_memories loop), which doubles as a heartbeat.
+    jobs.heartbeat(conn, job["id"])
     try:
         result = _dispatch(
             conn,
@@ -384,6 +387,27 @@ def _dispatch(
     raise ValueError(f"unknown job kind: {kind}")
 
 
+def _maybe_sweep(conn: sqlite3.Connection, settings: Settings, state: dict[str, float]) -> None:
+    """Run the retention sweep at most once a day, if the operator opted in.
+
+    Opt-in rather than automatic: silently deleting audit or memory-history data
+    would be a worse failure than a database file that keeps growing, so
+    MEMORATUM_RETENTION_DAYS defaults to 0 and this does nothing until set.
+    """
+    days = getattr(settings, "retention_days", 0) or 0
+    if days <= 0:
+        return
+    now = time.time()
+    if now - state["last_sweep"] < 86400:
+        return
+    state["last_sweep"] = now
+    from memoratum import logging_setup, retention
+
+    report = retention.sweep(conn, days=days)
+    deleted = {k: v for k, v in report.get("deleted", {}).items() if v}
+    logging_setup.log_event("retention.sweep", deleted=deleted, retention_days=days)
+
+
 def main() -> None:
     settings = Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
@@ -408,9 +432,12 @@ def main() -> None:
             dims=settings.vector_store_dims or settings.embeddings_dims,
         )
     print(f"memoratum-worker: {worker_id} polling {settings.db_path}")
+    backoff = 1.0
+    state = {"last_sweep": 0.0}
     while not _stop:
-        conn = db.connect(settings.db_path)
+        conn = None
         try:
+            conn = db.connect(settings.db_path)
             vector_store = shared_vector_store or build_vector_store(
                 settings.vector_store,
                 conn=conn,
@@ -420,6 +447,14 @@ def main() -> None:
                 collection_name=settings.vector_store_collection,
                 dims=settings.vector_store_dims or settings.embeddings_dims,
             )
+            # Recover work whose worker died. Without this a SIGKILLed worker's job
+            # is stranded forever, which for purge_project wedges a project.
+            reaped = jobs.reap_stale(conn)
+            if reaped:
+                print(
+                    f"memoratum-worker: reaped {len(reaped)} stale job(s): "
+                    + ", ".join(f"{r['kind']}:{r['id'][:8]}" for r in reaped)
+                )
             if (
                 run_once(
                     conn,
@@ -432,8 +467,25 @@ def main() -> None:
                 is None
             ):
                 time.sleep(interval)
+            backoff = 1.0
+            _maybe_sweep(conn, settings, state)
+        except Exception as exc:  # noqa: BLE001 — a worker must not die on one bad job
+            # A transient SQLite lock or a provider blip used to kill the process
+            # outright, which also stranded whatever job it was holding. Log, wait,
+            # and keep going. The lease makes the interrupted job recoverable.
+            print(
+                f"memoratum-worker: {worker_id} iteration failed "
+                f"({type(exc).__name__}: {exc}); retrying in {backoff:.0f}s"
+            )
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60.0)
         finally:
-            conn.close()
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception as close_exc:  # noqa: BLE001
+                    # Never let a close failure mask the original error.
+                    print(f"memoratum-worker: connection close failed: {close_exc}")
     if shared_vector_store is not None:
         shared_vector_store.close()
 

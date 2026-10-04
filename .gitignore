@@ -6,6 +6,12 @@ build/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.log
+.DS_Store
 .env
 data/
 .memoratum-data/
@@ -14,6 +20,9 @@ data/
 
 # local-only working notes (never commit)
 docs/RESEARCH.md
+
+# local session driver for Spec Kit (references `opencode run --auto`)
+scripts/prod-loop.sh
 
 node_modules/
 dist/

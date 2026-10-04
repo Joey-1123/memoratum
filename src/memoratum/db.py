@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -384,6 +385,29 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'READER';
     """,
+    # 28: job leases. A claim without a deadline is unrecoverable -- an
+    # uncatchable worker kill (SIGKILL, OOM) leaves the row `running` forever,
+    # a fresh claim() returns None, and cancel() refuses it. lease_expires_at
+    # defaults to 0, meaning "no lease held", so pre-existing running rows are
+    # treated as dead and recovered by the reaper on first pass.
+    """
+    ALTER TABLE jobs ADD COLUMN lease_expires_at REAL NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN heartbeat_at REAL;
+    CREATE INDEX IF NOT EXISTS idx_jobs_lease ON jobs(status, lease_expires_at);
+    """,
+    # 29: retention policy registry. Stored as data so "every table has a policy"
+    # is a test assertion rather than something a reader has to notice.
+    """
+    CREATE TABLE IF NOT EXISTS retention_policies(
+      table_name TEXT PRIMARY KEY,
+      policy_class TEXT NOT NULL
+        CHECK (policy_class IN
+          ('retain_indefinitely','cascaded','timed','size_bounded')),
+      retention_days INTEGER,
+      rationale TEXT NOT NULL,
+      CHECK (retention_days IS NULL OR retention_days > 0)
+    );
+    """,
     """
     PRAGMA foreign_keys=OFF;
     DROP TABLE IF EXISTS documents_project_scoped;
@@ -493,24 +517,116 @@ def connect(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA busy_timeout=5000")
+    db.execute("PRAGMA busy_timeout=15000")
     db.execute("PRAGMA foreign_keys=ON")
     db.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at REAL NOT NULL)"
     )
     current = db.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
+    if current > len(_MIGRATIONS):
+        raise RuntimeError(
+            f"database schema version {current} is ahead of this build"
+            f" ({len(_MIGRATIONS)} migrations); refusing to start against a newer schema"
+        )
     for i, sql in enumerate(_MIGRATIONS, start=1):
         if i > current:
-            db.executescript(sql)
-            db.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", (i, time.time())
-            )
+            _apply_migration(db, i, sql)
+    _verify_schema(db)
+    from memoratum.retention import seed_policies
+
+    seed_policies(db)
     db.commit()
     return db
 
 
+def _apply_migration(db: sqlite3.Connection, version: int, sql: str) -> None:
+    """Apply one migration atomically and record it in the same transaction.
+
+    ``executescript()`` issues an implicit COMMIT before it runs and auto-commits
+    each statement, so a migration that failed halfway used to leave partial DDL
+    behind and made every later startup attempt fail on the leftover object.
+
+    BEGIN/COMMIT are placed inside the script text rather than around the call,
+    because ``executescript`` parses the whole string at once -- that keeps trigger
+    bodies containing semicolons intact, which splitting the SQL on ``;`` would not.
+
+    ``version`` and ``applied_at`` are interpolated rather than bound because
+    ``executescript`` accepts no parameters. Both are produced here, never
+    caller-supplied.
+    """
+    now = float(time.time())
+    stamp = f"INSERT INTO schema_migrations(version, applied_at) VALUES ({int(version)}, {now});"
+
+    if "PRAGMA foreign_keys" in sql:
+        # PRAGMA foreign_keys is a no-op inside a transaction, so this migration
+        # cannot be wrapped. It runs unwrapped and is covered by the post-apply
+        # integrity and foreign-key verification instead.
+        db.execute("PRAGMA foreign_keys=OFF")
+        try:
+            db.executescript(sql)
+            db.executescript(stamp)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.execute("PRAGMA foreign_keys=ON")
+        return
+
+    body = sql.strip().rstrip(";").rstrip()
+    try:
+        db.executescript(f"BEGIN;\n{body};\n{stamp}\nCOMMIT;")
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _verify_schema(db: sqlite3.Connection) -> None:
+    """Fail startup loudly rather than serving from a broken schema."""
+    result = db.execute("PRAGMA integrity_check").fetchone()
+    if not result or result[0] != "ok":
+        raise RuntimeError(f"database integrity check failed after migrate: {result}")
+    violations = db.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"foreign key violations after migrate: {violations}")
+
+
 def _now() -> float:
     return time.time()
+
+
+@contextlib.contextmanager
+def transaction(db: sqlite3.Connection):
+    """Single commit boundary for one logical operation.
+
+    Helpers used to call ``db.commit()`` themselves, so a composite operation
+    spanning several helpers issued several independent commits and a crash
+    between them left half the work applied. Callers now own the boundary:
+
+        with db.transaction(conn):
+            db.create_document(conn, ..., commit=False)
+            db.create_memory(conn, ..., commit=False)
+            jobs.enqueue(conn, ..., commit=False)
+
+    BEGIN IMMEDIATE takes the write lock up front so two writers cannot
+    interleave; SQLite allows one writer at a time anyway, and acquiring it early
+    turns a mid-transaction lock failure into an up-front one.
+    """
+    try:
+        db.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError:
+        # A caller already opened a transaction; join it rather than fail.
+        pass
+    try:
+        yield db
+    except Exception:
+        try:
+            db.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    else:
+        db.commit()
 
 
 def create_document(
@@ -523,7 +639,13 @@ def create_document(
     expires_at: float | None = None,
     org_id: str | None = None,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
+    """Create (or refresh) a document.
+
+    ``commit=False`` lets a caller compose this into a larger transaction instead
+    of forcing an independent durability point.
+    """
     now = _now()
     meta = json.dumps(metadata or {})
     if custom_id is not None:
@@ -543,7 +665,8 @@ def create_document(
                 (content, now, meta, expires_at, org_id, project_id, row["id"]),
             )
             db.execute("DELETE FROM chunks WHERE document_id = ?", (row["id"],))
-            db.commit()
+            if commit:
+                db.commit()
             return get_document(db, row["id"])
     doc_id = uuid.uuid4().hex
     db.execute(
@@ -551,7 +674,8 @@ def create_document(
         " expires_at, org_id, project_id) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)",
         (doc_id, container_tag, custom_id, content, now, now, meta, expires_at, org_id, project_id),
     )
-    db.commit()
+    if commit:
+        db.commit()
     return get_document(db, doc_id)
 
 
@@ -634,7 +758,13 @@ def create_memory(
     expires_at: float | None = None,
     actor_key_hash: str | None = None,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
+    """Create the canonical memory projection plus its history and domain event.
+
+    ``commit=False`` lets a caller compose this into a larger transaction so the
+    memory, its domain event, and any follow-up job all share one commit.
+    """
     if not text.strip():
         raise ValueError("memory text must be non-empty")
     metadata = clean_memory_metadata(metadata)
@@ -678,7 +808,8 @@ def create_memory(
             memory_id=memory_id,
             data={"memory": text, "metadata": metadata},
         )
-    db.commit()
+    if commit:
+        db.commit()
     return get_memory(db, memory_id)
 
 
@@ -750,8 +881,12 @@ def ensure_input_memory(
     org_id: str | None,
     document_id: str,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> str:
-    """Idempotently project one raw Mem0 input message into a memory record."""
+    """Idempotently project one raw Mem0 input message into a memory record.
+
+    ``commit=False`` joins the caller's transaction instead of forcing one.
+    """
     normalized = dict(metadata or {})
     rows = conn.execute(
         "SELECT id, text FROM memories WHERE document_id = ? AND state != 'deleted'",
@@ -768,6 +903,7 @@ def ensure_input_memory(
         org_id=org_id,
         document_id=document_id,
         project_id=project_id,
+        commit=commit,
     )["id"]
 
 
@@ -1182,6 +1318,7 @@ def complete_idempotency(
     request_hash: str,
     response: Any,
     job_id: str | None = None,
+    commit: bool = True,
 ) -> None:
     changed = conn.execute(
         "UPDATE idempotency_keys SET status = 'done', response = ?, job_id = ?"
@@ -1190,7 +1327,8 @@ def complete_idempotency(
     ).rowcount
     if changed != 1:
         raise RuntimeError("idempotency claim is missing or does not match")
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def release_idempotency(conn: sqlite3.Connection, *, scope: str, key: str) -> None:
@@ -1516,8 +1654,13 @@ def record_usage(
     units: int = 1,
     input_chars: int = 0,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> None:
-    """Increment one local per-key usage row; no data leaves the process."""
+    """Increment one local per-key usage row; no data leaves the process.
+
+    ``commit=False`` lets usage metering join the caller's transaction instead of
+    adding a second durability point to a single logical operation.
+    """
     if operation not in _USAGE_COLUMNS:
         raise ValueError(f"unknown usage operation: {operation}")
     if units < 0 or input_chars < 0:
@@ -1565,7 +1708,8 @@ def record_usage(
             now,
         ),
     )
-    db.commit()
+    if commit:
+        db.commit()
 
 
 def list_usage(
@@ -1629,6 +1773,7 @@ def append_audit_event(
     resource_id: str | None = None,
     outcome: str = "succeeded",
     metadata: dict[str, Any] | None = None,
+    commit: bool = True,
 ) -> str:
     """Append an accountability event without storing credentials or payloads."""
     if actor_kind not in {"admin", "key", "anonymous", "oidc"}:
@@ -1657,7 +1802,8 @@ def append_audit_event(
             json.dumps(metadata or {}, separators=(",", ":")),
         ),
     )
-    db.commit()
+    if commit:
+        db.commit()
     return event_id
 
 

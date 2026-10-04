@@ -167,10 +167,14 @@ def test_replay_does_not_reset_a_running_delivery_job(tmp_path, monkeypatch) -> 
         "SELECT id FROM webhook_deliveries WHERE webhook_id = ?", (hook["id"],)
     ).fetchone()["id"]
     payload = json.dumps({"delivery_id": delivery_id}, separators=(",", ":"))
+    # Model a LIVE claim: a live lease is what makes this job untouchable. A raw
+    # `status='running'` with no lease means a DEAD worker, which the reaper is
+    # required to recover. See tests/test_jobs_lease.py for that other half.
     conn.execute(
-        "UPDATE jobs SET status = 'running', worker = 'worker-1' WHERE kind = 'webhook_delivery'"
-        " AND payload = ?",
-        (payload,),
+        "UPDATE jobs SET status = 'running', worker = 'worker-1',"
+        " lease_expires_at = ?, heartbeat_at = ?"
+        " WHERE kind = 'webhook_delivery' AND payload = ?",
+        (time.time() + 300, time.time(), payload),
     )
     conn.commit()
 

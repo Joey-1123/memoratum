@@ -11,10 +11,18 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --group dev
       - run: uv run python scripts/check_no_telemetry.py
-      - run: MEM0_TELEMETRY=false uv run pytest tests/test_mem0_official_sdk.py tests/test_mem0_official_lifecycle.py tests/test_mem0_webhooks.py -q
+      # --no-cov: the coverage floor is a property of the FULL suite, not of a
+      # 3-test subset. addopts always measures coverage, so a narrow run must opt
+      # out or it fails the floor at ~1%.
+      - run: MEM0_TELEMETRY=false uv run pytest tests/test_mem0_official_sdk.py tests/test_mem0_official_lifecycle.py tests/test_mem0_webhooks.py -q --no-cov
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q
+      # Ratchets, so the coverage floor stays meaningful. The floor may rise in
+      # the same PR that adds tests; it may not fall without an amendment, and
+      # suppressions may shrink but not grow.
+      - run: uv run python scripts/check_coverage_floor.py
+      - run: uv run python scripts/check_no_new_suppressions.py
   ts-client:
     runs-on: ubuntu-latest
     steps:

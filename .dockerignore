@@ -1,0 +1,47 @@
+# Keep the build context minimal and prevent host state leaking into the image.
+.git/
+.gitignore
+.github/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.memoratum-data/
+*.db
+*.sqlite*
+*.sqlite-wal
+*.sqlite-shm
+
+# Secrets — never bake credentials into an image
+.env
+.env.*
+!.env.example
+.webhook-encryption-key
+
+# Node
+node_modules/
+dist/
+build/
+
+# Local-only working notes
+docs/RESEARCH.md
+
+# Spec Kit session state (machine-local, not part of the product)
+.specify/
+specs/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.log
