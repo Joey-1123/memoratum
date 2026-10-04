@@ -145,17 +145,17 @@ lock while writes are non-atomic would expose interleavings the lock masks.
 
 ### Tests *(write first)*
 
-- [ ] T048 [P] [US2] `tests/test_concurrency.py::test_concurrent_requests_overlap` — 4 concurrent requests finish in ~1 round-trip, not 4 *(fail first — currently 1.48 s wall)*
-- [ ] T049 [P] [US2] `tests/test_concurrency.py::test_concurrent_writes_do_not_corrupt` — parallel writers, no partial state, no lost updates
-- [ ] T050 [P] [US2] `tests/test_concurrency.py::test_sqlite_busy_is_retried` — raise `busy_timeout`, assert writers serialise rather than fail
+- [X] T048 [P] [US2] `tests/test_concurrency.py::test_concurrent_requests_overlap` — 4 concurrent requests finish in ~1 round-trip, not 4 *(fail first — currently 1.48 s wall)*
+- [X] T049 [P] [US2] `tests/test_concurrency.py::test_concurrent_writes_do_not_corrupt` — parallel writers, no partial state, no lost updates
+- [X] T050 [P] [US2] `tests/test_concurrency.py::test_sqlite_busy_is_retried` — raise `busy_timeout`, assert writers serialise rather than fail
 
 ### Implementation
 
-- [ ] T051 [US2] Narrow `_DB_LOCK` in `get_conn` in `src/memoratum/app.py` to connection setup only; release before the endpoint body
-- [ ] T052 [US2] Add bounded writer serialisation (writers only, not readers) in `src/memoratum/app.py`
-- [ ] T053 [US2] Raise `busy_timeout` in `connect()` in `src/memoratum/db.py`
-- [ ] T054 [US2] Commit the measured before/after latency benchmark to `tests/benchmarks/concurrency.md` — required by Principle IV
-- [ ] T055 [US2] Correct `docs/OPERATIONS.md`, which currently says the server "serializes writes inside one process" — it serialised *all* traffic
+- [X] T051 [US2] Narrow `_DB_LOCK` in `get_conn` in `src/memoratum/app.py` to connection setup only; release before the endpoint body
+- [X] T052 [US2] Add bounded writer serialisation (writers only, not readers) in `src/memoratum/app.py`
+- [X] T053 [US2] Raise `busy_timeout` in `connect()` in `src/memoratum/db.py`
+- [X] T054 [US2] Commit the measured before/after latency benchmark to `tests/benchmarks/concurrency.md` — required by Principle IV
+- [X] T055 [US2] Correct `docs/OPERATIONS.md`, which currently says the server "serializes writes inside one process" — it serialised *all* traffic
 
 **Checkpoint**: quickstart Scenario 6 passes; benchmark committed.
 

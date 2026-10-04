@@ -504,7 +504,7 @@ def connect(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA busy_timeout=5000")
+    db.execute("PRAGMA busy_timeout=15000")
     db.execute("PRAGMA foreign_keys=ON")
     db.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at REAL NOT NULL)"

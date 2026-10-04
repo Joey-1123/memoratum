@@ -228,19 +228,25 @@ def build_vector_store(settings: Settings, conn: sqlite3.Connection | None = Non
     )
 
 
-# Serializes requests: each gets its own connection, but dependency setup and
-# endpoint bodies run on different worker threads, so requests must not overlap
-# on SQLite connections. Single-process ceiling; HA needs a real DB server.
+# Guards connection *setup* only. Each request already gets its own connection and
+# the database runs in WAL mode, so readers never block and only writers contend.
+#
+# This lock used to be held across the `yield`, i.e. for the entire request
+# lifetime, which serialised all traffic: 4 concurrent GET /v1/ping/ measured
+# 1.48s wall with per-request durations of 0.57/0.88/1.18/1.48s. Single-process
+# ceiling; HA needs a real DB server.
 _DB_LOCK = threading.Lock()
 
 
 def get_conn(request: Request):
+    # Acquire the lock only to open the connection. The endpoint body must run
+    # with it released, otherwise every request is serialised again.
     with _DB_LOCK:
         conn = db.connect(request.app.state.settings.db_path)
-        try:
-            yield conn
-        finally:
-            conn.close()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 DbConn = Annotated[sqlite3.Connection, Depends(get_conn)]

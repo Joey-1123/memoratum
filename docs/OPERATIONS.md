@@ -26,8 +26,15 @@ protection as the live database.
 
 ## Small-deployment HA
 
-The default server is a single-process SQLite deployment and serializes writes
-inside one process. For a small high-availability setup, run one active writer
+The default server is a single-process SQLite deployment. SQLite permits one
+writer at a time, so run exactly one active writer process against the shared
+volume.
+
+Requests are no longer serialised: the per-request database lock covers connection
+setup only and is released before the endpoint body runs, so concurrent readers
+proceed in parallel under WAL. See `tests/benchmarks/concurrency.md` for the
+measurement. Writes still contend with each other, and a contended writer waits up
+to `busy_timeout` (15s) rather than failing. For a small high-availability setup, run one active writer
 against a shared local volume, put a reverse proxy in front for TLS and
 request limits, and schedule the backup command above. Do not point multiple
 independent server processes at the same SQLite file.
