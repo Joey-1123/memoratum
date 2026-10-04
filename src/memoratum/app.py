@@ -453,6 +453,7 @@ def create_app(
         *,
         response: Any,
         job_id: str | None = None,
+        commit: bool = True,
     ) -> None:
         if claim is None or claim.status != "claimed":
             return
@@ -499,7 +500,13 @@ def create_app(
         resource_id: str | None = None,
         outcome: str = "succeeded",
         metadata: dict[str, Any] | None = None,
+        commit: bool = True,
     ) -> None:
+        """Record an audit entry.
+
+        ``commit=False`` joins the caller's transaction so the audit row shares the
+        commit boundary of the operation it describes.
+        """
         actor_kind, key_hash = actor(authorization, conn)
         db.append_audit_event(
             conn,
@@ -512,6 +519,7 @@ def create_app(
             resource_type=resource_type,
             resource_id=resource_id,
             outcome=outcome,
+            commit=commit,
             metadata=metadata,
         )
 
@@ -926,52 +934,63 @@ def create_app(
             return claim_error
         if claim is not None and claim.status == "replay":
             return claim.response
+        # One logical add, one commit boundary. Previously the document, each input
+        # memory, the ingest job and the audit row each committed independently, so
+        # a crash in between left durable content with no job to ever process it
+        # (measured: documents=1, memories=1, jobs=0).
         try:
-            content = "\n".join(f"{message.role}: {message.content}" for message in body.messages)
-            document = db.create_document(
-                conn,
-                container_tag=tag,
-                content=content,
-                metadata=body.metadata,
-                org_id=org_id,
-                project_id=project_id,
-            )
-            if not body.infer or app.state.llm is None:
-                for message in body.messages:
-                    if message.role != "system":
-                        db.ensure_input_memory(
-                            conn,
-                            text=message.content,
-                            container_tag=tag,
-                            metadata=body.metadata,
-                            org_id=org_id,
-                            document_id=document["id"],
-                            project_id=project_id,
-                        )
-            job_id = jobs.enqueue(
-                conn,
-                kind="ingest",
-                payload={
-                    "document_id": document["id"],
-                    "dreaming": "dynamic",
-                    "container_tag": tag,
-                    "org_id": org_id,
-                    "project_id": project_id,
-                },
-            )
-            audit(
-                auth,
-                conn,
-                container_tag=tag,
-                org_id=org_id,
-                project_id=project_id,
-                action="mem0.add",
-                resource_type="document",
-                resource_id=document["id"],
-                metadata={"job_id": job_id, "infer": body.infer},
-            )
-            response = {"event_id": job_id, "status": "PENDING"}
-            _finish_idempotency(conn, claim, response=response, job_id=job_id)
+            with db.transaction(conn):
+                content = "\n".join(
+                    f"{message.role}: {message.content}" for message in body.messages
+                )
+                document = db.create_document(
+                    conn,
+                    container_tag=tag,
+                    content=content,
+                    metadata=body.metadata,
+                    org_id=org_id,
+                    project_id=project_id,
+                    commit=False,
+                )
+                if not body.infer or app.state.llm is None:
+                    for message in body.messages:
+                        if message.role != "system":
+                            db.ensure_input_memory(
+                                conn,
+                                text=message.content,
+                                container_tag=tag,
+                                metadata=body.metadata,
+                                org_id=org_id,
+                                document_id=document["id"],
+                                project_id=project_id,
+                                commit=False,
+                            )
+                job_id = jobs.enqueue(
+                    conn,
+                    kind="ingest",
+                    payload={
+                        "document_id": document["id"],
+                        "dreaming": "dynamic",
+                        "container_tag": tag,
+                        "org_id": org_id,
+                        "project_id": project_id,
+                    },
+                    commit=False,
+                )
+                audit(
+                    auth,
+                    conn,
+                    container_tag=tag,
+                    org_id=org_id,
+                    project_id=project_id,
+                    action="mem0.add",
+                    resource_type="document",
+                    resource_id=document["id"],
+                    metadata={"job_id": job_id, "infer": body.infer},
+                    commit=False,
+                )
+                response = {"event_id": job_id, "status": "PENDING"}
+                _finish_idempotency(conn, claim, response=response, job_id=job_id, commit=False)
             return response
         except Exception:
             if claim is not None and claim.status == "claimed":

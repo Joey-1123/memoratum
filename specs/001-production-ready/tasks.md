@@ -120,19 +120,19 @@ Goal: one logical operation, one commit; enqueue shares the transaction with its
 
 ### Tests *(write first)*
 
-- [ ] T038 [P] [US2] `test_failure_injection.py::test_add_is_atomic_at_every_commit_point` — inject a failure at each commit index, re-open, assert all-or-nothing *(fail first — currently 5 commits, yields `docs=1 mem=1 jobs=0`)*
-- [ ] T039 [P] [US2] `test_failure_injection.py::test_no_orphan_document_without_job` — no document may sit `queued` with no claimable job *(fail first)*
-- [ ] T040 [P] [US2] `tests/test_data_integrity.py::test_commit_count_per_logical_write` — assert exactly 1 commit per logical add *(fail first — currently 5)*
-- [ ] T041 [P] [US2] `tests/test_facts_create.py::test_fact_and_memory_commit_together` — a fact-insert failure must not leave an orphan memory
+- [X] T038 [P] [US2] `test_failure_injection.py::test_add_is_atomic_at_every_commit_point` — inject a failure at each commit index, re-open, assert all-or-nothing *(fail first — currently 5 commits, yields `docs=1 mem=1 jobs=0`)*
+- [X] T039 [P] [US2] `test_failure_injection.py::test_no_orphan_document_without_job` — no document may sit `queued` with no claimable job *(fail first)*
+- [X] T040 [P] [US2] `tests/test_data_integrity.py::test_commit_count_per_logical_write` — assert exactly 1 commit per logical add *(fail first — currently 5)*
+- [X] T041 [P] [US2] `tests/test_facts_create.py::test_fact_and_memory_commit_together` — a fact-insert failure must not leave an orphan memory
 
 ### Implementation
 
-- [ ] T042 [US2] Add `transaction(conn)` context manager (`BEGIN IMMEDIATE` / commit / rollback) to `src/memoratum/db.py`
-- [ ] T043 [US2] Audit all **63** `commit()` call sites across 9 modules (`app.py` 13, `db.py` 21, `webhooks.py` 8, `jobs.py` 7, `vectorstore.py` 5, `facts.py` 3, `worker.py` 3, `backup.py` 1, `dreaming.py` 1, `search.py` 1). Record the audit in the PR; do not edit mechanically.
-- [ ] T044 [US2] Replace the internal commits in `create_document`, `create_memory`, `ensure_fact_memory`, `update_memory`, `soft_delete_memory`, `categorize_memory`, `set_status` in `src/memoratum/db.py` with `commit: bool = True`
-- [ ] T045 [US2] Convert the `mem0_add` route in `src/memoratum/app.py` to a single `transaction()` block
-- [ ] T046 [US2] Convert the remaining composite write routes in `src/memoratum/app.py` and the callers in `src/memoratum/facts.py`, `src/memoratum/worker.py`
-- [ ] T047 [US2] Keep `db.commit()` inside `backup.py` — backup/restore was verified correct and is out of scope
+- [X] T042 [US2] Add `transaction(conn)` context manager (`BEGIN IMMEDIATE` / commit / rollback) to `src/memoratum/db.py`
+- [X] T043 [US2] Audit all **63** `commit()` call sites across 9 modules (`app.py` 13, `db.py` 21, `webhooks.py` 8, `jobs.py` 7, `vectorstore.py` 5, `facts.py` 3, `worker.py` 3, `backup.py` 1, `dreaming.py` 1, `search.py` 1). Record the audit in the PR; do not edit mechanically.
+- [X] T044 [US2] Replace the internal commits in `create_document`, `create_memory`, `ensure_fact_memory`, `update_memory`, `soft_delete_memory`, `categorize_memory`, `set_status` in `src/memoratum/db.py` with `commit: bool = True`
+- [X] T045 [US2] Convert the `mem0_add` route in `src/memoratum/app.py` to a single `transaction()` block
+- [X] T046 [US2] Convert the remaining composite write routes in `src/memoratum/app.py` and the callers in `src/memoratum/facts.py`, `src/memoratum/worker.py`
+- [X] T047 [US2] Keep `db.commit()` inside `backup.py` — backup/restore was verified correct and is out of scope
 
 **Checkpoint**: quickstart Scenario 5 passes; commit count per logical write is 1.
 
