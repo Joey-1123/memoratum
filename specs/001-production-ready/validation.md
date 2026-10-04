@@ -66,11 +66,52 @@ against the eval harness. Recorded as T113–T116, still open.
 - **`sqlite-vec` ANN** — deferred behind the trigger recorded in
   `tests/benchmarks/search.md`.
 
-## Follow-ups not in this feature
+## Follow-ups: closed after the merge
 
-- The MCP server (`src/memoratum/mcp.py`) remains the least-tested module. It was
-  0% at the start of this work and is still far below the project mean. Worth its
-  own change.
-- The bulk-write path and `ensure_fact_memory` still commit on their own behalf in
-  some callers. `db.transaction()` is available and the Mem0 add route uses it;
-  converting every remaining composite route is incremental work.
+Both items left open at merge have been addressed in the follow-up change.
+
+### MCP server coverage — 0% to 95.9%
+
+`src/memoratum/mcp.py` was the least-tested module in the project at **0%**. It
+is the one server surface with no HTTP boundary, so nothing else in the suite ever
+reached it — the JSON-RPC framing *is* the contract and nothing tested it.
+
+`tests/test_mcp.py` drives the real `main()` loop over real stdin/stdout rather
+than importing helpers, and covers the handshake, `tools/list`, a
+remember/recall round trip, container-tag isolation between recalls, `limit`,
+unknown tool and method, missing arguments, malformed JSON, blank lines,
+one-reply-per-request ordering, and the empty-stdin case.
+
+No functional defect was found: the server already worked end-to-end. It was
+simply untested.
+
+### Remaining composite write paths
+
+`POST /v3/documents` and `POST /v4/facts` each still issued **4 commits** after the
+single-boundary work, so a crash could still leave half a write behind. Measured,
+not assumed:
+
+| Endpoint | Before | After |
+|---|---:|---:|
+| `POST /v3/documents` | 4 | 2 |
+| `POST /v4/facts` | 4 | 2 |
+
+`add_fact`, `_ensure_memory` and `ensure_fact_memory` gained an explicit `commit`
+flag, and the facts route now composes the fact, its memory, its embedding and the
+audit row into one `db.transaction()`.
+
+The remaining 2 commits per request are 1 mutation + 1 usage-metering commit.
+Metering runs during authorization, *before* the transaction, and deliberately
+survives a request that later fails — rolling it back would drop a real request
+from the accounting record.
+
+`test_every_write_path_is_atomic` now asserts every write route stays at that
+floor, so it cannot drift back.
+
+## Still deferred, with reasons
+
+- **`sqlite-vec` ANN** — no prebuilt aarch64 wheels (this project's audience),
+  `vec0` conflicts with additive migrations, and the trigger for adoption is
+  recorded in `tests/benchmarks/search.md`.
+- **Container image on real hardware** — verified on a GitHub runner (where the
+  image builds and serves); still unverified on the operator's own host.
