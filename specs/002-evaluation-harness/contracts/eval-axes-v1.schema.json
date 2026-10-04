@@ -1,0 +1,420 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joeyholmes/memoratum/specs/002-evaluation-harness/eval-axes-v1.schema.json",
+  "title": "Memoratum evaluation axes result v1",
+  "description": "Machine-checkable contract for the scope isolation, cost, latency and grounding axes. Companion to contracts/eval-axes-v1.md. Stability: keys may be added within v1; existing keys are not removed or retyped. A null figure means the metric was not exercised and MUST NOT be read as zero.",
+  "type": "object",
+  "required": ["axis", "schema", "manifest", "gate"],
+  "additionalProperties": true,
+  "properties": {
+    "axis": {
+      "enum": ["isolation", "cost", "latency", "grounding", "longmemeval", "locomo", "mc10"]
+    },
+    "schema": { "const": "memoratum-eval-axes-v1" },
+    "dataset": { "type": "string" },
+    "n": { "type": "integer", "minimum": 0 },
+    "seconds": { "type": "number", "minimum": 0 },
+    "manifest": { "$ref": "#/$defs/manifest" },
+
+    "isolation": { "$ref": "#/$defs/isolation" },
+    "cost": { "$ref": "#/$defs/cost" },
+    "latency": { "$ref": "#/$defs/latency" },
+    "grounding": { "$ref": "#/$defs/grounding" },
+    "aggregate": { "type": "object" },
+    "questions": { "type": "array" },
+
+    "gate": { "$ref": "#/$defs/gate" }
+  },
+
+  "$defs": {
+    "nullableNumber": {
+      "type": ["number", "null"],
+      "description": "null means the metric was not exercised. It MUST fail a gate and MUST NOT be read as 0."
+    },
+    "nullableInt": { "type": ["integer", "null"] },
+    "rate": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+
+    "hardware": {
+      "type": "object",
+      "description": "Required whenever latency_config is present. Without it a latency baseline is invalid and fails validation.",
+      "required": ["cpu", "cores", "ram_mb", "python", "platform"],
+      "additionalProperties": true,
+      "properties": {
+        "cpu": { "type": "string", "minLength": 1 },
+        "cores": { "type": "integer", "minimum": 1 },
+        "ram_mb": { "type": "integer", "minimum": 1 },
+        "python": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "manifest": {
+      "type": "object",
+      "description": "Reproducibility record. The seven original keys are unchanged so older committed results stay readable.",
+      "required": [
+        "schema",
+        "seed",
+        "requested_n",
+        "n",
+        "ks",
+        "modes",
+        "embedder",
+        "vector_store",
+        "data_sha256"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "schema": { "type": "string" },
+        "seed": { "type": "integer" },
+        "requested_n": { "type": "integer", "minimum": 0 },
+        "n": { "type": "integer", "minimum": 0 },
+        "ks": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "modes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "embedder": { "type": "string", "minLength": 1 },
+        "vector_store": { "type": "string", "minLength": 1 },
+        "data_sha256": { "type": "string", "minLength": 1 },
+
+        "scope_config": {
+          "type": "object",
+          "required": ["container_tag", "projects", "expected_documents"],
+          "additionalProperties": false,
+          "properties": {
+            "container_tag": { "type": "string", "minLength": 1 },
+            "projects": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "type": "string", "minLength": 1 },
+              "description": "At least 2 projects, or the isolation axis cannot detect anything."
+            },
+            "expected_documents": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Asserted after ingest. Never inferred from a zero leak count: omitting project_id on one side silently creates a NULL-scope document that makes leak counts look clean."
+            }
+          }
+        },
+
+        "cost_config": {
+          "type": "object",
+          "required": ["unit", "chars_per_ws_token", "mean_chunks_per_document", "retrieval_limit"],
+          "additionalProperties": true,
+          "properties": {
+            "unit": {
+              "enum": ["chars", "ws_tokens"],
+              "description": "bytes is deliberately not offered: the corpus is pure ASCII so bytes carry zero information, and on non-ASCII input the same metric inflates 1.1-3x invisibly."
+            },
+            "chars_per_ws_token": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Measured for this corpus and recorded. Never hardcoded: 4.0 is a real BPE calibration for English prose but is unverifiable without a tokenizer dependency this project refuses."
+            },
+            "mean_chunks_per_document": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Sizes the retrieval budget so cost and recall share one unit."
+            },
+            "retrieval_limit": { "type": "integer", "minimum": 1 },
+            "tokenizer": {
+              "type": ["string", "null"],
+              "description": "Non-gating. Its presence MUST NOT change the gated figure, which would make the metric machine-dependent."
+            }
+          }
+        },
+
+        "latency_config": {
+          "type": "object",
+          "required": ["samples", "warmup", "ladder", "hardware"],
+          "additionalProperties": true,
+          "properties": {
+            "samples": {
+              "type": "integer",
+              "minimum": 20,
+              "description": "Floor is 20. At n=5 a 1.0x gate needs a +69% band and cannot detect anything smaller than a 70% regression, which makes it theatre. 30 is the sweet spot: +7% statistical headroom against a +40% band."
+            },
+            "warmup": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Discarded iterations. Without them the first call pays FTS5 tokenizer setup and statement compilation."
+            },
+            "ladder": {
+              "type": "array",
+              "minItems": 3,
+              "items": { "type": "integer", "minimum": 1 },
+              "description": "FR-004 requires at least three corpus sizes."
+            },
+            "prefilter_min": {
+              "type": ["integer", "null"],
+              "description": "MEMORATUM_SEARCH_PREFILTER_MIN when pinned. The default 512 sits between 400 and 1600, so a ladder crossing it measures an algorithm switch rather than a size change."
+            },
+            "hardware": { "$ref": "#/$defs/hardware" }
+          }
+        },
+
+        "grounding_config": {
+          "type": "object",
+          "required": ["normalization", "rule_by_kind"],
+          "additionalProperties": true,
+          "properties": {
+            "normalization": {
+              "const": "nfkc+whitespace+casefold",
+              "description": "Measured to make no difference on this corpus (99.7% both ways), retained as defence against unicode folding differences."
+            },
+            "rule_by_kind": {
+              "type": "object",
+              "required": ["chunk", "memory", "fact"],
+              "additionalProperties": false,
+              "properties": {
+                "chunk": { "const": "chunks.text" },
+                "memory": { "const": "memories.text" },
+                "fact": { "const": "subject predicate object" }
+              },
+              "description": "Per-kind rules are mandatory. The fact leg can never pass exact substring because _fact_text renders 'subject predicate object', so a single global threshold would score memories mode 0.0 and documents mode 1.0 for identical evidence."
+            },
+            "tier2_enabled": { "type": "boolean" },
+            "judge": {
+              "type": ["object", "null"],
+              "description": "Opt-in, never gating. null MUST NOT fail the run."
+            }
+          }
+        }
+      }
+    },
+
+    "gate": {
+      "type": "object",
+      "required": ["status", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["pass", "fail"] },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "status"],
+            "additionalProperties": true,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["pass", "fail"] },
+              "value": { "$ref": "#/$defs/nullableNumber" },
+              "bound": { "$ref": "#/$defs/nullableNumber" },
+              "phase": { "type": "string" },
+              "delta": { "type": ["number", "string"] },
+              "reason": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "isolation": {
+      "type": "object",
+      "required": ["scoped_queries", "leaked_hits", "leaked_queries", "returned_hits"],
+      "additionalProperties": true,
+      "properties": {
+        "scoped_queries": { "type": "integer", "minimum": 0 },
+        "leaked_hits": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "THE GATE. The correct value is exactly zero, so there is no tolerance to tune and no false-positive surface. Gate fails when > 0."
+        },
+        "leaked_queries": { "type": "integer", "minimum": 0 },
+        "returned_hits": { "type": "integer", "minimum": 0 },
+        "leak_rate": {
+          "$ref": "#/$defs/rate",
+          "description": "Trend signal only, never a gate. A rate over a variable denominator is exactly the shape that hides a leak."
+        },
+        "query_leak_rate": {
+          "$ref": "#/$defs/rate",
+          "description": "leaked_queries / scoped_queries. Robust to varying hits-per-query, which the per-hit rate is not."
+        },
+        "unscoped_queries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Excluded from both the gate numerator and denominator. Every scope filter is conditional on `is not None`, so project_id=null genuinely means no scope requested."
+        },
+        "unscoped_cross_scope_hits": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Informational. Expected to be non-zero."
+        },
+        "leaks": { "type": "array", "items": { "type": "object" } },
+        "leaks_detail": {
+          "type": "array",
+          "description": "Per-leak attribution required by SC-004.",
+          "items": {
+            "type": "object",
+            "required": ["hit_id", "originating_project_id", "requested_project_id", "rank"],
+            "additionalProperties": true,
+            "properties": {
+              "hit_id": { "type": "string", "minLength": 1 },
+              "document_id": { "type": ["string", "null"] },
+              "originating_project_id": { "type": ["string", "null"] },
+              "requested_project_id": { "type": ["string", "null"] },
+              "rank": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "per_query": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["returned_hits", "leaked_hits", "leak_rate"],
+            "additionalProperties": true,
+            "properties": {
+              "scope": { "type": ["string", "null"] },
+              "returned_hits": { "type": "integer", "minimum": 0 },
+              "leaked_hits": { "type": "integer", "minimum": 0 },
+              "leak_rate": {
+                "$ref": "#/$defs/rate",
+                "description": "Always emitted next to returned_hits: 0.5% over 2 hits and 0.5% over 200 hits are different facts."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "cost": {
+      "type": "object",
+      "required": ["queries", "hits", "retrieved_chars_total"],
+      "additionalProperties": true,
+      "properties": {
+        "queries": { "type": "integer", "minimum": 0 },
+        "hits": { "type": "integer", "minimum": 0 },
+        "unit": { "enum": ["chars", "ws_tokens"] },
+        "retrieved_chars_total": { "type": "integer", "minimum": 0 },
+        "retrieved_chars_mean": { "$ref": "#/$defs/nullableNumber" },
+        "retrieved_chars_p95": { "$ref": "#/$defs/nullableNumber" },
+        "retrieved_ws_tokens_mean": { "$ref": "#/$defs/nullableNumber" },
+        "token_estimate_mean": {
+          "$ref": "#/$defs/nullableNumber",
+          "description": "Derived from chars_per_ws_token. Defensible only as a ratio between two runs on the same corpus, not as an absolute token claim."
+        },
+        "chars_per_ws_token": { "type": "number", "exclusiveMinimum": 0 },
+        "tokenizer": { "type": ["string", "null"] },
+        "redundant_hits": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Hits duplicating an already-counted source row. This is what makes a cost difference attributable when recall is unchanged."
+        },
+        "token_estimate_caveat": { "type": "string" }
+      }
+    },
+
+    "latency": {
+      "type": "object",
+      "required": ["ladder"],
+      "additionalProperties": true,
+      "properties": {
+        "ladder": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["corpus_chunks", "phases"],
+            "additionalProperties": true,
+            "properties": {
+              "corpus_chunks": { "type": "integer", "minimum": 1 },
+              "phases": {
+                "type": "object",
+                "required": ["ingest", "embed", "index", "retrieve"],
+                "additionalProperties": false,
+                "properties": {
+                  "ingest": { "$ref": "#/$defs/phase" },
+                  "embed": { "$ref": "#/$defs/phase" },
+                  "index": { "$ref": "#/$defs/phase" },
+                  "retrieve": { "$ref": "#/$defs/phase" },
+                  "grounding_check": { "$ref": "#/$defs/phase" }
+                },
+                "description": "FR-004 requires ingest, embedding, indexing and retrieval reported separately, because a slow memory layer and a slow index have different fixes."
+              }
+            }
+          }
+        },
+        "hardware": { "$ref": "#/$defs/hardware" }
+      }
+    },
+
+    "phase": {
+      "type": "object",
+      "required": ["samples", "samples_ms"],
+      "additionalProperties": true,
+      "properties": {
+        "samples": { "type": "integer", "minimum": 1 },
+        "samples_ms": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "number", "minimum": 0 },
+          "description": "Raw samples. Percentiles MUST be computed from raw samples by the reader, never averaged across summaries: p95-of-p95 is not a p95."
+        },
+        "median_ms": { "$ref": "#/$defs/nullableNumber" },
+        "p95_ms": { "$ref": "#/$defs/nullableNumber" },
+        "us_per_chunk": {
+          "$ref": "#/$defs/nullableNumber",
+          "description": "Primary gate input. Hardware-independent in a way raw ms is not: sub-linear growth shows as a falling number, a regression to O(n) as a rising one."
+        },
+        "prefilter_engaged": {
+          "type": ["boolean", "null"],
+          "description": "Asserted via set_trace_callback, never assumed. A ladder crossing PREFILTER_MIN_CANDIDATES=512 measures an algorithm switch rather than a size change."
+        }
+      }
+    },
+
+    "grounding": {
+      "type": "object",
+      "required": ["hits_checked", "grounded_hits", "ungrounded_hits"],
+      "additionalProperties": true,
+      "properties": {
+        "hits_checked": { "type": "integer", "minimum": 0 },
+        "grounded_hits": { "type": "integer", "minimum": 0 },
+        "ungrounded_hits": { "type": "integer", "minimum": 0 },
+        "grounded_fraction": {
+          "$ref": "#/$defs/rate",
+          "description": "THE GATE. Proves provenance only: it does not establish correctness or relevance, which recall and MRR own."
+        },
+        "by_kind": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["checked", "grounded", "fraction"],
+            "additionalProperties": true,
+            "properties": {
+              "checked": { "type": "integer", "minimum": 0 },
+              "grounded": { "type": "integer", "minimum": 0 },
+              "fraction": {
+                "$ref": "#/$defs/rate",
+                "description": "null when checked == 0, never 0.0. A metric that was not exercised is not a passing metric."
+              }
+            }
+          }
+        },
+        "ungrounded": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["hit_id", "hit_kind", "reason"],
+            "additionalProperties": true,
+            "properties": {
+              "hit_id": { "type": "string", "minLength": 1 },
+              "hit_kind": { "enum": ["chunk", "memory", "fact", "unresolvable"] },
+              "reason": { "type": "string", "minLength": 1 },
+              "row_text_excerpt": { "type": "string" }
+            }
+          }
+        },
+        "tier2_diagnostics": {
+          "type": ["object", "null"],
+          "description": "Longest-common-substring ratio, 3-gram shingle overlap, FTS5 snippet/highlight. Diagnostic only; MUST NOT gate."
+        },
+        "judge": {
+          "type": ["object", "null"],
+          "description": "Opt-in external judge, supplementary and non-gating. null MUST NOT fail the run."
+        }
+      }
+    }
+  }
+}
