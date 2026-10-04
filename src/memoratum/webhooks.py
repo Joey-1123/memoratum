@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.client
 import ipaddress
 import json
 import os
 import secrets
 import socket
 import sqlite3
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -125,19 +127,288 @@ class UnsafeWebhookTarget(ValueError):
     """Raised when a webhook URL violates the outbound network policy."""
 
 
+# IANA special-use ranges that Python's ipaddress does NOT classify as non-global.
+# `is_global` alone is not a sufficient allowlist: it is True for all of these.
+_BLOCKED_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "100.64.0.0/10",  # CGNAT -- Tailscale, cloud and container internals
+        "192.0.0.0/24",  # IETF protocol assignments
+        "192.0.2.0/24",  # TEST-NET-1
+        "192.88.99.0/24",  # 6to4 relay anycast (deprecated, RFC 7526)
+        "198.18.0.0/15",  # benchmarking
+        "198.51.100.0/24",  # TEST-NET-2
+        "203.0.113.0/24",  # TEST-NET-3
+        "2001::/23",  # IETF protocol assignments (covers ORCHID 2001:10::/28)
+        "2001:20::/28",  # ORCHIDv2
+        "2002::/16",  # 6to4
+        "2620:4f:8000::/48",  # AS112 anycast DNS
+        "3fff::/20",  # documentation
+        "5f00::/16",  # segment routing (SRv6)
+        "64:ff9b::/96",  # NAT64 -- unwrapping is done too, but never trust it here
+    )
+)
+
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_SIX_TO_FOUR = ipaddress.ip_network("2002::/16")
+
+
+def _unwrap_v4_in_v6(address: ipaddress._BaseAddress) -> ipaddress._BaseAddress:
+    """Reduce IPv4-in-IPv6 encodings to the IPv4 address they actually name.
+
+    An attacker controls the AAAA record, so an encoding must never be a way to
+    smuggle 127.0.0.1 past the policy. The stdlib already unwraps ``ipv4_mapped``
+    for is_private/is_loopback, but that is implementation behaviour rather than a
+    documented guarantee, and NAT64/6to4 need handling regardless.
+    """
+    for _ in range(4):  # bounded: each iteration strictly reduces the address
+        if address.version != 6:
+            break
+        if address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
+        elif address in _NAT64:
+            address = ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
+        elif address in _SIX_TO_FOUR:
+            address = ipaddress.IPv4Address((int(address) >> 80) & 0xFFFFFFFF)
+        else:
+            break
+    return address
+
+
 def _is_public_ip(value: str) -> bool:
+    """True only for globally routable unicast addresses.
+
+    This is a positive allowlist (``is_global``) plus an explicit denylist of
+    special-use ranges the stdlib still reports as global. The previous version was
+    a disjunction of negatives, which let CGNAT through because ``is_private`` is
+    documented False for 100.64.0.0/10.
+    """
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
         return False
-    return not (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-    )
+    address = _unwrap_v4_in_v6(address)
+    if not address.is_global or address.is_multicast:
+        return False
+    return not any(address in network for network in _BLOCKED_NETWORKS)
+
+
+def _addresses_from_entries(entries: Iterable[Any]) -> list[str]:
+    """Pull host addresses out of getaddrinfo-style results."""
+    resolved: list[str] = []
+    for item in entries:
+        if isinstance(item, tuple) and len(item) >= 5:
+            sockaddr = item[4]
+            if isinstance(sockaddr, tuple) and sockaddr:
+                resolved.append(str(sockaddr[0]))
+        elif isinstance(item, tuple) and len(item) >= 2 and isinstance(item[0], str):
+            resolved.append(item[0])
+        elif isinstance(item, str):
+            resolved.append(item)
+    return resolved
+
+
+def _validated_entries(
+    hostname: str,
+    port: int,
+    *,
+    allow_private: bool,
+    resolver: Callable[..., Iterable[Any]] | None = None,
+) -> list[tuple[int, int, int, tuple]]:
+    """Resolve once and return only the sockaddrs that passed the policy.
+
+    The whole sockaddr is carried, not just the address string: IPv6 entries are
+    4-tuples whose scope_id selects the interface, and discarding it (as the
+    previous validate-then-connect code did) both loses that information and
+    invites a second, unpinned resolution at connect time.
+    """
+    lookup = resolver or socket.getaddrinfo
+    try:
+        entries = lookup(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except OSError as exc:
+        raise UnsafeWebhookTarget("webhook host could not be resolved") from exc
+
+    allowed: list[tuple[int, int, int, tuple]] = []
+    for item in entries:
+        entry = _normalize_entry(item, port)
+        if entry is None:
+            continue
+        family, socktype, proto, sockaddr = entry
+        if not allow_private and not _is_public_ip(str(sockaddr[0])):
+            raise UnsafeWebhookTarget("webhook host resolves to a private or reserved address")
+        allowed.append((family, socktype, proto, sockaddr))
+    if not allowed:
+        raise UnsafeWebhookTarget("webhook host has no usable address")
+    return allowed
+
+
+def _normalize_entry(item: Any, default_port: int) -> tuple[int, int, int, tuple] | None:
+    """Coerce one resolver result into a dialable (family, type, proto, sockaddr).
+
+    Accepts the full getaddrinfo 5-tuple, a bare (address, port) pair, or a plain
+    address string, because tests and injected resolvers legitimately use the
+    simpler shapes. IPv6 keeps whatever scope_id the resolver supplied, since that
+    is what selects the interface for link-local targets.
+    """
+    if isinstance(item, str):
+        address: Any = item
+        port_value: Any = default_port
+    elif isinstance(item, tuple) and len(item) >= 5 and isinstance(item[4], tuple) and item[4]:
+        family, socktype, proto = item[0], item[1], item[2]
+        if socktype is not socket.SOCK_STREAM:
+            return None
+        return (family, socktype, proto, item[4])
+    elif isinstance(item, tuple) and len(item) >= 2 and isinstance(item[0], str):
+        address, port_value = item[0], item[1]
+    else:
+        return None
+
+    if not isinstance(address, str):
+        return None
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return None
+    if isinstance(port_value, str):
+        try:
+            port_value = int(port_value)
+        except ValueError:
+            return None
+    if parsed.version == 6:
+        return (
+            socket.AF_INET6,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            (address, port_value, 0, 0),
+        )
+    return (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, (address, port_value))
+
+
+def _connect_pinned(
+    entries: list[tuple[int, int, int, tuple]], timeout: float, source_address
+) -> socket.socket:
+    """socket.create_connection replacement that only dials pre-validated addresses.
+
+    Retries across the validated set on transport errors only. A TLS failure is not
+    retried: it is either an attack signal or a broken endpoint, and retrying costs
+    N x handshake time against an adversary while burying the diagnostic.
+    """
+    last: OSError | None = None
+    for family, socktype, proto, sockaddr in entries:
+        sock = socket.socket(family, socktype, proto)
+        try:
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)  # no DNS here: the address is already fixed
+            return sock
+        except OSError as exc:
+            sock.close()
+            last = exc
+    raise last or OSError("no validated address was reachable")
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection that dials a pre-validated IP but keeps Host/SNI/TLS intact.
+
+    The hostname stays in the URL, so ``self.host`` remains the name, SNI is sent
+    for that name, and the certificate is validated against the name rather than
+    the IP. Only the socket address changes.
+
+    ``_create_connection`` is overridden as an INSTANCE attribute on purpose:
+    ``HTTPConnection.__init__`` assigns ``self._create_connection =
+    socket.create_connection``, so a same-named method on a subclass is silently
+    shadowed and DNS still happens.
+    """
+
+    def __init__(self, host: str, *, pinned: list[tuple[int, int, int, tuple]] | None = None, **kw):
+        self._pinned = list(pinned or [])
+        super().__init__(host, **kw)
+        self._create_connection = (  # type: ignore[method-assign]
+            lambda address, timeout, source_address: _connect_pinned(
+                self._pinned, timeout, source_address
+            )
+        )
+
+
+class PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    """Route urllib's HTTPS through :class:`PinnedHTTPSConnection`."""
+
+    def __init__(self, pinned: list[tuple[int, int, int, tuple]] | None = None, **kw):
+        self._pinned = list(pinned or [])
+        super().__init__(**kw)
+
+    def https_open(self, req):
+        # context must be passed explicitly: without it urllib falls back to
+        # http.client._create_https_context() and silently discards ours.
+        return self.do_open(
+            lambda host, **kw: PinnedHTTPSConnection(host, pinned=self._pinned, **kw),
+            req,
+            context=self._context,
+        )
+
+
+def _normalize_webhook_url(url: str, *, allow_private: bool = False) -> tuple[str, str, int]:
+    """Syntax and policy checks that need no DNS. Returns (url, hostname, port)."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    if not isinstance(url, str) or not url.strip():
+        raise UnsafeWebhookTarget("webhook url is required")
+    raw = url.strip()
+    if len(raw) > 2048:
+        raise UnsafeWebhookTarget("webhook url is too long")
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"https", "http"}:
+        raise UnsafeWebhookTarget("webhook url must use http or https")
+    if parsed.scheme == "http" and not allow_private:
+        raise UnsafeWebhookTarget("webhook url must be https")
+    if parsed.username or parsed.password or parsed.fragment:
+        raise UnsafeWebhookTarget("webhook url must not contain credentials or a fragment")
+    hostname = parsed.hostname
+    if not hostname:
+        raise UnsafeWebhookTarget("webhook url must include a host")
+    if hostname.lower() in _RESERVED_HOSTS and not allow_private:
+        raise UnsafeWebhookTarget("webhook host is not allowed")
+    # Judge a literal IP in the URL directly rather than trusting DNS to echo it
+    # back. Real DNS does echo it, so this is defence in depth -- but a policy that
+    # asks the resolver to police the URL it was handed is one resolver mistake
+    # away from being wrong.
+    literal = hostname[1:-1] if hostname.startswith("[") and hostname.endswith("]") else hostname
+    try:
+        ipaddress.ip_address(literal)
+        is_literal = True
+    except ValueError:
+        is_literal = False
+    if is_literal and not allow_private and not _is_public_ip(literal):
+        raise UnsafeWebhookTarget("webhook url must not target a literal internal address")
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise UnsafeWebhookTarget("webhook url has an invalid port") from exc
+    normalized = urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.query, ""))
+    return normalized, hostname, port
+
+
+def resolve_webhook_target(
+    url: str,
+    *,
+    allow_private: bool = False,
+    resolver: Callable[..., Iterable[Any]] | None = None,
+) -> tuple[str, str, int, list[tuple[int, int, int, tuple]]]:
+    """Validate and resolve a webhook endpoint in a single DNS lookup.
+
+    Returns ``(normalized_url, hostname, port, entries)``, where ``entries`` are the
+    sockaddrs that passed the address policy and must be used verbatim when
+    connecting.
+
+    Resolution happens exactly once, here. Anything that resolves again later --
+    including urllib's own connect path -- reopens the DNS-rebinding window this
+    function exists to close.
+    """
+    normalized, hostname, port = _normalize_webhook_url(url, allow_private=allow_private)
+    entries = _validated_entries(hostname, port, allow_private=allow_private, resolver=resolver)
+    return normalized, hostname, port, entries
 
 
 def validate_webhook_url(
@@ -151,50 +422,14 @@ def validate_webhook_url(
     HTTPS is required by default. Private and loopback destinations are only
     accepted when the caller explicitly enables the development-only policy.
     Every resolved address is checked, and redirects are disabled by delivery.
-    """
-    from urllib.parse import urlsplit, urlunsplit
 
-    if not isinstance(url, str) or not url.strip():
-        raise UnsafeWebhookTarget("webhook url is required")
-    raw = url.strip()
-    if len(raw) > 2048:
-        raise UnsafeWebhookTarget("webhook url is too long")
-    parsed = urlsplit(raw)
-    if parsed.scheme not in {"https", "http"}:
-        raise UnsafeWebhookTarget("webhook url must use http or https")
-    if parsed.scheme == "http" and not allow_private:
-        raise UnsafeWebhookTarget("webhook url must use https")
-    if parsed.username or parsed.password or parsed.fragment:
-        raise UnsafeWebhookTarget("webhook url must not contain credentials or a fragment")
-    hostname = parsed.hostname
-    if not hostname:
-        raise UnsafeWebhookTarget("webhook url must include a host")
-    if hostname.lower() in _RESERVED_HOSTS and not allow_private:
-        raise UnsafeWebhookTarget("webhook host is not allowed")
-    try:
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    except ValueError as exc:
-        raise UnsafeWebhookTarget("webhook url has an invalid port") from exc
-    lookup = resolver or socket.getaddrinfo
-    try:
-        addresses = lookup(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except OSError as exc:
-        raise UnsafeWebhookTarget("webhook host could not be resolved") from exc
-    resolved: list[str] = []
-    for item in addresses:
-        if isinstance(item, tuple) and len(item) >= 5:
-            sockaddr = item[4]
-            if isinstance(sockaddr, tuple) and sockaddr:
-                resolved.append(str(sockaddr[0]))
-        elif isinstance(item, tuple) and len(item) >= 2 and isinstance(item[0], str):
-            resolved.append(item[0])
-        elif isinstance(item, str):
-            resolved.append(item)
-    if not resolved:
-        raise UnsafeWebhookTarget("webhook host has no usable address")
-    if not allow_private and any(not _is_public_ip(address) for address in resolved):
-        raise UnsafeWebhookTarget("webhook host resolves to a private or reserved address")
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.query, ""))
+    For delivery, prefer :func:`resolve_webhook_target`, which additionally returns
+    the validated addresses so the connection can be pinned to them.
+    """
+    normalized, _hostname, _port, _entries = resolve_webhook_target(
+        url, allow_private=allow_private, resolver=resolver
+    )
+    return normalized
 
 
 def _secret_bytes(secret: str) -> bytes:
@@ -616,8 +851,14 @@ def deliver_delivery(
             "next_attempt_at": row["next_attempt_at"],
         }
     current_attempt = int(row["attempts"]) + 1
+    # Resolve and validate ONCE here. The previous code validated and then let
+    # urllib resolve the hostname again to connect, which is a textbook DNS
+    # rebinding window: a name that answers public during validation and
+    # link-local at connect time reached the internal network.
     try:
-        url = validate_webhook_url(row["url"], allow_private=allow_private)
+        url, _hostname, _port, pinned = resolve_webhook_target(
+            row["url"], allow_private=allow_private
+        )
     except UnsafeWebhookTarget as exc:
         return _requeue_or_dead(
             conn,
@@ -646,7 +887,11 @@ def deliver_delivery(
     response_body = b""
     try:
         # No redirect handler: a redirect is an unvalidated network hop.
-        opener = urllib.request.build_opener(_NoRedirect)
+        # PinnedHTTPSHandler dials the addresses validated above, so no second
+        # DNS lookup happens on this path.
+        opener = urllib.request.build_opener(
+            PinnedHTTPSHandler(pinned, context=ssl.create_default_context()), _NoRedirect
+        )
         with opener.open(request, timeout=timeout_seconds) as response:
             status_code = int(response.status)
             response_body = response.read(max_response_bytes + 1)

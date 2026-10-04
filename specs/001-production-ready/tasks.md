@@ -167,23 +167,23 @@ Goal: outbound requests cannot reach internal destinations, by rebinding or by C
 
 ### Tests *(write first)*
 
-- [ ] T056 [P] [US1] `test_failure_injection.py::test_rebinding_cannot_redirect_connection` — resolver returns public first, link-local second; assert the socket targets the first and that `getaddrinfo` is called **exactly once** *(fail first)*
-- [ ] T057 [P] [US1] `tests/test_webhooks_security.py::test_cgnat_range_rejected` — `100.64.0.0/10` must be refused *(fail first — confirmed currently allowed)*
-- [ ] T058 [P] [US1] `tests/test_webhooks_security.py::test_orchid_and_as112_ranges_rejected` — `2001:20::/28`, `2620:4f:8000::/48`, `192.88.99.0/24`
-- [ ] T059 [P] [US1] `tests/test_webhooks_security.py::test_tls_validation_binds_to_hostname_not_ip` — pinned IP + wrong `server_hostname` must fail cert validation *(fail first)*
-- [ ] T060 [P] [US1] `tests/test_webhooks_security.py::test_ipv6_scope_id_preserved` — a scoped IPv6 target keeps `flowinfo`/`scope_id`
-- [ ] T061 [P] [US1] `tests/test_webhooks_security.py::test_tls_error_is_not_retried` — transport errors retry, TLS errors fail fast
-- [ ] T062 [P] [US1] `tests/test_webhooks_security.py::test_redirects_still_not_followed` — regression guard for the existing `_NoRedirect`
+- [X] T056 [P] [US1] `test_failure_injection.py::test_rebinding_cannot_redirect_connection` — resolver returns public first, link-local second; assert the socket targets the first and that `getaddrinfo` is called **exactly once** *(fail first)*
+- [X] T057 [P] [US1] `tests/test_webhooks_security.py::test_cgnat_range_rejected` — `100.64.0.0/10` must be refused *(fail first — confirmed currently allowed)*
+- [X] T058 [P] [US1] `tests/test_webhooks_security.py::test_orchid_and_as112_ranges_rejected` — `2001:20::/28`, `2620:4f:8000::/48`, `192.88.99.0/24`
+- [X] T059 [P] [US1] `tests/test_webhooks_security.py::test_tls_validation_binds_to_hostname_not_ip` — pinned IP + wrong `server_hostname` must fail cert validation *(fail first)*
+- [X] T060 [P] [US1] `tests/test_webhooks_security.py::test_ipv6_scope_id_preserved` — a scoped IPv6 target keeps `flowinfo`/`scope_id`
+- [X] T061 [P] [US1] `tests/test_webhooks_security.py::test_tls_error_is_not_retried` — transport errors retry, TLS errors fail fast
+- [X] T062 [P] [US1] `tests/test_webhooks_security.py::test_redirects_still_not_followed` — regression guard for the existing `_NoRedirect`
 
 ### Implementation
 
-- [ ] T063 [US1] Replace `_is_public_ip` in `src/memoratum/webhooks.py` with a positive `is_global` allowlist plus a v4-in-v6 unwrap loop (`ipv4_mapped`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`)
-- [ ] T064 [US1] Fuse validation and resolution in `src/memoratum/webhooks.py`: one `getaddrinfo` call returning the full sockaddr list (currently `webhooks.py:188` discards `scope_id`)
-- [ ] T065 [US1] Add `PinnedHTTPSConnection` overriding `_create_connection` as an **instance attribute** in `src/memoratum/webhooks.py` (a method is silently shadowed by `HTTPConnection.__init__`)
-- [ ] T066 [US1] Add `PinnedHTTPSHandler.https_open` in `src/memoratum/webhooks.py`, passing `context=self._context` explicitly
-- [ ] T067 [US1] Rewrite `deliver_delivery` in `src/memoratum/webhooks.py` to connect through the pin while keeping the hostname in the URL; retry only on transport errors
-- [ ] T068 [US1] Document that `MEMORATUM_WEBHOOK_ALLOW_PRIVATE_TARGETS=true` disables address validation entirely, in `docs/SECURITY.md`
-- [ ] T069 [US1] Correct the "validated at creation and delivery" claim at `docs/SECURITY.md:21` to describe address pinning
+- [X] T063 [US1] Replace `_is_public_ip` in `src/memoratum/webhooks.py` with a positive `is_global` allowlist plus a v4-in-v6 unwrap loop (`ipv4_mapped`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`)
+- [X] T064 [US1] Fuse validation and resolution in `src/memoratum/webhooks.py`: one `getaddrinfo` call returning the full sockaddr list (currently `webhooks.py:188` discards `scope_id`)
+- [X] T065 [US1] Add `PinnedHTTPSConnection` overriding `_create_connection` as an **instance attribute** in `src/memoratum/webhooks.py` (a method is silently shadowed by `HTTPConnection.__init__`)
+- [X] T066 [US1] Add `PinnedHTTPSHandler.https_open` in `src/memoratum/webhooks.py`, passing `context=self._context` explicitly
+- [X] T067 [US1] Rewrite `deliver_delivery` in `src/memoratum/webhooks.py` to connect through the pin while keeping the hostname in the URL; retry only on transport errors
+- [X] T068 [US1] Document that `MEMORATUM_WEBHOOK_ALLOW_PRIVATE_TARGETS=true` disables address validation entirely, in `docs/SECURITY.md`
+- [X] T069 [US1] Correct the "validated at creation and delivery" claim at `docs/SECURITY.md:21` to describe address pinning
 
 **Checkpoint**: quickstart Scenarios 3 and 4 pass.
 
