@@ -296,12 +296,12 @@ research.md D4, with the ANN trigger recorded in `tests/benchmarks/search.md`.
 
 ## Phase 12: WS-B6 — CI gates and coverage integrity [US6]
 
-- [ ] T117 [P] [US6] Add a CI step failing if the count of `pragma: no cover` **increases**, in `.github/workflows/ci.yml`
-- [ ] T118 [US6] Add a CI step failing if `fail_under` in `pyproject.toml` is lower than in `HEAD~1`
-- [ ] T119 [US6] Confirm `pip-audit --local` and `npm audit --audit-level=high` run as required checks in `.github/workflows/security.yml`
-- [ ] T120 [US6] Add per-module coverage floors seeded from the measured table (research.md D3): `worker.py` 59%, `mcp.py` 0%, `webhooks.py` no regression
-- [ ] T121 [US6] Raise `mcp.py` off 0% with real MCP server tests in `tests/test_mcp.py`
-- [ ] T122 [US6] Add no coverage badge to `README.md`
+- [X] T117 [P] [US6] Add a CI step failing if the count of `pragma: no cover` **increases**, in `.github/workflows/ci.yml`
+- [X] T118 [US6] Add a CI step failing if `fail_under` in `pyproject.toml` is lower than in `HEAD~1`
+- [X] T119 [US6] Confirm `pip-audit --local` and `npm audit --audit-level=high` run as required checks in `.github/workflows/security.yml`
+- [X] T120 [US6] Add per-module coverage floors seeded from the measured table (research.md D3): `worker.py` 59%, `mcp.py` 0%, `webhooks.py` no regression
+- [X] T121 [US6] Raise `mcp.py` off 0% with real MCP server tests in `tests/test_mcp.py`
+- [X] T122 [US6] Add no coverage badge to `README.md`
 
 ---
 

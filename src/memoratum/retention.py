@@ -26,7 +26,11 @@ POLICIES: dict[str, tuple[str, int | None, str]] = {
     "projects": ("retain_indefinitely", None, "Tenant; the deleting flag gates purge."),
     "project_members": ("cascaded", None, "Cascades from projects."),
     "api_keys": ("retain_indefinitely", None, "Must outlive the key's own usefulness."),
-    "revoked_keys": ("timed", 90, "Kept well past any realistic credential-reuse window, then aged out."),
+    "revoked_keys": (
+        "timed",
+        90,
+        "Kept well past any realistic credential-reuse window, then aged out.",
+    ),
     "webhooks": ("retain_indefinitely", None, "Operator-configured, low volume."),
     "documents": ("retain_indefinitely", None, "User content; expires_at governs visibility."),
     "chunks": ("cascaded", None, "Cascades from documents; rebuildable."),
