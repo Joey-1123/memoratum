@@ -16,7 +16,9 @@ never returned.
 
 from __future__ import annotations
 
+import itertools
 import json
+import math
 import os
 import platform
 import sqlite3
@@ -43,14 +45,40 @@ ORIGINAL_MANIFEST_KEYS = (
     "data_sha256",
 )
 
-# PREFILTER_MIN_CANDIDATES. A corpus ladder that crosses this threshold measures an
-# ALGORITHM SWITCH rather than a size change, which already produced one false
-# result in this repo (L7).
-PREFILTER_MIN_CANDIDATES = 512
+# Cost units the contract permits. An allowlist, not a denylist: "bytes" is excluded
+# because the corpus is ASCII so bytes carry no information, and on non-ASCII they
+# inflate 1.1-3x with nothing visible in the report (C1). An unrecognised string is
+# just as wrong as "bytes", so unknown units are rejected too.
+COST_UNITS = frozenset({"chars", "ws_tokens"})
+
+# Figures whose meaning is hardware-bound, so a baseline for them is invalid without
+# recorded hardware (B1, FR-008). Cost in characters is portable and needs none.
+HARDWARE_BOUND_FIGURES = frozenset({"median_ms", "us_per_chunk", "us_per_chunk_ratio"})
+
+HARDWARE_KEYS = ("cpu", "cores", "ram_mb", "python", "platform")
+
+# Per-kind grounding rules. One global rule is invalid: the fact leg renders
+# "subject predicate object" and would otherwise score 0.0 for identical evidence
+# (G2). These are the keys ``contracts/eval-axes-v1.schema.json`` requires.
+GROUNDING_RULE_BY_KIND = {
+    "chunk": "chunks.text",
+    "memory": "memories.text",
+    "fact": "subject predicate object",
+}
+GROUNDING_NORMALIZATION = "nfkc+whitespace+casefold"
 
 
 class ManifestError(ValueError):
     """Raised when a manifest violates a hard requirement (FR-008, invariant B1)."""
+
+
+class CorpusError(ManifestError):
+    """Raised when a built corpus does not match its declared shape (invariant S3).
+
+    Deliberately an exception rather than a bare ``assert``: ``python -O`` strips
+    asserts, and the failure S3 guards is a *silent* extra document, which is exactly
+    the defect that would survive an optimised run unnoticed.
+    """
 
 
 # --------------------------------------------------------------------------- #
@@ -79,17 +107,14 @@ class Attribution:
         return asdict(self)
 
 
-def _fact_row_text(row: sqlite3.Row) -> str:
-    """The fact leg can never pass a substring test against raw corpus text.
-
-    ``search._fact_text`` renders ``"{subject} {predicate} {object}"``, so grounding
-    must use that same construction rule per kind rather than one global rule (G2).
-    """
-    return f"{row['subject']} {row['predicate']} {row['object']}"
-
-
 def attribute_hit(conn: sqlite3.Connection, hit: dict[str, Any], *, rank: int) -> Attribution:
     """Resolve one hit id to its source row and owning scope.
+
+    Facts never arrive with a ``fact_`` id: ``facts.add_fact`` mints a ``mem_`` row
+    via ``db.ensure_fact_memory`` (``mem_<uuid>``), and migrated rows use
+    ``'mem_' || f.id``. A fact-derived hit is therefore a ``mem_`` row that carries a
+    ``fact_id``, and it is classified ``fact`` here so the grounding axis applies the
+    fact rule rather than the memory rule (G2).
 
     Unresolvable ids are reported as ``hit_kind == "unresolvable"`` rather than
     skipped: an id with no derivable row is a failure, not a pass (A1).
@@ -99,7 +124,7 @@ def attribute_hit(conn: sqlite3.Connection, hit: dict[str, Any], *, rank: int) -
     if hit_id.startswith("chunk_"):
         try:
             chunk_id = int(hit_id.split("_", 1)[1])
-        except (IndexError, ValueError):
+        except ValueError:
             return _unresolvable(hit_id, rank)
         row = conn.execute(
             "SELECT d.id AS document_id, d.project_id, d.org_id, c.text AS row_text"
@@ -120,36 +145,27 @@ def attribute_hit(conn: sqlite3.Connection, hit: dict[str, Any], *, rank: int) -
 
     if hit_id.startswith("mem_"):
         row = conn.execute(
-            "SELECT document_id, project_id, text AS row_text FROM memories WHERE id = ?",
+            "SELECT m.document_id, m.project_id, m.org_id, m.text AS row_text,"
+            " f.subject, f.predicate, f.object"
+            " FROM memories m LEFT JOIN facts f ON f.id = m.fact_id"
+            " WHERE m.id = ?",
             (hit_id,),
         ).fetchone()
         if row is None:
             return _unresolvable(hit_id, rank)
-        return Attribution(
-            hit_id=hit_id,
-            hit_kind="memory",
-            document_id=row["document_id"],
-            originating_project_id=row["project_id"],
-            originating_org_id=None,
-            rank=rank,
-            row_text=row["row_text"],
+        is_fact = row["subject"] is not None
+        # A fact is grounded against its own construction rule, not the memory text.
+        row_text = (
+            f"{row['subject']} {row['predicate']} {row['object']}" if is_fact else row["row_text"]
         )
-
-    if hit_id.startswith("fact_"):
-        row = conn.execute(
-            "SELECT document_id, project_id, subject, predicate, object FROM facts WHERE id = ?",
-            (hit_id,),
-        ).fetchone()
-        if row is None:
-            return _unresolvable(hit_id, rank)
         return Attribution(
             hit_id=hit_id,
-            hit_kind="fact",
+            hit_kind="fact" if is_fact else "memory",
             document_id=row["document_id"],
             originating_project_id=row["project_id"],
-            originating_org_id=None,
+            originating_org_id=row["org_id"],
             rank=rank,
-            row_text=_fact_row_text(row),
+            row_text=row_text,
         )
 
     return _unresolvable(hit_id, rank)
@@ -168,7 +184,11 @@ def _unresolvable(hit_id: str, rank: int) -> Attribution:
 
 
 def attribute_hits(conn: sqlite3.Connection, hits: Sequence[dict[str, Any]]) -> list[Attribution]:
-    """Attribute every hit, preserving rank order."""
+    """Attribute every hit, preserving rank order.
+
+    No hit is ever omitted: an unresolvable id still appears, so the caller can count
+    it as a failure (A1).
+    """
     return [attribute_hit(conn, hit, rank=rank) for rank, hit in enumerate(hits)]
 
 
@@ -177,24 +197,55 @@ def attribute_hits(conn: sqlite3.Connection, hits: Sequence[dict[str, Any]]) -> 
 # --------------------------------------------------------------------------- #
 
 
+def embedder_label(embedder: Any) -> str:
+    """Canonical embedder label, e.g. ``"HashEmbedder:64"``.
+
+    Lives here rather than in ``eval_longmemeval`` so every axis formats it the same
+    way and a manifest cannot claim an embedder that was not actually used.
+    """
+    return f"{type(embedder).__name__}:{getattr(embedder, 'dims', 0)}"
+
+
+def _cpu_model() -> str | None:
+    """Best-effort CPU model name. ``None`` when genuinely unknowable, never a guess."""
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if line.startswith("model name"):
+                    value = line.split(":", 1)[1].strip()
+                    if value:
+                        return value
+    except OSError:
+        pass
+    processor = platform.processor().strip()
+    return processor or None
+
+
+def _total_ram_mb() -> int | None:
+    """Physical RAM in MiB, or ``None`` when it cannot be determined.
+
+    ``None`` rather than ``0``: a zero would read as a measurement and satisfy a
+    truthiness check, which is the None-vs-0 confusion M3 exists to prevent.
+    """
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, ValueError, OSError):
+        return None
+    if pages <= 0 or page_size <= 0:
+        return None
+    return int(pages * page_size / (1024 * 1024))
+
+
 def collect_hardware() -> dict[str, Any]:
-    """Hardware for the manifest. Required for any latency figure (FR-008)."""
+    """Hardware for the manifest. Required for any hardware-bound figure (FR-008)."""
     return {
-        "cpu": platform.processor() or platform.machine() or "unknown",
+        "cpu": _cpu_model(),
         "cores": os.cpu_count() or 1,
         "ram_mb": _total_ram_mb(),
         "python": platform.python_version(),
         "platform": platform.platform(),
     }
-
-
-def _total_ram_mb() -> int:
-    try:
-        pages = os.sysconf("SC_PHYS_PAGES")
-        page_size = os.sysconf("SC_PAGE_SIZE")
-    except (AttributeError, ValueError, OSError):
-        return 0
-    return int(pages * page_size / (1024 * 1024))
 
 
 def build_manifest(
@@ -212,7 +263,12 @@ def build_manifest(
     latency_config: dict[str, Any] | None = None,
     grounding_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Assemble the extended manifest, preserving the seven original keys."""
+    """Assemble and **validate** the extended manifest.
+
+    Validation runs here, not as an optional extra step: a caller that forgets to call
+    it would otherwise write an artifact claiming bytes while gating on characters,
+    which is C1's exact failure with nothing objecting.
+    """
     manifest: dict[str, Any] = {
         "schema": MANIFEST_SCHEMA,
         "seed": seed,
@@ -232,53 +288,132 @@ def build_manifest(
     ):
         if value is not None:
             manifest[key] = value
+    validate_manifest(manifest)
     return manifest
 
 
-def validate_manifest(manifest: dict[str, Any]) -> None:
-    """Enforce hard manifest requirements.
+def _require_keys(block: dict[str, Any], keys: Iterable[str], label: str) -> None:
+    missing = sorted(set(keys) - set(block))
+    if missing:
+        raise ManifestError(f"{label} is missing required keys: {missing}")
 
-    Raises :class:`ManifestError` when a latency block lacks hardware, since absolute
-    milliseconds without hardware are meaningless (B1, FR-008).
-    """
-    for key in ORIGINAL_MANIFEST_KEYS:
-        if key not in manifest:
-            raise ManifestError(f"manifest is missing required key {key!r}")
+
+def _hardware_is_usable(hardware: Any) -> bool:
+    """True only for hardware that actually identifies a machine (B1)."""
+    if isinstance(hardware, str):
+        # A Markdown cell may literally say "n/a" or "unknown".
+        return hardware.strip().lower() not in {"", "n/a", "none", "unknown", "-"}
+    if isinstance(hardware, dict):
+        return all(hardware.get(key) not in (None, "") for key in HARDWARE_KEYS)
+    return False
+
+
+def validate_manifest(manifest: dict[str, Any]) -> None:
+    """Enforce hard manifest requirements. Raises :class:`ManifestError`."""
+    _require_keys(manifest, ORIGINAL_MANIFEST_KEYS, "manifest")
 
     latency = manifest.get("latency_config")
     if latency is not None:
-        if not latency.get("hardware"):
+        _require_keys(latency, ("samples", "warmup", "ladder", "hardware"), "latency_config")
+        samples = latency["samples"]
+        if not isinstance(samples, int) or isinstance(samples, bool):
             raise ManifestError(
-                "latency_config requires hardware; absolute milliseconds are "
-                "hardware-bound (FR-008)"
+                f"latency_config.samples must be an int, got {type(samples).__name__}; "
+                "a missing or mistyped count silently disables the floor"
             )
-        samples = latency.get("samples")
-        if isinstance(samples, int) and samples < 20:
+        if samples < 20:
             raise ManifestError(
                 f"latency_config.samples={samples} is below the floor of 20; at n=5 a "
                 "1.0x gate needs a +69% band and cannot detect a 70% regression (L2)"
             )
-        ladder = latency.get("ladder") or []
-        if len(ladder) < 3:
+        if not isinstance(latency["warmup"], int) or latency["warmup"] < 1:
             raise ManifestError(
-                f"latency_config.ladder has {len(ladder)} sizes; FR-004 requires at least 3"
+                "latency_config.warmup must be an int >= 1; without discarded warmup the "
+                "first call pays FTS5 tokenizer setup (L4)"
             )
-
-    scope = manifest.get("scope_config")
-    if scope is not None and len(scope.get("projects") or []) < 2:
-        raise ManifestError("scope_config requires at least 2 projects to detect a leak")
+        if not isinstance(latency["hardware"], dict):
+            raise ManifestError(
+                "latency_config.hardware must be a dict of measured values; got "
+                f"{type(latency['hardware']).__name__}. Missing or unrecorded hardware "
+                "makes a hardware-bound figure meaningless (B1, FR-008)"
+            )
+        _require_keys(latency["hardware"], HARDWARE_KEYS, "latency_config.hardware")
+        if not isinstance(latency["hardware"]["ram_mb"], int) or latency["hardware"]["ram_mb"] < 1:
+            raise ManifestError(
+                "latency_config.hardware.ram_mb must be an int >= 1; 0 or null means the "
+                "figure was not measured (M3)"
+            )
+        if str(latency["hardware"]["cpu"]).strip().lower() in {"unknown", ""}:
+            raise ManifestError(
+                "latency_config.hardware.cpu is unknown; a +40% band needs real "
+                "hardware context (FR-008)"
+            )
+        _validate_ladder(latency["ladder"], latency.get("prefilter_min"))
 
     cost = manifest.get("cost_config")
     if cost is not None:
-        if cost.get("unit") == "bytes":
+        unit = cost.get("unit")
+        if unit not in COST_UNITS:
             raise ManifestError(
-                "cost_config.unit 'bytes' is not a valid reported unit: the corpus is "
-                "ASCII so bytes carry no information, and on non-ASCII they inflate "
-                "1.1-3x invisibly (C1)"
+                f"cost_config.unit must be one of {sorted(COST_UNITS)}, got {unit!r}; "
+                "bytes and unknown units inflate 1.1-3x on non-ASCII (C1)"
             )
-        if not cost.get("chars_per_ws_token"):
+        ratio = cost.get("chars_per_ws_token")
+        if not isinstance(ratio, (int, float)) or isinstance(ratio, bool) or ratio <= 0:
             raise ManifestError(
-                "cost_config.chars_per_ws_token must be measured and recorded, never hardcoded (C2)"
+                "cost_config.chars_per_ws_token must be a positive measured number; a "
+                "hardcoded constant is a fabricated figure in a committed artifact (C2)"
+            )
+
+    scope = manifest.get("scope_config")
+    if scope is not None:
+        _require_keys(scope, ("container_tag", "projects", "expected_documents"), "scope_config")
+        if len(scope["projects"]) < 2:
+            raise ManifestError(
+                f"scope_config has {len(scope['projects'])} project(s); at least 2 projects "
+                "are required because one project cannot leak, which would make the "
+                "isolation axis unfalsifiable"
+            )
+
+    grounding = manifest.get("grounding_config")
+    if grounding is not None:
+        _require_keys(grounding, ("normalization", "rule_by_kind"), "grounding_config")
+        if grounding["normalization"] != GROUNDING_NORMALIZATION:
+            raise ManifestError(
+                f"grounding_config.normalization must be {GROUNDING_NORMALIZATION!r}"
+            )
+        _require_keys(
+            grounding["rule_by_kind"], GROUNDING_RULE_BY_KIND, "grounding_config.rule_by_kind"
+        )
+
+
+def _validate_ladder(ladder: Any, prefilter_min: Any) -> None:
+    """At least three sizes, and none straddling the prefilter threshold (L7).
+
+    A ladder that crosses the threshold measures an ALGORITHM SWITCH rather than a size
+    change -- which already produced one false result in this repo. Either keep every
+    size on one side, or pin the threshold and record it (L7, FR-004).
+    """
+    if not isinstance(ladder, (list, tuple)) or len(ladder) < 3:
+        raise ManifestError(
+            f"latency_config.ladder has {ladder!r}; FR-004 requires at least 3 corpus sizes"
+        )
+    if any(not isinstance(size, int) or isinstance(size, bool) or size < 1 for size in ladder):
+        raise ManifestError(f"latency_config.ladder sizes must be positive ints, got {ladder!r}")
+    if prefilter_min is not None:
+        # Threshold pinned and recorded, so straddling measures size, not a switch.
+        return
+    from memoratum.search import prefilter_min_candidates
+
+    threshold = prefilter_min_candidates()
+    ordered = sorted(ladder)
+    for lower, upper in itertools.pairwise(ordered):
+        if lower < threshold <= upper:
+            raise ManifestError(
+                f"latency_config.ladder {list(ladder)} straddles the prefilter threshold "
+                f"{threshold} between {lower} and {upper}; that step measures an algorithm "
+                "switch rather than a size change. Keep every size on one side or set "
+                "MEMORATUM_SEARCH_PREFILTER_MIN and record prefilter_min (L7)"
             )
 
 
@@ -290,11 +425,11 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
 def sample_ms(fn: Callable[[], Any], *, samples: int = 30, warmup: int = 5) -> list[float]:
     """Time ``fn`` and return RAW millisecond samples.
 
-    Warmup iterations are discarded first, otherwise the initial call pays FTS5
-    tokenizer setup and statement compilation (L4). Raw samples are returned rather
-    than a summary so readers can aggregate then take the percentile: p95-of-p95 is
-    not a p95, and single-sample relative MAD is 5-16% with max/median 2.11x, so the
-    mean is never usable (L3).
+    Warmup runs first and is discarded, otherwise the initial call pays FTS5 tokenizer
+    setup and statement compilation (L4). Raw samples are returned rather than a
+    summary so readers aggregate then take the percentile: p95-of-p95 is not a p95, and
+    single-sample relative MAD is 5-16% with max/median 2.11x, so the mean is never
+    usable (L3).
     """
     if samples < 1:
         raise ValueError("samples must be >= 1")
@@ -330,12 +465,13 @@ def median(values: Sequence[float]) -> float | None:
 
 
 def us_per_chunk(median_ms_value: float | None, chunks: int) -> float | None:
-    """Cost per chunk -- the hardware-independent gate input (L1).
+    """Microseconds per chunk -- the hardware-independent gate input (L1).
 
     Sub-linear growth shows as a *falling* number; a regression to O(n) shows as a
-    *rising* one. That direction is meaningful in a way absolute ms is not.
+    *rising* one. That direction is meaningful in a way absolute ms is not, and a
+    missing input is ``None`` rather than a fabricated 0.0.
     """
-    if median_ms_value is None or chunks <= 0:
+    if median_ms_value is None or chunks is None or chunks <= 0:
         return None
     return (median_ms_value * 1000.0) / chunks
 
@@ -347,13 +483,21 @@ def us_per_chunk(median_ms_value: float | None, chunks: int) -> float | None:
 PASS = "pass"
 FAIL = "fail"
 
+_COMPARISONS = {
+    ">": lambda v, b: v > b,
+    ">=": lambda v, b: v >= b,
+    "<": lambda v, b: v < b,
+    "<=": lambda v, b: v <= b,
+}
+
 
 @dataclass
 class Gate:
     """Collects checks and derives an overall status.
 
     A figure that could not be recorded is ``None`` and ``None`` **fails**: a skipped
-    metric must never read as a pass (M3).
+    metric must never read as a pass (M3). An *empty* gate also fails, because an axis
+    that recorded no checks at all measured nothing.
     """
 
     checks: list[dict[str, Any]] = field(default_factory=list)
@@ -369,24 +513,22 @@ class Gate:
         delta: Any = None,
         reason: str | None = None,
     ) -> None:
+        if comparison not in _COMPARISONS:
+            raise ValueError(
+                f"unknown comparison {comparison!r}; expected one of {sorted(_COMPARISONS)}"
+            )
         if value is None or bound is None:
             status = FAIL
             detail = reason or "figure or bound is null; a missing metric never passes"
-        elif comparison == ">":
-            status = FAIL if value > bound else PASS
-            detail = reason
-        elif comparison == ">=":
-            status = FAIL if value >= bound else PASS
-            detail = reason
-        elif comparison == "<":
-            status = FAIL if value < bound else PASS
-            detail = reason
-        elif comparison == "<=":
-            status = FAIL if value <= bound else PASS
-            detail = reason
         else:
-            raise ValueError(f"unknown comparison {comparison!r}")
-        entry: dict[str, Any] = {"name": name, "status": status, "value": value, "bound": bound}
+            status = FAIL if _COMPARISONS[comparison](value, bound) else PASS
+            detail = reason
+        entry: dict[str, Any] = {
+            "name": name,
+            "status": status,
+            "value": value,
+            "bound": bound,
+        }
         if phase is not None:
             entry["phase"] = phase
         if delta is not None:
@@ -397,6 +539,8 @@ class Gate:
 
     @property
     def status(self) -> str:
+        if not self.checks:
+            return FAIL
         return FAIL if any(c["status"] == FAIL for c in self.checks) else PASS
 
     @property
@@ -416,31 +560,67 @@ def evaluate_gate(gate: Gate) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def load_baseline(row: dict[str, Any] | None) -> dict[str, Any] | None:
+def _parse_number(raw: Any) -> float | None:
+    """Parse a baseline cell. ``None`` for anything not a finite number.
+
+    Markdown cells arrive as strings, so a cell reading "see below" must become
+    ``None`` -- which fails the gate -- rather than raising and killing the run.
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        value = float(raw)
+    else:
+        text = str(raw).strip().replace(",", "")
+        if not text or text.lower() in {"n/a", "none", "null", "-", "unknown", "tbd"}:
+            return None
+        try:
+            value = float(text)
+        except ValueError:
+            return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+def load_baseline(
+    row: dict[str, Any] | None, *, figure: str | None = None
+) -> dict[str, Any] | None:
     """Return a usable baseline, or ``None`` when it is missing or invalid.
 
-    A latency row without hardware is invalid and yields ``None``, which then fails
-    the gate -- an unmeasurable baseline must never silently pass (B1, B3).
+    A hardware-bound figure without usable hardware is invalid and yields ``None``,
+    which then fails the gate -- an unmeasurable baseline must never silently pass
+    (B1, B3). The hardware rule is applied from the *figure name* rather than a
+    caller-supplied ``kind`` string, so it cannot be bypassed by omitting a field.
     """
     if not row:
         return None
-    if row.get("kind") == "latency" and not row.get("hardware"):
+    name = figure or str(row.get("axis", "") or "")
+    if name in HARDWARE_BOUND_FIGURES and not _hardware_is_usable(row.get("hardware")):
         return None
-    if row.get("value") is None:
+    value = _parse_number(row.get("value", row.get("figure")))
+    if value is None:
         return None
-    return row
+    # A zero baseline is not a measurement: bound 0 * (1 + tol) is 0, so every
+    # non-negative figure would pass. Reject rather than gate against nonsense.
+    if value <= 0:
+        return None
+    tolerance = _parse_number(row.get("tolerance"))
+    if tolerance is None or tolerance < 0:
+        return None
+    return {**row, "value": value, "tolerance": tolerance}
 
 
 def compare_to_baseline(
     gate: Gate, *, name: str, value: float | None, baseline: dict[str, Any] | None
 ) -> None:
     """Add a baseline comparison check, reporting the delta on failure (SC-005)."""
-    usable = load_baseline(baseline)
+    usable = load_baseline(baseline, figure=name)
     if usable is None:
         gate.check(name, value=value, bound=None, comparison=">", reason="no usable baseline")
         return
-    bound = float(usable["value"]) * (1.0 + float(usable.get("tolerance", 0.0)))
-    delta = None if value is None else float(value) - float(usable["value"])
+    bound = usable["value"] * (1.0 + usable["tolerance"])
+    delta = None if value is None else float(value) - usable["value"]
     gate.check(name, value=value, bound=bound, comparison=">", delta=delta)
 
 
@@ -460,24 +640,28 @@ class ScopedCorpus:
 
     def scope_config(self) -> dict[str, Any]:
         return {
-            "container_tag": container_tag_of(self),
+            "container_tag": self.container_tag,
             "projects": list(self.projects),
             "expected_documents": self.expected_documents,
         }
 
 
-def container_tag_of(corpus: ScopedCorpus) -> str:
-    return corpus.container_tag
+def scoped_doc_body(project: str, n: int) -> str:
+    """Document body for a project.
 
-
-def _doc_body(project: str, n: int) -> str:
-    # Lexically OVERLAPPING content on purpose: if project B's text does not match
-    # the query, its exclusion proves nothing.
+    Lexically OVERLAPPING on purpose: every body carries the same query terms and
+    differs only in the project name. If project B's text did not match the query, its
+    exclusion from a project-A query would prove nothing.
+    """
     return (
         f"## Notes {n}\n\n"
         f"The quarterly budget review for {project} is scheduled for tuesday. "
         f"Line item {n} covers travel and lodging."
     )
+
+
+#: Terms every scoped body must contain, so a query can match all projects at once.
+SCOPED_QUERY_TERMS = ("quarterly", "budget", "review", "tuesday")
 
 
 def build_scoped_corpus(
@@ -486,20 +670,24 @@ def build_scoped_corpus(
     projects: Sequence[str],
     docs_per_project: int,
     container_tag: str = "bench",
+    embedder: Any | None = None,
     ingest: bool = True,
 ) -> ScopedCorpus:
     """Build a multi-project corpus and assert the expected per-project counts.
 
-    ``custom_id`` is deliberately REUSED across projects to exercise the real
-    collision path. The count assertion matters because ``create_document``'s conflict
-    lookup includes the scope clauses, so omitting ``project_id`` on one side does not
-    collide -- it silently creates a NULL-scope document, growing the unscoped corpus
-    and making leak counts look clean. Document count is never inferred from a zero
-    leak count (S3).
+    ``custom_id`` is deliberately REUSED across projects to exercise the real collision
+    path. The count assertion matters because ``create_document``'s conflict lookup
+    includes the scope clauses, so omitting ``project_id`` on one side does not collide
+    -- it silently creates a NULL-scope document, growing the unscoped corpus and making
+    leak counts look clean. Document count is never inferred from a zero leak count (S3).
     """
     project_ids = tuple(projects)
     if len(project_ids) < 2:
-        raise ValueError("isolation needs at least 2 projects")
+        raise CorpusError(
+            f"isolation needs at least 2 projects, got {len(project_ids)}; one project cannot leak"
+        )
+    if docs_per_project < 1:
+        raise CorpusError(f"docs_per_project must be >= 1, got {docs_per_project}")
 
     if ingest:
         from memoratum import db
@@ -509,14 +697,16 @@ def build_scoped_corpus(
                 db.create_document(
                     conn,
                     container_tag=container_tag,
-                    content=_doc_body(project, n),
+                    content=scoped_doc_body(project, n),
                     custom_id=f"doc-{n}",
                     project_id=project,
                 )
         from memoratum.embeddings import HashEmbedder
         from memoratum.ingest import process_all
 
-        process_all(conn, HashEmbedder(dims=64))
+        # HashEmbedder only: a remote embedder would put network jitter inside the
+        # timed region (L5) and require a provider extra (FR-011).
+        process_all(conn, embedder if embedder is not None else HashEmbedder(dims=64))
 
     corpus = ScopedCorpus(
         container_tag=container_tag,
@@ -525,23 +715,25 @@ def build_scoped_corpus(
         docs_per_project=docs_per_project,
     )
 
-    actual = conn.execute(
+    rows = conn.execute(
         "SELECT project_id, COUNT(*) c FROM documents WHERE container_tag = ? GROUP BY project_id",
         (container_tag,),
     ).fetchall()
-    counts = {row["project_id"]: row["c"] for row in actual}
+    counts = {row["project_id"]: row["c"] for row in rows}
     for project in project_ids:
-        assert counts.get(project) == docs_per_project, (
-            f"project {project!r} has {counts.get(project)} documents, expected "
-            f"{docs_per_project}; a NULL-scope document was likely created silently (S3)"
-        )
+        if counts.get(project) != docs_per_project:
+            raise CorpusError(
+                f"project {project!r} holds {counts.get(project)} documents, expected "
+                f"{docs_per_project}; a NULL-scope document was likely created silently (S3)"
+            )
     total = conn.execute(
         "SELECT COUNT(*) c FROM documents WHERE container_tag = ?", (container_tag,)
     ).fetchone()["c"]
-    assert total == corpus.expected_documents, (
-        f"corpus holds {total} documents, expected {corpus.expected_documents}; a "
-        "document landed outside its project scope (S3)"
-    )
+    if total != corpus.expected_documents:
+        raise CorpusError(
+            f"corpus holds {total} documents, expected {corpus.expected_documents}; a "
+            "document landed outside its project scope (S3)"
+        )
     return corpus
 
 
