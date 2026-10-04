@@ -90,12 +90,12 @@ the isolation axis; no change to runtime code paths outside `eval_*.py`.
 **Complexity Tracking**: no violations. One item requires a **scope decision**
 rather than a complexity waiver — see below.
 
-## Scope Reconciliation — requires explicit approval
+## Scope Reconciliation — resolved 2026-10-04
 
-Phase 0 research contradicts two lines of the spec's *Explicitly Out of Scope*
-section. I am not resolving this silently.
+Phase 0 research contradicted two lines of the spec's *Explicitly Out of Scope*
+section. Both are now closed.
 
-### BEAM — the spec's own conditional is now answered, no conflict
+### BEAM — rejected by the spec's own conditional. No conflict.
 
 The spec wrote: *"BEAM: deferred, not rejected. Adopt only if it runs fully
 offline with no provider key; otherwise it cannot gate CI under Principle IV."*
@@ -103,31 +103,26 @@ offline with no provider key; otherwise it cannot gate CI under Principle IV."*
 Research verified the condition is **false**: grading is 100% LLM-judge
 (`gpt-4.1-mini`, all 10 of 10 scorers, no deterministic branch), the judge prompt
 is explicitly paraphrase-tolerant so re-runs drift, and `initialize_models()`
-pulls further HuggingFace models plus `nltk.download`. Therefore BEAM is
-**rejected** by the spec's own stated rule. No amendment needed; the deferred
-conditional is resolved to "rejected". The retrieval-only subset that *is*
-deterministically reachable (6 of 10 abilities via `source_chat_ids`) is deferred
-and must be labelled non-official, because it is not BEAM's metric.
+pulls further HuggingFace models plus `nltk.download`. BEAM is therefore
+**rejected** by the spec's own stated rule. The deterministically reachable subset
+(6 of 10 abilities via `source_chat_ids`) stays deferred and must be labelled
+non-official, because it is not BEAM's metric. Recorded in `spec.md` and D5.
 
-### HotPotQA — a genuine conflict, needs your decision
+### HotPotQA — admitted for evidence retrieval as separable Phase C
 
-The spec rejects HotPotQA and MuSiQue: *"multi-hop reasoning over Wikipedia...
-answering these requires an LLM to perform the reasoning, so they would measure a
-layer this project does not have."*
+**Decision: option 2, approved.** The spec rejected HotPotQA because *"answering
+these requires an LLM to perform the reasoning"*. That reasoning is correct for
+answering and wrong for retrieval: if the metric is *evidence retrieval* — does the
+system return the gold `supporting_facts` paragraphs — no LLM is required, and
+HotPotQA ships those facts plus a pure-stdlib scorer.
 
-**That reasoning is correct and I endorsed it. It is also, on inspection, aimed at
-the wrong measurement.** If the metric is *evidence retrieval* — does the system
-return the gold `supporting_facts` paragraphs — no LLM is required. HotPotQA ships
-those facts and a pure-stdlib scorer (`normalize_answer`, `exact_match_score`,
-`f1_score`, `update_sp`, joint as elementwise product). The spec's stated reason
-does not apply to that metric.
-
-I dismissed HotPotQA in conversation before commissioning the research, and that
+I dismissed HotPotQA in conversation before commissioning the research; that
 dismissal was wrong. I had already reframed correctness as retrieval
 precision/recall, then failed to check whether HotPotQA's *evidence* was
-measurable that way. It is.
+measurable that way.
 
-What it would add that the current harness structurally cannot:
+`spec.md` is amended accordingly. What it adds that the current harness structurally
+cannot:
 
 - **Sentence-level** gold evidence, not session-level, giving strict partial credit.
 - Explicit multi-hop `bridge`/`comparison` chains that session-recall metrics
@@ -137,26 +132,40 @@ What it would add that the current harness structurally cannot:
 
 Verified: `hotpotqa/hotpot_qa` `fullwiki` validation = 28,041,820 bytes, 7,405 rows,
 public, ungated. Honest caveat: indexing the union of provided contexts (~74K
-paragraphs) is *easier* than true full-wiki (~5M articles, separate multi-GB dump),
-so it is multi-hop evidence recall under a ~74K-paragraph distractor load. The
-`distractor` config does **not** force out-of-window retrieval, so `fullwiki` is the
-correct config. Licence is CC BY-SA 4.0, so ShareAlike attaches to any normalised
-extract — the same reason the existing 277 MB LongMemEval file is **not** committed.
+paragraphs) is *easier* than true full-wiki (~5M articles, separate multi-GB dump).
+Licence is CC BY-SA 4.0, so ShareAlike attaches to any normalised extract — which is
+why the data is not vendored, matching the existing `data/download.log` precedent.
 
-**Decision required.** Three options:
+**Sequencing: Phase C ships only after the four axes are merged and green.** It must
+not block or destabilise them. It is not started on this branch.
 
-1. **Keep the spec as written** — HotPotQA stays out of scope. The four axes ship
-   unchanged. Zero scope risk.
-2. **Amend the spec** to admit HotPotQA scoped explicitly to *evidence recall, not
-   answer correctness*, and ship it as a separable Phase C after the four axes are
-   merged and green.
-3. **Amend now** and fold it into this feature. Higher risk; mixes a new dataset
-   adapter and a licence-attribution obligation into an already broad change.
+### The `R@k` unit fix — implemented here, ahead of the four axes
 
-**Recommendation: option 2.** The four axes are the actual request and they are
-independent of dataset choice; HotPotQA should not be able to block or destabilise
-them. Until you choose, `tasks.md` will treat Phase C as out of scope, and I will
-not implement it.
+Originally planned as Phase C work. Moved onto this branch because it corrects
+already-committed numbers, and leaving a known-wrong metric in place while building
+a cost axis on top of it would have made every new cost figure disagree with recall
+by 3–7x.
+
+The fix: `partial_recall` / `full_recall` now slice **before** deduplicating, so
+`R@k` reads the first `k` retrieval positions. `mrr` is deliberately unchanged.
+
+Two findings from implementing it are recorded in full in
+[`eval/MIGRATION-metric-v1.md`](../../eval/MIGRATION-metric-v1.md) and D7:
+
+1. **The effect on values is small** — 0.000 at n=10, at most −0.040 at n=50. The
+   effect on meaning is large. My original claim that `R@k` beyond ~3 was not
+   measuring k-deep retrieval, evidenced by `R@5 == R@10`, was **wrong**: that
+   equality persists after the fix.
+2. **The retrieval budget must not be inflated.** The budget existed to give `R@k`
+   enough hits to contain `k` *distinct sessions*. Under the corrected definition
+   `R@k` reads the first `k` hits, so `max(ks)` suffices. This **reverses** D7's
+   original recommendation and simplifies `C4`/`C5`.
+
+A third finding is larger than either: **the committed results do not reproduce on
+`main`**. MRR is untouched by this fix, yet `RESULTS-n10.md` records 0.599 where
+current retrieval gives 0.583 under *either* definition, because feature 001's
+search stages changed what is retrieved. That is why the migration note compares
+three ways rather than two.
 
 ## Project Structure
 
@@ -224,14 +233,20 @@ Each phase is independently verifiable and leaves the tree green.
 |---|---|---|
 | **A** | `eval_axes.py` + `test_eval_axes.py`: id→row attribution, manifest extension, sampling with warm-up, baseline load/compare, gate evaluation | Unit tests; attribution proven against real two-project ingestion |
 | **B** | `eval_isolation.py` (FR-001/002, SC-001) | Two-project corpus reports 0 leaks; **injected** leak produces non-zero and fails the run |
-| **C** | D7 budget fix in `eval_longmemeval.py` + `eval_cost.py` (FR-003) | Test fails before the fix; after it, `R@5 != R@10` on the n=10 sample |
+| **C** | `eval_cost.py` (FR-003) | Mean/p95/total chars per query; redundant-hit attribution; cost and recall share the hit unit |
 | **D** | `eval_latency.py` (FR-004) | Per-phase timings at ≥3 sizes; prefilter engagement asserted via `set_trace_callback`; µs/chunk ladder shows sub-linear growth |
 | **E** | `eval_grounding.py` (FR-005/006, SC-007) | Grounded corpus reports 1.0; injected ungrounded text reports <1.0 and fails |
 | **F** | `eval_compare.py` hard-fail (D8); `docs/EVALUATION.md`; committed `BASELINES.md` | Mismatched-manifest comparison exits non-zero; docs conformance test |
+| **—** | **`R@k` unit fix — already done on this branch** | `tests/test_eval_metrics.py`: 6 pass, 2 of them fail against pre-fix code |
+| **C2** | HotPotQA evidence retrieval — **deferred, not started** | Ships only after A–F are merged and green |
 
-**Phase C is ordered after B deliberately.** The denominator defect must be fixed
-*before* a cost metric is added next to recall, or the two metrics would disagree
-on their unit by 3–7x and every committed cost number would be wrong.
+**The `R@k` fix was pulled forward** out of its original Phase C slot. It corrects
+already-committed numbers, and building a cost axis on top of a metric known to be
+wrong would have made every new cost figure disagree with recall by 3–7x. It landed
+here, with a failing-first regression test, before any axis work.
+
+**Phase C is still ordered after B.** Isolation is the highest-severity invariant and
+the one thing this feature exists to observe; it should not wait behind a cost axis.
 
 ## Cross-Cutting Invariants
 

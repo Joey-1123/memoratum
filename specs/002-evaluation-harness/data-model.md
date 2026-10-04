@@ -240,15 +240,17 @@ token-level trace.
   fabricated constant in a committed artifact.
 - `C3` `token_estimate_mean` is defensible **only as a ratio between two runs on the
   same corpus**. It is not a portable absolute claim.
-- `C4` **Cost and recall MUST declare the same unit.** The existing harness fetches
-  `max(2*max(ks), 10)` = 20 **hits** while `session_ids_of` dedupes **before** the
-  `[:k]` slice, so `R@k` counts **distinct sessions**. Measured chunks/session is
-  ~7.6 (median 8, p95 14), so 20 hits cover at most ~2.6 distinct sessions when
-  chunks cluster — which is why `eval/RESULTS-n10.md` shows `partial-R@5` equal to
-  `partial-R@10` to three decimals. Placing a hit-counting cost metric beside a
-  session-counting recall metric would overstate cost by 3–7x.
-- `C5` The retrieval budget is `limit >= max(ks) * mean_chunks_per_document`, with
-  the mean recorded in the manifest.
+- `C4` **Cost and recall MUST declare the same unit.** The v0 harness fetched
+  `max(2*max(ks), 10)` = 20 **hits** while `session_ids_of` deduped **before** the
+  `[:k]` slice, so `R@k` counted **distinct sessions**. Measured chunks/session is
+  ~7.6 (median 8, p95 14), so the two units disagreed by 3–7x. **Resolved on this
+  branch**: `recall@k` now slices before deduplicating, so it counts hits — the same
+  unit the cost metric already used. No budget change was needed.
+- `C5` The retrieval budget is `max(max(ks), 10)` hits: `R@k` reads only the first
+  `k` hits, so `max(ks)` is sufficient and the existing `max(2*max(ks), 10)` is
+  merely generous. **Do not inflate it** — the budget previously existed to
+  compensate for the wrong metric, and inflating it now would mask a real signal.
+  `mean_chunks_per_document` stays in the manifest for reporting, not for sizing.
 - `C6` `tokenizer` presence MUST NOT change the gated metric. Reporting the gated
   figure differently depending on whether a tokenizer is installed would make the
   metric machine-dependent and violate FR-007.

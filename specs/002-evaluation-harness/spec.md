@@ -194,16 +194,38 @@ manifest and metric values.
 
 ### Explicitly Out of Scope
 
-- **HotPotQA** and **MuSiQue**: multi-hop reasoning over Wikipedia. Memoratum is a
-  memory store, not a reasoning engine; answering these requires an LLM to
-  perform the reasoning, so they would measure a layer this project does not
-  have.
+- **Answer-level correctness on HotPotQA and MuSiQue**: multi-hop *reasoning* over
+  Wikipedia. Memoratum is a memory store, not a reasoning engine; answering these
+  requires an LLM to perform the reasoning, so they would measure a layer this
+  project does not have.
 - **STATE-Bench**: requires an agent harness and an LLM to grade decisions.
-- **BEAM**: deferred, not rejected. Adopt only if it runs fully offline with no
-  provider key; otherwise it cannot gate CI under Principle IV.
+- **BEAM**: rejected, not deferred. Phase 0 verified the condition this feature
+  originally made conditional — "adopt only if it runs fully offline with no
+  provider key" — is **false**. Grading is 100% LLM-judge (`gpt-4.1-mini` across all
+  ten ability scorers, no deterministic branch) and the judge prompt is explicitly
+  paraphrase-tolerant, so re-runs drift. See `research.md` D5.
 - **MemoryBench as a dependency**: conflicts with Principle V (minimal
   dependencies) and Principle IV (a committed measurement must be re-runnable).
 - Answer-level free-text correctness scoring as a gating metric.
+
+### Phase C (deferred, approved 2026-10-04, not started)
+
+**HotPotQA is admitted for evidence retrieval only.** The out-of-scope entry above
+rejected it for *answering*; that reasoning is correct but does not apply to
+retrieving the gold `supporting_facts`, which HotPotQA ships together with a
+pure-stdlib deterministic scorer (`normalize_answer`, `exact_match_score`,
+`f1_score`, `update_sp`, joint as the elementwise product).
+
+- Config: `fullwiki` validation. `distractor` is **not** acceptable — its ~1.2K
+  tokens do not force out-of-window retrieval.
+- Metric: sentence-level gold-evidence recall and precision. Never answer accuracy.
+- Licence CC BY-SA 4.0: ShareAlike attaches to a normalised extract, so the data is
+  **not vendored**, matching the existing `data/download.log` precedent.
+- Caveat recorded: indexing the union of provided contexts (~74K paragraphs) is
+  easier than true full-wiki (~5M articles). This is multi-hop evidence recall under
+  a ~74K-paragraph distractor load, not full-wiki scale.
+- **Sequencing**: ships only after the four axes are merged and green. It must not
+  block or destabilise them.
 
 ### Key Entities
 

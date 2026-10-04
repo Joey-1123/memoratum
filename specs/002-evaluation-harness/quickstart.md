@@ -100,31 +100,58 @@ collide — it silently creates a third NULL-scope document. This is why the har
 asserts expected per-project document counts and never infers them from a zero leak
 count (invariant `S3`).
 
-### 1.2 The committed `R@k` numbers saturate
+### 1.2 The committed `R@k` numbers — and why they are not reproducible
 
 ```bash
-cat eval/RESULTS-n10.md
+head -14 eval/RESULTS-n10.md
 grep -n "limit=max(max(ks)" src/memoratum/eval_longmemeval.py
 ```
 
-Expected:
+`R@5` equals `R@10` in the committed n=10 file. **This is not the defect's
+signature**, despite being the original evidence for it — the equality persists
+after the fix, because the ranking has a sharp head on this corpus. The real
+signature appears at n=50, where v0 `partial-R@10` (0.780) exceeded v0
+`partial-R@5` (0.740) by crediting a gold session found *beyond* the 5th hit.
 
+Two separate problems live in these files, and conflating them would misattribute
+one to the other:
+
+| | cause | size |
+|---|---|---|
+| `R@k` crediting sessions past the k-th hit | metric definition | 0.000 at n=10; ≤0.040 at n=50 |
+| `MRR 0.599` vs `0.583` today | feature 001's search stages | MRR −0.016 at n=10; −0.020 at n=50 |
+
+The second is the larger problem and is **not** addressed by the metric fix. Both
+committed files are marked v0 and left unedited; the three-way comparison is in
+[`eval/MIGRATION-metric-v1.md`](../../eval/MIGRATION-metric-v1.md).
+
+### 1.3 The corrected metric, verified
+
+```bash
+uv run pytest tests/test_eval_metrics.py -q --no-cov
 ```
-- partial-R@5: 0.800 | full-R@5: 0.500
-- partial-R@10: 0.800 | full-R@10: 0.500
-181:                        limit=max(max(ks) * 2, 10),
+
+Expected: **6 passed**. Two of these fail against the pre-fix code — the metric
+change shipped with a failing-first regression test.
+
+The decisive case: a gold session at hit-rank 5 is credited at `k=2` under v0 and
+correctly refused under v1.
+
+```bash
+uv run python -c "
+import sys; sys.path.insert(0,'src')
+from memoratum.eval_metrics import partial_recall
+r=['s1','s1','s1','s1','s2']
+print('k=2 ->', partial_recall(r,{'s2'},k=2), '(must be 0.0: s2 is at hit-rank 5)')
+print('k=5 ->', partial_recall(r,{'s2'},k=5), '(must be 1.0)')
+"
 ```
 
-`R@5` equals `R@10` to three decimals. `session_ids_of()` dedupes **before** the
-`[:k]` slice, so `R@k` counts *distinct sessions*, while the harness fetches 20
-**hits**. At ~7.6 chunks/session those 20 hits cover at most ~2.6 distinct sessions
-when chunks cluster.
+Scores can only move **down** after the fix, because v1's visible session set is
+always a subset of v0's. A decrease is a correction, not a retrieval regression,
+and must never be "fixed" by re-inflating the retrieval budget.
 
-`eval/RESULTS-n50.md` does **not** show this (0.780 vs 0.880) because a larger
-sample spreads further within the same 20-hit budget. Both files stay as committed;
-the fix is forward-only (`M4`).
-
-### 1.3 Token-proxy calibration
+### 1.4 Token-proxy calibration
 
 The corpus is ~277 MB of JSON and `eval_datasets.load_records` reads it as one
 string, so the naive form OOMs on a small box. This streaming probe is stdlib-only
@@ -228,17 +255,21 @@ uv run python -m memoratum.eval_cost \
 `retrieved_chars_total`, `redundant_hits` all present and non-null;
 `chars_per_ws_token` present and near 6.27; `tokenizer: null`.
 
-### 3.1 The budget fix must change recall
+### 3.1 The metric fix must not need a bigger budget
 
 ```bash
 uv run python -m memoratum.eval_longmemeval \
-  --data data/longmemeval_s_cleaned.json --n 10 --seed 42 --k 5,10
+  --data data/longmemeval_s_cleaned.json --n 50 --seed 42 --k 5,10 --modes hybrid
 ```
 
-**Pass**: `partial-R@5` and `partial-R@10` are now **different**. Equal values mean
-the D7 budget fix did not take effect and the cost metric would disagree with
-recall by 3–7x. This assertion is a regression test in its own right — it must fail
-against the pre-fix code.
+**Pass**: `partial-R@5` and `partial-R@10` are now **equal** (both 0.740), because
+nothing relevant enters between hits 5 and 10. Under v0 they read 0.740 and 0.780 —
+a climb produced entirely by crediting a gold session found past the 5th hit.
+
+The budget stays at `max(2*max(ks), 10)`. It previously existed to give `R@k` enough
+hits to contain `k` *distinct sessions*; under the corrected definition `R@k` reads
+the first `k` hits, so no inflation is warranted. Re-inflating it now would mask a
+real signal. See `eval/MIGRATION-metric-v1.md`.
 
 ### 3.2 Cost gating
 
@@ -601,8 +632,7 @@ These are **correct** behaviours. Do not "fix" them.
 
 ## 10. Scope note
 
-HotPotQA is **not** implemented by this quickstart. The spec lists it as out of
-scope; Phase 0 research argued it should be admitted for *evidence recall* rather
-than answer correctness. That is an open scope decision recorded in
-[`plan.md`](./plan.md#scope-reconciliation--requires-explicit-approval) and awaits
-explicit approval. Nothing here depends on it.
+HotPotQA is **not** implemented here. Phase 0 research argued it should be admitted
+for *evidence retrieval* rather than answer correctness; that was approved on
+2026-10-04 and recorded as a scope amendment in `spec.md` and `plan.md`. It is
+**Phase C, deferred**, and ships only after the four axes are merged and green.

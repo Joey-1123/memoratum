@@ -48,10 +48,9 @@ The invariant holds today. Two consequences for the design:
 - The metric's job is regression detection, not discovery. It must be capable of
   failing, so its gate cannot be "0 leaks observed" on an unscoped corpus.
 
-### A defect in already-committed results
+### A defect in already-committed results — found, then partly corrected
 
-The research flagged a denominator mismatch in the existing harness. Verified
-first-hand:
+The research flagged a unit mismatch in the existing harness. Verified first-hand:
 
 ```
 $ grep -n "limit=max(max(ks)" src/memoratum/eval_longmemeval.py
@@ -63,20 +62,35 @@ $ cat eval/RESULTS-n10.md
 - partial-R@10: 0.800 | full-R@10: 0.500
 ```
 
-`session_ids_of()` dedupes **before** the `[:k]` slice, so `R@k` counts *distinct
-sessions*, while the harness fetches `max(2*max(ks), 10)` = **20 hits**. Measured
-chunks/session on this corpus is ~7.6 (median 8, p95 14), so 20 hits cover at
-most ~2.6 distinct sessions when chunks cluster. The saturation is visible in the
-committed `RESULTS-n10.md`, where `R@5` and `R@10` are identical to three decimal
-places.
+`session_ids_of()` dedupes **before** the `[:k]` slice, so `R@k` counted *distinct
+sessions* while the harness fetched `max(2*max(ks), 10)` = **20 hits**. Measured
+chunks/session on this corpus is ~7.6 (median 8, p95 14), so 20 hits cover at most
+~2.6 distinct sessions when chunks cluster.
 
-`RESULTS-n50.md` does not show it (0.780 vs 0.880) because a larger sample spreads
-further within the same 20-hit budget.
+**This defect is real and is now fixed on this branch.** But two claims made here
+originally were wrong, and are corrected in D7 with measurements:
 
-**Consequence**: `R@k` beyond roughly k=3 is not measuring k-deep retrieval, and a
-cost metric counting *hits* placed next to a recall metric counting *distinct
-sessions* would overstate cost by 3–7x. This feature must fix the retrieval budget
-and declare one unit for both. It must not silently restate committed results.
+- The `R@5 == R@10` equality in `RESULTS-n10.md` is **not** a symptom of the defect.
+  It persists after the fix (both 0.800), because the ranking has a sharp head on
+  this corpus.
+- The fix's effect on **values** is small: **0.000 at n=10**, and at most −0.040 at
+  n=50. The original claim that "`R@k` beyond roughly k=3 is not measuring k-deep
+  retrieval" overstated the case.
+
+**What the defect actually did**: credit gold sessions found *beyond* the k-th hit.
+At n=50 that inflated `partial-R@10` (0.780) above `partial-R@5` (0.740) by
+0.040 — an unearned climb, since nothing relevant enters between hits 5 and 10.
+
+**Consequence for this feature.** The retrieval budget does **not** need inflating —
+the fix makes `R@k` read the first `k` hits directly, so `max(ks)` would suffice, and
+the cost and recall units finally agree because both count hits. Committed results
+are marked v0 and left unedited; the comparison is in
+[`eval/MIGRATION-metric-v1.md`](../../eval/MIGRATION-metric-v1.md).
+
+**A larger finding surfaced while verifying this.** The committed results **do not
+reproduce on `main`**: MRR is untouched by the fix, yet `RESULTS-n10.md` records
+0.599 where current retrieval gives 0.583 under *either* definition, because feature
+001's search stages changed what is retrieved.
 
 ---
 
@@ -393,29 +407,78 @@ LLM here.
 
 ---
 
-## D7 — Fix the retrieval budget before adding cost
+## D7 — Correct the `R@k` unit before adding cost
 
-**Decision.** Declare one unit for both cost and recall, and size the retrieval
-budget from measured chunks-per-document.
+**Status: implemented on this branch. Superseded in part — read the correction
+below before using the original recommendation.**
 
-**Rationale.** This is the highest-damage item in the whole design, and it is a
-defect in existing committed output rather than a new feature. `session_ids_of()`
-dedupes before slicing, so `R@k` counts distinct sessions; the harness fetches
-`max(2*max(ks), 10)` = 20 **hits**; measured chunks/session is ~7.6. Twenty hits
-therefore cover at most ~2.6 distinct sessions when chunks cluster — which is why
-`RESULTS-n10.md` shows `R@5 == R@10` exactly.
+**Decision (original).** Declare one unit for both cost and recall, and size the
+retrieval budget from measured chunks-per-document.
 
-Placing a cost metric that counts hits beside a recall metric that counts distinct
-sessions would overstate cost by 3–7x. Both metrics must declare their unit, and
-the budget must be `limit >= max(ks) * mean_chunks_per_document`, with the mean
-recorded in the manifest.
+**Rationale (original).** `session_ids_of()` dedupes before slicing, so `R@k`
+counts distinct sessions; the harness fetches `max(2*max(ks), 10)` = 20 **hits**;
+measured chunks/session is ~7.6. Twenty hits therefore cover at most ~2.6 distinct
+sessions when chunks cluster — which is why `RESULTS-n10.md` shows `R@5 == R@10`
+exactly.
+
+### Correction (2026-10-04, after implementing and measuring the fix)
+
+Two things in the original rationale were wrong. Both are recorded here rather
+than quietly edited, because the second one changes what this feature should do.
+
+**1. `R@5 == R@10` was never evidence of the defect.** The original rationale cited
+`eval/RESULTS-n10.md` showing `partial-R@5 == partial-R@10` as the symptom. It is
+not. Under the corrected definition the equality persists (both 0.800 at n=10), so
+it is not caused by the deduplication defect. The real cause is that the ranking
+has a sharp head on this corpus: gold sessions are either within the first few
+chunks or absent from all 20 retrieved.
+
+**2. The fix has a much smaller effect on values than the original rationale
+implied.** Measured, isolating the metric change from feature 001's search change
+(full data in [`eval/MIGRATION-metric-v1.md`](../../eval/MIGRATION-metric-v1.md)):
+
+| | metric-only Δ | search-only Δ |
+|---|---:|---:|
+| n=10, all metrics | **0.000** | MRR −0.016 |
+| n=50, `partial-R@10` | −0.040 | −0.100 |
+| n=50, `full-R@10` | −0.013 | −0.160 |
+
+The **search** change is the larger effect. The metric fix is a correctness fix
+with a small effect on values and a large effect on meaning.
+
+**3. The retrieval budget does not need inflating — this reverses the original
+recommendation.** The budget was compensating for the wrong metric: v0 needed a
+deep hit budget so that `k` *distinct sessions* would exist at all. Under v1, `R@k`
+reads only the first `k` hits, so a budget of exactly `max(ks)` suffices and
+`max(2*max(ks), 10)` is merely generous. Because v1 recall now also counts **hits**,
+the cost and recall units finally agree without any budget change — which resolves
+the `C4`/`C5` problem in `data-model.md` more cleanly than inflating the budget
+would have.
+
+**The genuine signature of the defect**, visible only at n=50: v0 `partial-R@10`
+(0.780) exceeded v0 `partial-R@5` (0.740) by crediting a gold session found beyond
+the 5th hit. That gap was an artefact, and the committed file's apparent
+`0.780 → 0.880` climb included `0.040` of unearned improvement.
+
+**What was implemented.** `partial_recall` and `full_recall` now slice before
+deduplicating (`set(session_ids_of(ranked[:k]))`). `mrr` is deliberately unchanged
+— it has no `k` and remains a session-space metric. Scores can only move **down**,
+because v1's visible session set is always a subset of v0's; a decrease is a
+correction, not a retrieval regression.
+
+**A second, larger finding.** The committed results **do not reproduce on `main`**.
+MRR is untouched by this fix, yet `RESULTS-n10.md` records 0.599 where current
+retrieval gives 0.583 under *either* metric definition. Feature 001's search stages
+changed what is retrieved. This is a reproducibility gap in its own right, and it is
+why the original two-column "old vs new" framing was replaced with the three-way
+comparison in the migration note.
 
 **Alternatives considered.**
-- *Leave the budget and label R@k as "sessions within 20 hits"* — rejected: the
-  number is still not k-deep retrieval, and it is mislabelled in a committed
-  artifact.
-- *Restate the committed results* — rejected for this feature: existing results
-  are a historical record. The fix is forward-only, with the defect recorded.
+- *Restate the committed results* — rejected. Existing results are a historical
+  record; the fix is forward-only and the migration note carries the comparison.
+- *Inflate the retrieval budget* — **rejected on measurement.** See correction 3.
+- *Also change `mrr` to hit-space* — rejected as scope creep. MRR has no `k` and is
+  not defective; a regression test pins its current behaviour.
 
 ---
 
@@ -446,7 +509,7 @@ Every question deferred by the spec is now closed. Nothing remains open.
 | Leak metric as rate or count | Count gates (`== 0`); rate and leaked-query fraction reported; unscoped in its own bucket | D1 |
 | BEAM viability | Rejected as gating; non-official subset deferred | D5 |
 | HotPotQA | Promoted for evidence recall; my earlier dismissal was wrong | D6 |
-| Existing `R@k` denominator defect | Forward-only budget fix; defect recorded, committed results not restated | D7 |
+| Existing `R@k` denominator defect | **Fixed on this branch.** Slice before dedup; `mrr` unchanged. Committed results marked v0 and left unedited; three-way comparison in `eval/MIGRATION-metric-v1.md`. Effect on values is small (0.000 at n=10); effect on meaning is large. Budget inflation **reversed** — no longer needed | D7 |
 | Grounding without a judge | Provenance by row identity, gated; set overlap rejected on measurement | D4 |
 
 ## What cannot be measured reliably, stated plainly

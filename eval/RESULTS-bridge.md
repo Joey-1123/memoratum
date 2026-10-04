@@ -1,5 +1,14 @@
 # Bridge eval — graphify import → memory recall
 
+> **Not affected by the v0 → v1 recall change.** This file does not use
+> `memoratum.eval_metrics`; its `recall@5` is a bespoke "top-5 must contain both
+> endpoint labels" check over facts, computed per hit with no deduplication step.
+> See [`MIGRATION-metric-v1.md`](./MIGRATION-metric-v1.md).
+>
+> It is also **not re-runnable** here: it needs a `graphify-out` corpus (absent) and
+> `nomic-embed-text` via Ollama. Recorded so its exclusion from the metric migration
+> is explicit rather than an omission.
+
 Date: 2026-09-22 (re-run with real vectors + coexistence fix).
 
 ## Setup
