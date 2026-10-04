@@ -45,9 +45,9 @@ Single project: `src/`, `tests/`, `docs/`, `eval/` at repository root.
 **Purpose**: Confirm the change surface and stand up the baseline file. No new
 dependencies, no project scaffolding — this is an existing Python project.
 
-- [ ] T001 Confirm `pyproject.toml`, `clients/ts/package.json` and `dashboard/package.json` are unmodified by this feature in `pyproject.toml` — zero new runtime deps (Principle V)
-- [ ] T002 [P] Create `eval/BASELINES.md` with columns: axis, figure, tolerance, corpus, seed, mode, hardware, command — hardware REQUIRED for any latency row (FR-008, invariant B1)
-- [ ] T003 [P] Create `tests/test_eval_axes.py` covering shared plumbing (written first, see Phase 2)
+- [X] T001 Confirm `pyproject.toml`, `clients/ts/package.json` and `dashboard/package.json` are unmodified by this feature in `pyproject.toml` — zero new runtime deps (Principle V)
+- [X] T002 [P] Create `eval/BASELINES.md` with columns: axis, figure, tolerance, corpus, seed, mode, hardware, command — hardware REQUIRED for any latency row (FR-008, invariant B1)
+- [X] T003 [P] Create `tests/test_eval_axes.py` covering shared plumbing (written first, see Phase 2)
 
 **Checkpoint**: Baseline file exists, dependency surface unchanged.
 
@@ -59,24 +59,24 @@ dependencies, no project scaffolding — this is an existing Python project.
 work can begin until this phase is complete** — isolation, cost, latency and grounding
 all depend on attribution, the extended manifest, sampling, and gate evaluation.
 
-- [ ] T004 [P] Write failing test (serves US1, US4): `attribute_hit()` resolves a `chunk_<id>` hit to its `documents.project_id` via the indexed join `SELECT ... FROM chunks c JOIN documents d ON d.id = c.document_id WHERE c.id = ?` in `tests/test_eval_axes.py` — write FIRST, watch it fail
-- [ ] T005 [P] Write failing test (serves US1, US4): `attribute_hit()` resolves memory hits via `memories.text` and fact hits via `subject predicate object` reconstruction in `tests/test_eval_axes.py`
-- [ ] T006 [P] Write failing test (serves US1, US4): hits carrying no derivable row are classified `unresolvable`, NOT silently skipped — an unresolved id is a failure, not a pass (invariant A1), in `tests/test_eval_axes.py`
-- [ ] T007 Implement `attribute_hit()` and `attribute_hits()` in `src/memoratum/eval_axes.py` — resolve `hit_id` → source row → `documents.project_id`/`org_id`; `document_id` may be `null` for memory/fact hits
-- [ ] T008 [P] Write failing test in `tests/test_eval_axes.py`: extended manifest emits `schema: "longmemeval-scoped-v2"` plus `scope_config`, `cost_config`, `latency_config`, `grounding_config` while preserving the seven original keys unchanged (invariant M1)
-- [ ] T009 Implement `build_manifest()` in `src/memoratum/eval_axes.py` — original keys (`schema`, `seed`, `requested_n`, `n`, `ks`, `modes`, `embedder`, `vector_store`, `data_sha256`) byte-identical so older committed results stay readable
-- [ ] T010 [P] Write failing test in `tests/test_eval_axes.py`: `latency_config.hardware` is REQUIRED when latency figures are present; a manifest lacking it fails validation (invariant B1, FR-008)
-- [ ] T011 Implement manifest validation in `src/memoratum/eval_axes.py` — reject a latency manifest with no `hardware` object
-- [ ] T012 [P] Write failing test in `tests/test_eval_axes.py`: `sample_ms()` discards `warmup` iterations then returns raw samples; median/p95 computed from raw samples by the reader, never averaged (invariant L3, L4)
-- [ ] T013 Implement `sample_ms(fn, samples, warmup)` in `src/memoratum/eval_axes.py` using `time.perf_counter` — must discard `warmup` iterations BEFORE sampling, else the first call pays FTS5 tokenizer setup
-- [ ] T014 [P] Write failing test in `tests/test_eval_axes.py`: a figure that could not be recorded is `null`, never `0`, and `null` FAILS the gate (invariant M3)
-- [ ] T015 Implement `Gate` / `Check` and `evaluate_gate()` in `src/memoratum/eval_axes.py` — `status` is `pass`/`fail`; a `null` figure yields `fail`
-- [ ] T016 [P] Write failing test in `tests/test_eval_axes.py`: `load_baseline()` rejects a latency row whose `hardware` is absent, and a missing baseline yields `null` which FAILS the gate (invariants B1, B3)
-- [ ] T017 Implement `load_baseline()` and `compare_to_baseline()` in `src/memoratum/eval_axes.py` — missing baseline is `null` and must fail, never silently pass
-- [ ] T018 Implement shared CLI helpers in `src/memoratum/eval_axes.py`: `--out-md`, `--out-json`, `--seed`, and the exit-code enum (0 pass / 1 gate failure / 2 self-check failed / 3 bad input)
-- [ ] T019 [P] Implement `build_scoped_corpus()` in `src/memoratum/eval_axes.py` — ≥2 projects, lexically OVERLAPPING content by design, `custom_id` deliberately REUSED across projects to exercise the real collision path
-- [ ] T020 [P] Write failing test in `tests/test_eval_axes.py`: `build_scoped_corpus()` asserts the expected per-project document count after ingest and never infers it from a zero leak count (invariant S3)
-- [ ] T021 [P] Write failing test in `tests/test_eval_axes.py`: byte-identical content in two projects yields two distinct document rows with distinct ids, so text can never attribute scope (invariant A2)
+- [X] T004 [P] Write failing test (serves US1, US4): `attribute_hit()` resolves a `chunk_<id>` hit to its `documents.project_id` via the indexed join `SELECT ... FROM chunks c JOIN documents d ON d.id = c.document_id WHERE c.id = ?` in `tests/test_eval_axes.py` — write FIRST, watch it fail
+- [X] T005 [P] Write failing test (serves US1, US4): `attribute_hit()` resolves memory hits via `memories.text` and fact hits via `subject predicate object` reconstruction in `tests/test_eval_axes.py`
+- [X] T006 [P] Write failing test (serves US1, US4): hits carrying no derivable row are classified `unresolvable`, NOT silently skipped — an unresolved id is a failure, not a pass (invariant A1), in `tests/test_eval_axes.py`
+- [X] T007 Implement `attribute_hit()` and `attribute_hits()` in `src/memoratum/eval_axes.py` — resolve `hit_id` → source row → `documents.project_id`/`org_id`; `document_id` may be `null` for memory/fact hits
+- [X] T008 [P] Write failing test in `tests/test_eval_axes.py`: extended manifest emits `schema: "longmemeval-scoped-v2"` plus `scope_config`, `cost_config`, `latency_config`, `grounding_config` while preserving the seven original keys unchanged (invariant M1)
+- [X] T009 Implement `build_manifest()` in `src/memoratum/eval_axes.py` — original keys (`schema`, `seed`, `requested_n`, `n`, `ks`, `modes`, `embedder`, `vector_store`, `data_sha256`) byte-identical so older committed results stay readable
+- [X] T010 [P] Write failing test in `tests/test_eval_axes.py`: `latency_config.hardware` is REQUIRED when latency figures are present; a manifest lacking it fails validation (invariant B1, FR-008)
+- [X] T011 Implement manifest validation in `src/memoratum/eval_axes.py` — reject a latency manifest with no `hardware` object
+- [X] T012 [P] Write failing test in `tests/test_eval_axes.py`: `sample_ms()` discards `warmup` iterations then returns raw samples; median/p95 computed from raw samples by the reader, never averaged (invariant L3, L4)
+- [X] T013 Implement `sample_ms(fn, samples, warmup)` in `src/memoratum/eval_axes.py` using `time.perf_counter` — must discard `warmup` iterations BEFORE sampling, else the first call pays FTS5 tokenizer setup
+- [X] T014 [P] Write failing test in `tests/test_eval_axes.py`: a figure that could not be recorded is `null`, never `0`, and `null` FAILS the gate (invariant M3)
+- [X] T015 Implement `Gate` / `Check` and `evaluate_gate()` in `src/memoratum/eval_axes.py` — `status` is `pass`/`fail`; a `null` figure yields `fail`
+- [X] T016 [P] Write failing test in `tests/test_eval_axes.py`: `load_baseline()` rejects a latency row whose `hardware` is absent, and a missing baseline yields `null` which FAILS the gate (invariants B1, B3)
+- [X] T017 Implement `load_baseline()` and `compare_to_baseline()` in `src/memoratum/eval_axes.py` — missing baseline is `null` and must fail, never silently pass
+- [X] T018 Implement shared CLI helpers in `src/memoratum/eval_axes.py`: `--out-md`, `--out-json`, `--seed`, and the exit-code enum (0 pass / 1 gate failure / 2 self-check failed / 3 bad input)
+- [X] T019 [P] Implement `build_scoped_corpus()` in `src/memoratum/eval_axes.py` — ≥2 projects, lexically OVERLAPPING content by design, `custom_id` deliberately REUSED across projects to exercise the real collision path
+- [X] T020 [P] Write failing test in `tests/test_eval_axes.py`: `build_scoped_corpus()` asserts the expected per-project document count after ingest and never infers it from a zero leak count (invariant S3)
+- [X] T021 [P] Write failing test in `tests/test_eval_axes.py`: byte-identical content in two projects yields two distinct document rows with distinct ids, so text can never attribute scope (invariant A2)
 
 **Checkpoint**: `eval_axes.py` importable, all foundational tests green. US1–US5 can now begin.
 

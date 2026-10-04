@@ -9,6 +9,7 @@ build/
 .coverage
 .coverage.*
 coverage.xml
+coverage/
 htmlcov/
 *.log
 .DS_Store
