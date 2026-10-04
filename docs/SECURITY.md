@@ -105,14 +105,38 @@ provider scope payloads from the authoritative database.
 - Durable local jobs: ingest, dreaming, reindexing, webhook delivery, and native
   bulk work run through SQLite-backed worker jobs. Do not expose an open
   instance to untrusted writers.
-- Search is brute-force over a tag's chunks (documented upgrade path:
-  sqlite-vec). Embeddingdims changes fail loudly instead of silently corrupting
-  ranking — rotate via a fresh database.
+- Search reuses the embeddings ingest already persisted, so a query does not
+  re-embed the corpus (that cost 157 provider calls per search at 10k chunks).
+  Above ~512 chunk candidates the FTS5 leg bounds the vector candidate set;
+  cosine is still computed directly within that bounded set, so scoring is
+  brute-force rather than approximate. `sqlite-vec` ANN is deliberately deferred
+  (no prebuilt aarch64 wheels) with its adoption trigger recorded in
+  `tests/benchmarks/search.md`. Bounding was measured on LongMemEval-S and
+  *improved* recall (partial-R@10 0.78 → 0.94). Embedding-dims changes fail
+  loudly instead of silently corrupting ranking — rotate via a fresh database.
 
-## Licensing note (for the project owner)
+## Licensing
 
-Server code is AGPL-3.0, which is correct for hosted-service copyleft — but the
-shipped **SDKs/clients are also AGPL with no linking exception**. Proprietary
-agents importing them inherit contagion obligations, which will block adoption.
-Decide: MIT/Apache-2.0 relicense (or exception) for `src/memoratum/client.py`
-and `clients/`, possibly with a commercial dual-license path.
+The split is deliberate and already in place:
+
+| Scope | Licence |
+|---|---|
+| `src/memoratum/client.py` (Python SDK) | MIT (`LICENSE-MIT`) |
+| `clients/` (TypeScript SDK, OpenCode plugin) | MIT (`LICENSE-MIT`) |
+| Everything else, including the server and the MCP server | AGPL-3.0-or-later (`LICENSE`) |
+
+`LICENSE-MIT` states this scope explicitly, `README.md` repeats it, and the
+published packages declare it (`clients/ts/package.json` is `"license": "MIT"`).
+
+Two things remain genuinely open, and they are *owner decisions* rather than
+defects:
+
+- **No commercial dual-license path.** Vendors who cannot ship AGPL server code
+  have no option today. Adding one is a policy and pricing decision.
+- **The dashboard is AGPL**, because it is served by the server rather than
+  embedded in a client.
+
+An earlier revision of this file claimed the SDKs were AGPL with no linking
+exception and needed relicensing. That was stale: `LICENSE-MIT` predated it and
+the claim was never reconciled. `tests/test_docs_conformance.py` now asserts the
+licence statements agree, so it cannot drift again.

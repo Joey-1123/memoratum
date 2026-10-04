@@ -120,6 +120,64 @@ def test_docs_do_not_contradict_the_constitution():
         assert "phone home" not in text, f"{name} contradicts the no-egress principle"
 
 
+def test_licence_statements_agree_across_every_source():
+    """Regression guard for a real contradiction this suite missed once.
+
+    docs/SECURITY.md claimed the SDKs were AGPL with no linking exception and
+    needed relicensing, while LICENSE-MIT, README.md and clients/ts/package.json
+    all said MIT. An external review surfaced it; no test did. The four sources
+    must now agree, and SECURITY.md must not carry the stale claim again.
+    """
+    security = (ROOT / "docs" / "SECURITY.md").read_text()
+    readme = (ROOT / "README.md").read_text()
+    mit = (ROOT / "LICENSE-MIT").read_text()
+    ts_pkg = (ROOT / "clients" / "ts" / "package.json").read_text()
+
+    assert "MIT" in mit
+    assert "MIT" in readme and "AGPL" in readme
+    assert '"license": "MIT"' in ts_pkg, "the published TS SDK must declare MIT"
+
+    # The stale claim must be gone for good.
+    assert "are also AGPL with no linking exception" not in security, (
+        "docs/SECURITY.md still claims the SDKs are AGPL; LICENSE-MIT, README.md and"
+        " clients/ts/package.json all say MIT"
+    )
+    assert "MIT (`LICENSE-MIT`)" in security or "MIT" in security, (
+        "docs/SECURITY.md must state the actual licence split"
+    )
+
+
+def test_security_doc_search_claim_matches_the_implementation():
+    """The doc claimed search was brute-force over every chunk.
+
+    That became inaccurate when search started reusing persisted embeddings and
+    bounding the candidate set with FTS5. Stale security claims are worse than
+    none, so this pins the wording to the implemented behaviour.
+    """
+    security = (ROOT / "docs" / "SECURITY.md").read_text()
+    assert "Search is brute-force over a tag's chunks" not in security, (
+        "the search description is stale -- search now reuses stored embeddings and"
+        " bounds candidates with FTS5"
+    )
+    # ...and it must still be honest that scoring itself is not approximate.
+    assert "sqlite-vec" in security, "the deferred ANN path must stay documented"
+    assert "brute-force" in security, (
+        "scoring is still exact rather than approximate; do not overstate it"
+    )
+
+
+def test_server_package_declares_agpl():
+    import json as _json
+
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    assert "AGPL-3.0-or-later" in pyproject
+    # The dashboard is served by the server, so it stays AGPL.
+    dashboard = _json.loads((ROOT / "dashboard" / "package.json").read_text())
+    assert "AGPL" in str(dashboard.get("license", "")), (
+        "the dashboard is server-served and must remain AGPL"
+    )
+
+
 def test_audit_metering_doc_records_the_metrics_ruling():
     text = (ROOT / "docs" / "AUDIT_METERING.md").read_text()
     assert "/metrics" in text
