@@ -284,10 +284,10 @@ Goal: no per-row embedding calls; latency flat as the corpus grows.
 ### Implementation
 
 - [X] T112 Use `c.embedding` selected at `search.py:184` instead of re-embedding at `search.py:251`; add a backfill for pre-existing rows
-- [ ] T113 **DEFERRED (deliberate)** Add the FTS5 candidate prefilter in `src/memoratum/search.py` — reuse `db.keyword_search` top-N (`N = max(limit*20, 200)`), fuse via the existing `_RRF_K = 60`
-- [ ] T114 Narrow the SELECT to `(id, vector)`; fetch `text`/`metadata` only for the ≤10 survivors
-- [ ] T115 Read vectors via `array('f')`/`memoryview`; build `VectorHit`s after top-k
-- [ ] T116 **DEFERRED with T113** Re-tune the prefilter `k` against the eval harness and record the result
+- [X] T113 Add the FTS5 candidate prefilter in `src/memoratum/search.py` — reuse `db.keyword_search` top-N (`N = max(limit*20, 200)`), fuse via the existing `_RRF_K = 60`
+- [X] T114 Narrow the SELECT to `(id, vector)`; fetch `text`/`metadata` only for the ≤10 survivors
+- [X] T115 Read vectors via `array('f')`/`memoryview`; build `VectorHit`s after top-k
+- [X] T116 Re-tune against the eval harness — done: `MEMORATUM_SEARCH_PREFILTER_MIN` makes it reproducible; default 512
 
 **Checkpoint**: latency flat from 500 → 4,000. `sqlite-vec` stays deferred per
 research.md D4, with the ANN trigger recorded in `tests/benchmarks/search.md`.

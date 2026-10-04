@@ -37,24 +37,90 @@ removes the dominant cost with **zero new dependencies and zero schema change**.
 Provider embedding calls per search: **O(missing rows)** instead of **O(corpus)**.
 In the steady state — every chunk ingested with the current model — that is zero.
 
-## Stage 2 (not done): bounded candidate set
+## Stage 2 (done): bounded candidate set
 
-The remaining O(n) work is in-process cosine scoring plus a per-row
-`json.loads`. The FTS5 leg is already computed via `db.keyword_search`
-(BM25-ranked, external-content `chunks_fts`), so the natural next step is to lift
-its top-N ids and score only those, then fuse with the existing RRF machinery.
+The remaining cost was reading *and* parsing every chunk row before any ranking
+happened. FTS5 now runs first and bounds both the row fetch and the vector scoring:
 
-Reference measurement from the design work, at 10,000 rows:
+```
+SELECT COUNT(*) ...                       -- decide whether bounding is worth it
+SELECT ... WHERE ... AND c.id IN (<fts hits>)
+```
 
-| Path | 1,000 | 10,000 | 50,000 |
-|---|---:|---:|---:|
-| brute force (current) | 0.33 s | 3.66 s | ~16 s |
-| + reuse stored embedding | ~0.11 s | ~1.0 s | ~5 s |
-| + FTS5 prefilter (k=200) | ~0.08 s | **0.079 s** | ~0.09 s (flat) |
+`PREFILTER_MIN_CANDIDATES = 512`. Below that threshold nothing is bounded: scoring
+a small corpus is cheap and costs no recall, so ordinary self-hosted deployments
+keep exact semantic behaviour and never see the trade-off.
 
-~46x at k=200. Stage 2 is deliberately **not** in this change: it alters result
-ordering, which needs re-tuning against the eval harness, and that is a separate
-decision.
+### Measured end-to-end (128-dim, 4 chunks/doc, `search_mode="documents"`)
+
+Selective query — `"taxation"` over text where most tokens are rare:
+
+| Chunks | Bounded | Median latency |
+|---:|---|---:|
+| 200 | no | 10.1 ms |
+| 1,600 | yes | 14.0 ms |
+| 6,000 | yes | 39.6 ms |
+
+30x the corpus for ~4x the time. Before Stage 2 the same shape was linear with a
+much larger constant (see the table at the top of this file: 1,000 → 326 ms,
+4,000 → 1,581 ms).
+
+### The gain is smaller than the design estimate
+
+The design work projected **~46x** from a prefilter at k=200. The realised gain is
+roughly **1.6x** on the path as it actually runs (1,600 chunks: 73 ms → 43 ms;
+4,000: 180 ms → 114 ms, measured before the fetch was bounded as well as the
+scoring). The projection was based on scoring cost in isolation and understated how
+much of the original latency was row fetching, parsing and the lexical leg. The
+number recorded here is the measured one.
+
+### Recall impact, measured with the eval harness (T116)
+
+Retrieval quality was compared with bounding on and off at the same cutoff, using
+the on-disk LongMemEval-S dataset and the project's own harness:
+
+```sh
+MEMORATUM_SEARCH_PREFILTER_MIN=100000000 uv run python -m memoratum.eval_longmemeval \
+  --data data/longmemeval_s_cleaned.json --n 50 --k 10      # bounding OFF
+MEMORATUM_SEARCH_PREFILTER_MIN=100        uv run python -m memoratum.eval_longmemeval \
+  --data data/longmemeval_s_cleaned.json --n 50 --k 10      # bounding ON
+```
+
+| n | Bounding | partial-R@10 | full-R@10 | MRR |
+|---:|---|---:|---:|---:|
+| 25 | off | 0.760 | 0.400 | 0.381 |
+| 25 | on | 0.920 | 0.720 | 0.546 |
+| 50 | off | 0.780 | 0.380 | 0.488 |
+| 50 | on | **0.940** | **0.740** | **0.642** |
+
+Bounding does not cost recall — it **improves** it, substantially and consistently
+across both sample sizes. The likely reason is that the unbounded vector leg ranks
+the entire corpus and floods the fused top-10 with high-similarity but irrelevant
+chunks; restricting it to lexically-relevant candidates behaves like reranking.
+
+That is the opposite of the trade-off this change was expected to make, so it is
+recorded with the commands to reproduce it rather than asserted.
+
+**A false result worth recording.** The first version of this comparison reported
+"identical recall, bounding is free". It was wrong: instrumentation showed the
+corpus peaked at 386 chunks, below the default 512 threshold, so **the prefilter
+never engaged** and both runs executed identical code. The numbers only became
+meaningful once the threshold was lowered to force engagement. A benchmark that
+cannot fail is not a benchmark.
+
+`MEMORATUM_SEARCH_PREFILTER_MIN` exists so this comparison is reproducible and so
+operators can trade recall against latency. The default remains 512: below that,
+scoring everything is cheap and exact-semantic behaviour is preserved.
+
+### Pathological queries
+
+FTS5 computes `bm25` for every matching row *before* `LIMIT` is applied, so a
+query whose tokens appear in most of the corpus still ranks the whole corpus. A
+query like `"topic 3"`, where the bare digit appears in every chunk, is the worst
+case and showed 11x growth for 4x corpus. This is inherent to FTS5 relevance
+ranking, not something the prefilter can address; the bound only removes work
+*downstream* of the lexical leg. The realistic-query numbers above are the ones
+that matter for a self-hosted corpus.
 
 ## Why `sqlite-vec` is deferred
 
