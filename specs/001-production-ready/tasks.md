@@ -219,27 +219,27 @@ Goal: an operator can answer "is it up, is it slow, is work backing up" locally.
 
 ### Tests *(write first)*
 
-- [ ] T079 [P] [US3] `tests/test_metrics.py::test_exposition_format_valid` — HELP/TYPE present, escaping correct *(fail first)*
-- [ ] T080 [P] [US3] `tests/test_metrics.py::test_help_text_does_not_escape_quotes` — the label-vs-HELP escaping asymmetry
-- [ ] T081 [P] [US3] `tests/test_metrics.py::test_route_labels_are_templates` — no concrete ids in labels
-- [ ] T082 [P] [US3] `tests/test_metrics.py::test_no_tenant_identifiers_in_labels`
-- [ ] T083 [P] [US3] `tests/test_metrics.py::test_metrics_endpoint_excluded_from_own_counters`
-- [ ] T084 [P] [US3] `tests/test_metrics.py::test_counter_thread_safety` — concurrent increments under `threading.Lock`
-- [ ] T085 [P] [US3] `tests/test_health.py::test_ready_fails_when_database_unavailable`
-- [ ] T086 [P] [US3] `tests/test_health.py::test_ready_reports_schema_diverged`
-- [ ] T087 [P] [US3] `tests/test_logging.py::test_logs_contain_no_content_or_secrets`
+- [X] T079 [P] [US3] `tests/test_metrics.py::test_exposition_format_valid` — HELP/TYPE present, escaping correct *(fail first)*
+- [X] T080 [P] [US3] `tests/test_metrics.py::test_help_text_does_not_escape_quotes` — the label-vs-HELP escaping asymmetry
+- [X] T081 [P] [US3] `tests/test_metrics.py::test_route_labels_are_templates` — no concrete ids in labels
+- [X] T082 [P] [US3] `tests/test_metrics.py::test_no_tenant_identifiers_in_labels`
+- [X] T083 [P] [US3] `tests/test_metrics.py::test_metrics_endpoint_excluded_from_own_counters`
+- [X] T084 [P] [US3] `tests/test_metrics.py::test_counter_thread_safety` — concurrent increments under `threading.Lock`
+- [X] T085 [P] [US3] `tests/test_health.py::test_ready_fails_when_database_unavailable`
+- [X] T086 [P] [US3] `tests/test_health.py::test_ready_reports_schema_diverged`
+- [X] T087 [P] [US3] `tests/test_logging.py::test_logs_contain_no_content_or_secrets`
 
 ### Implementation
 
-- [ ] T088 [US3] Create `src/memoratum/metrics.py` — stdlib registry, `threading.Lock`, counters + gauges + histograms with explicit `(le_string, le_float)` buckets
-- [ ] T089 [US3] Add `GET /metrics` to `src/memoratum/app.py`, loopback-bound, `Content-Type: text/plain; version=0.0.4; charset=utf-8` set explicitly
-- [ ] T090 [US3] Compute job depth/age as one indexed aggregate per scrape; add no cache
-- [ ] T091 [US3] Add `GET /health/live` and `GET /health/ready` to `src/memoratum/app.py`; keep `/health` as an alias for `/health/live` so the Dockerfile `HEALTHCHECK` keeps working
-- [ ] T092 [US3] Create `src/memoratum/logging_setup.py` — stdlib `logging`, JSON to stdout, scope-safe identifiers only
-- [ ] T093 [US3] Add `MEMORATUM_LOG_LEVEL`, `MEMORATUM_LOG_FORMAT`, `MEMORATUM_METRICS_ENABLED` to `src/memoratum/config.py`
-- [ ] T094 [US3] Instrument request middleware in `src/memoratum/app.py` using the registered path template
-- [ ] T095 [US3] Add the "local scrape is not telemetry" ruling to `docs/AUDIT_METERING.md`
-- [ ] T096 [US3] Point the Dockerfile `HEALTHCHECK` at `/health/live`
+- [X] T088 [US3] Create `src/memoratum/metrics.py` — stdlib registry, `threading.Lock`, counters + gauges + histograms with explicit `(le_string, le_float)` buckets
+- [X] T089 [US3] Add `GET /metrics` to `src/memoratum/app.py`, loopback-bound, `Content-Type: text/plain; version=0.0.4; charset=utf-8` set explicitly
+- [X] T090 [US3] Compute job depth/age as one indexed aggregate per scrape; add no cache
+- [X] T091 [US3] Add `GET /health/live` and `GET /health/ready` to `src/memoratum/app.py`; keep `/health` as an alias for `/health/live` so the Dockerfile `HEALTHCHECK` keeps working
+- [X] T092 [US3] Create `src/memoratum/logging_setup.py` — stdlib `logging`, JSON to stdout, scope-safe identifiers only
+- [X] T093 [US3] Add `MEMORATUM_LOG_LEVEL`, `MEMORATUM_LOG_FORMAT`, `MEMORATUM_METRICS_ENABLED` to `src/memoratum/config.py`
+- [X] T094 [US3] Instrument request middleware in `src/memoratum/app.py` using the registered path template
+- [X] T095 [US3] Add the "local scrape is not telemetry" ruling to `docs/AUDIT_METERING.md`
+- [X] T096 [US3] Point the Dockerfile `HEALTHCHECK` at `/health/live`
 
 **Checkpoint**: quickstart Scenario 7 passes.
 

@@ -36,6 +36,9 @@ class Settings:
     dashboard_dir: str
     webhook_allow_private_targets: bool
     lenient_compat: bool
+    log_level: str
+    log_format: str
+    metrics_enabled: bool
     environment: str
 
     @classmethod
@@ -79,6 +82,10 @@ class Settings:
             ),
             environment=_get("MEMORATUM_ENV", "production"),
             lenient_compat=_get("MEMORATUM_LENIENT_COMPAT", "false").lower()
+            in {"1", "true", "yes", "on"},
+            log_level=_get("MEMORATUM_LOG_LEVEL", "INFO"),
+            log_format=_get("MEMORATUM_LOG_FORMAT", "json"),
+            metrics_enabled=_get("MEMORATUM_METRICS_ENABLED", "true").lower()
             in {"1", "true", "yes", "on"},
         )
 

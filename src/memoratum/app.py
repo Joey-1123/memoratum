@@ -18,10 +18,10 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from memoratum import db, jobs, webhooks
+from memoratum import db, jobs, logging_setup, metrics, webhooks
 from memoratum import facts as fact_store
 from memoratum.auth import IdentityProvider, token_fingerprint
 from memoratum.config import Settings
@@ -296,6 +296,8 @@ def create_app(
     os.makedirs(settings.data_dir, exist_ok=True)
     webhooks.set_encryption_data_dir(settings.data_dir)
     _warn_if_lenient(settings)
+    logging_setup.configure(settings)
+    metrics.REGISTRY.set_enabled(settings.metrics_enabled)
     app = FastAPI(title="Memoratum")
     app.state.settings = settings
     if rate_limit_per_minute:
@@ -3460,8 +3462,89 @@ def create_app(
             ),
         }
 
+    @app.middleware("http")
+    async def _instrument(request: Request, call_next):
+        """Record latency and status under the registered path template.
+
+        The concrete path is never used as a label: it embeds memory and document
+        ids, which is both unbounded cardinality and an identifier leak.
+        """
+        if request.url.path in metrics.SELF_EXEMPT_PATHS:
+            return await call_next(request)
+        started = time.perf_counter()
+        response = await call_next(request)
+        route = request.scope.get("route")
+        template = getattr(route, "path", None) or metrics.UNMATCHED
+        duration = time.perf_counter() - started
+        metrics.record_request(request.method, template, response.status_code, duration)
+        logging_setup.request_completed(
+            request.method, template, response.status_code, duration * 1000
+        )
+        return response
+
+    def _readiness() -> tuple[bool, dict[str, str]]:
+        """Coarse readiness. Names and status only -- no paths, counts, or errors."""
+        checks = {"database": "ok", "migrations": "ok"}
+        healthy = True
+        try:
+            probe = db.connect(settings.db_path)
+            try:
+                probe.execute("SELECT 1").fetchone()
+                expected = len(db._MIGRATIONS)
+                actual = probe.execute(
+                    "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+                ).fetchone()[0]
+                if actual < expected:
+                    checks["migrations"] = "pending"
+                    healthy = False
+                elif actual > expected:
+                    checks["migrations"] = "diverged"
+                    healthy = False
+            finally:
+                probe.close()
+        except Exception:  # noqa: BLE001 - readiness must never raise
+            checks["database"] = "unavailable"
+            healthy = False
+        return healthy, checks
+
     @app.get("/health")
     def health() -> dict[str, Any]:
+        """Legacy alias for liveness.
+
+        The container HEALTHCHECK probes this path; replacing its behaviour would
+        break every existing deployment's health monitoring.
+        """
         return {"ok": True}
+
+    @app.get("/health/live")
+    def health_live() -> dict[str, Any]:
+        """Liveness: the process is running. Never fails on a degraded dependency."""
+        return {"ok": True}
+
+    @app.get("/health/ready")
+    def health_ready() -> JSONResponse:
+        """Readiness: this process can serve traffic right now."""
+        healthy, checks = _readiness()
+        return JSONResponse(
+            status_code=200 if healthy else 503, content={"ok": healthy, "checks": checks}
+        )
+
+    @app.get("/metrics")
+    def prometheus_metrics() -> Response:
+        """Local Prometheus exposition. Loopback-scoped like /health; no egress."""
+        conn = db.connect(settings.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS n, MIN(created_at) AS oldest FROM jobs GROUP BY status"
+            ).fetchall()
+            by_status = {str(r["status"]): int(r["n"]) for r in rows}
+            now = time.time()
+            oldest = min(
+                (float(r["oldest"]) for r in rows if r["status"] == "queued"), default=None
+            )
+            metrics.record_job_depth(by_status, (now - oldest) if oldest is not None else 0.0)
+        finally:
+            conn.close()
+        return Response(content=metrics.render(), media_type=metrics.CONTENT_TYPE)
 
     return app
