@@ -24,6 +24,51 @@ uv run python -m memoratum.backup restore \
 Backups contain plaintext content and key hashes. Store them with the same
 protection as the live database.
 
+## Retention
+
+Every table carries an explicit retention policy, stored as data in
+`retention_policies` rather than in prose — so "every table has one" is a test
+assertion, and a future migration that adds a table without a policy fails
+`tests/test_retention.py`.
+
+| Table | Policy | Window |
+|---|---|---|
+| `organizations`, `projects`, `memories`, `documents`, `facts`, `webhooks`, `api_keys`, `usage_counters`, `retention_policies` | retain indefinitely | — |
+| `chunks`, `vector_points`, `project_members` | cascaded | — |
+| `idempotency_keys` | timed | 24 h |
+| `jobs` | timed | 30 d (terminal only) |
+| `share_links` | timed | 30 d |
+| `revoked_keys`, `domain_events`, `webhook_deliveries` | timed | 90 d |
+| `memory_history`, `audit_events` | timed | 365 d |
+
+Only **terminal** rows are ever eligible: `done`/`failed`/`cancelled` jobs and
+`succeeded`/`dead` deliveries. A queued delivery is an outstanding obligation, not
+a log line, and deleting it would drop it silently.
+
+The automatic sweep is **opt-in**. `MEMORATUM_RETENTION_DAYS` defaults to `0`,
+meaning nothing is deleted automatically until you set it — silently deleting
+audit or memory-history data would be a worse failure than a file that keeps
+growing. Once set, the worker sweeps at most once a day.
+
+Preview first:
+
+```sh
+curl -s -X POST 'localhost:6767/v4/maintenance/prune?dry_run=true' \
+  -H "Authorization: Bearer $MEMORATUM_API_KEY"
+```
+
+Then run it, and read the policy registry the same way:
+
+```sh
+curl -s -X POST localhost:6767/v4/maintenance/prune \
+  -H "Authorization: Bearer $MEMORATUM_API_KEY"
+```
+
+`webhook_deliveries` is swept before `domain_events` because it references it;
+an event is only collectable once nothing references it. The sweep ends with
+`wal_checkpoint(TRUNCATE)` and `incremental_vacuum` so free pages actually return
+to the filesystem.
+
 ## Small-deployment HA
 
 The default server is a single-process SQLite deployment. SQLite permits one

@@ -39,6 +39,7 @@ class Settings:
     log_level: str
     log_format: str
     metrics_enabled: bool
+    retention_days: int
     environment: str
 
     @classmethod
@@ -87,6 +88,9 @@ class Settings:
             log_format=_get("MEMORATUM_LOG_FORMAT", "json"),
             metrics_enabled=_get("MEMORATUM_METRICS_ENABLED", "true").lower()
             in {"1", "true", "yes", "on"},
+            # 0 means the automatic sweep is off: silently deleting audit or
+            # memory-history data would be a worse failure than a growing file.
+            retention_days=int(_get("MEMORATUM_RETENTION_DAYS", "0") or 0),
         )
 
     @property

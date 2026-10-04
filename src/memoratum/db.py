@@ -395,6 +395,19 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE jobs ADD COLUMN heartbeat_at REAL;
     CREATE INDEX IF NOT EXISTS idx_jobs_lease ON jobs(status, lease_expires_at);
     """,
+    # 29: retention policy registry. Stored as data so "every table has a policy"
+    # is a test assertion rather than something a reader has to notice.
+    """
+    CREATE TABLE IF NOT EXISTS retention_policies(
+      table_name TEXT PRIMARY KEY,
+      policy_class TEXT NOT NULL
+        CHECK (policy_class IN
+          ('retain_indefinitely','cascaded','timed','size_bounded')),
+      retention_days INTEGER,
+      rationale TEXT NOT NULL,
+      CHECK (retention_days IS NULL OR retention_days > 0)
+    );
+    """,
     """
     PRAGMA foreign_keys=OFF;
     DROP TABLE IF EXISTS documents_project_scoped;
@@ -519,6 +532,9 @@ def connect(path: str) -> sqlite3.Connection:
         if i > current:
             _apply_migration(db, i, sql)
     _verify_schema(db)
+    from memoratum.retention import seed_policies
+
+    seed_policies(db)
     db.commit()
     return db
 

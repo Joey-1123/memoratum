@@ -3267,6 +3267,38 @@ def create_app(
         )
         return counts
 
+    @app.post("/v4/maintenance/prune")
+    def prune(
+        conn: DbConn,
+        authorization: str | None = Header(default=None),
+        dry_run: bool = False,
+    ):
+        """Run the retention sweep. Admin only.
+
+        Only terminal rows are eligible: a queued webhook delivery is an
+        outstanding obligation, not a log line, and deleting it would drop it
+        silently. ``dry_run=true`` reports what would go without deleting.
+        """
+        denied = admin_error(authorization, conn)
+        if denied is not None:
+            return denied
+        from memoratum import retention
+
+        days = settings.retention_days or None
+        result = retention.sweep(conn, dry_run=dry_run, days=days)
+        audit(
+            authorization,
+            conn,
+            container_tag=None,
+            org_id=None,
+            project_id=None,
+            action="maintenance.prune",
+            resource_type="retention",
+            resource_id=None,
+            metadata={"dry_run": dry_run},
+        )
+        return result
+
     @app.post("/v4/maintenance/reap-jobs")
     def reap_jobs(conn: DbConn, authorization: str | None = Header(default=None)):
         """Force one reaper pass and report what was recovered.

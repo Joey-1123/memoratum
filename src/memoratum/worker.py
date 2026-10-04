@@ -387,6 +387,27 @@ def _dispatch(
     raise ValueError(f"unknown job kind: {kind}")
 
 
+def _maybe_sweep(conn: sqlite3.Connection, settings: Settings, state: dict[str, float]) -> None:
+    """Run the retention sweep at most once a day, if the operator opted in.
+
+    Opt-in rather than automatic: silently deleting audit or memory-history data
+    would be a worse failure than a database file that keeps growing, so
+    MEMORATUM_RETENTION_DAYS defaults to 0 and this does nothing until set.
+    """
+    days = getattr(settings, "retention_days", 0) or 0
+    if days <= 0:
+        return
+    now = time.time()
+    if now - state["last_sweep"] < 86400:
+        return
+    state["last_sweep"] = now
+    from memoratum import logging_setup, retention
+
+    report = retention.sweep(conn, days=days)
+    deleted = {k: v for k, v in report.get("deleted", {}).items() if v}
+    logging_setup.log_event("retention.sweep", deleted=deleted, retention_days=days)
+
+
 def main() -> None:
     settings = Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
@@ -412,6 +433,7 @@ def main() -> None:
         )
     print(f"memoratum-worker: {worker_id} polling {settings.db_path}")
     backoff = 1.0
+    state = {"last_sweep": 0.0}
     while not _stop:
         conn = None
         try:
@@ -446,6 +468,7 @@ def main() -> None:
             ):
                 time.sleep(interval)
             backoff = 1.0
+            _maybe_sweep(conn, settings, state)
         except Exception as exc:  # noqa: BLE001 — a worker must not die on one bad job
             # A transient SQLite lock or a provider blip used to kill the process
             # outright, which also stranded whatever job it was holding. Log, wait,
