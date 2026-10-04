@@ -18,7 +18,10 @@ def main() -> None:
         print(
             "WARNING: MEMORATUM_API_KEY unset — server is OPEN (all tags readable/writable). Set it for any shared host."
         )
-    uvicorn.run(create_app(settings), host="127.0.0.1", port=6767)
+    # MEMORATUM_HOST defaults to loopback so a bare-metal install is not
+    # accidentally exposed. The container image sets 0.0.0.0, because binding
+    # loopback inside a container makes a published port unreachable.
+    uvicorn.run(create_app(settings), host=settings.host, port=6767)
 
 
 if __name__ == "__main__":

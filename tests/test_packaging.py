@@ -150,7 +150,7 @@ def test_docker_image_builds_and_starts(tmp_path):
         import urllib.request
 
         healthy = False
-        for _ in range(40):
+        for _ in range(120):  # up to 60s: a cold runner starts the image slowly
             try:
                 with urllib.request.urlopen("http://127.0.0.1:6799/health/live", timeout=2) as r:
                     healthy = r.status == 200
