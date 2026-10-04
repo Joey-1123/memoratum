@@ -251,21 +251,21 @@ Goal: every table has a documented policy; timed tables actually age out.
 
 ### Tests *(write first)*
 
-- [ ] T097 [P] [US1] `tests/test_retention.py::test_every_table_has_a_policy` — every table in `sqlite_master` has a policy row with a non-empty rationale *(fail first)*
-- [ ] T098 [P] [US1] `tests/test_retention.py::test_queued_deliveries_never_pruned`
-- [ ] T099 [P] [US1] `tests/test_retention.py::test_deliveries_pruned_before_events` — FK order
-- [ ] T100 [P] [US1] `tests/test_retention.py::test_memory_history_and_share_links_pruned` — the two tables with zero delete paths today
-- [ ] T101 [P] [US1] `tests/test_retention.py::test_dry_run_deletes_nothing`
+- [X] T097 [P] [US1] `tests/test_retention.py::test_every_table_has_a_policy` — every table in `sqlite_master` has a policy row with a non-empty rationale *(fail first)*
+- [X] T098 [P] [US1] `tests/test_retention.py::test_queued_deliveries_never_pruned`
+- [X] T099 [P] [US1] `tests/test_retention.py::test_deliveries_pruned_before_events` — FK order
+- [X] T100 [P] [US1] `tests/test_retention.py::test_memory_history_and_share_links_pruned` — the two tables with zero delete paths today
+- [X] T101 [P] [US1] `tests/test_retention.py::test_dry_run_deletes_nothing`
 
 ### Implementation
 
-- [ ] T102 [US1] Create the `retention_policies` table (migration 29) in `src/memoratum/db.py` with the CHECK constraint from data-model.md
-- [ ] T103 [US1] Seed all 19 table policies with rationales, exactly as tabulated in `data-model.md`
-- [ ] T104 [US1] Create `src/memoratum/retention.py` — policy lookup and the timed sweep, FK-ordered
-- [ ] T105 [US1] Add `POST /v4/maintenance/prune` (admin, `dry_run` supported) to `src/memoratum/app.py`
-- [ ] T106 [US1] Add `MEMORATUM_RETENTION_DAYS` (default `0`, opt-in) to `src/memoratum/config.py`
-- [ ] T107 [US1] Run the sweep daily from `main()` in `src/memoratum/worker.py`
-- [ ] T108 [US1] Add `PRAGMA wal_checkpoint(TRUNCATE)` and incremental `VACUUM` to `src/memoratum/maintenance.py`
+- [X] T102 [US1] Create the `retention_policies` table (migration 29) in `src/memoratum/db.py` with the CHECK constraint from data-model.md
+- [X] T103 [US1] Seed all 19 table policies with rationales, exactly as tabulated in `data-model.md`
+- [X] T104 [US1] Create `src/memoratum/retention.py` — policy lookup and the timed sweep, FK-ordered
+- [X] T105 [US1] Add `POST /v4/maintenance/prune` (admin, `dry_run` supported) to `src/memoratum/app.py`
+- [X] T106 [US1] Add `MEMORATUM_RETENTION_DAYS` (default `0`, opt-in) to `src/memoratum/config.py`
+- [X] T107 [US1] Run the sweep daily from `main()` in `src/memoratum/worker.py`
+- [X] T108 [US1] Add `PRAGMA wal_checkpoint(TRUNCATE)` and incremental `VACUUM` to `src/memoratum/maintenance.py`
 
 **Checkpoint**: quickstart Scenario 8 passes.
 
@@ -277,17 +277,17 @@ Goal: no per-row embedding calls; latency flat as the corpus grows.
 
 ### Tests / benchmark *(write first)*
 
-- [ ] T109 [P] `tests/test_search_perf.py::test_no_reembedding_of_stored_chunks` — assert `embedder.embed` is **not** called with chunk texts when stored vectors exist *(fail first — currently 157 API calls at 10k chunks)*
-- [ ] T110 [P] `tests/test_search_perf.py::test_fts_prefilter_bounds_vector_candidates`
-- [ ] T111 [P] Commit the benchmark to `tests/benchmarks/search.md`: latency at 500 / 1,000 / 2,000 / 4,000 memories, before and after *(fail first — currently 90 ms → 1,581 ms, linear)*
+- [X] T109 [P] `tests/test_search_perf.py::test_no_reembedding_of_stored_chunks` — assert `embedder.embed` is **not** called with chunk texts when stored vectors exist *(fail first — currently 157 API calls at 10k chunks)*
+- [X] T110 [P] `tests/test_search_perf.py::test_fts_prefilter_bounds_vector_candidates`
+- [X] T111 [P] Commit the benchmark to `tests/benchmarks/search.md`: latency at 500 / 1,000 / 2,000 / 4,000 memories, before and after *(fail first — currently 90 ms → 1,581 ms, linear)*
 
 ### Implementation
 
-- [ ] T112 Use `c.embedding` selected at `search.py:184` instead of re-embedding at `search.py:251`; add a backfill for pre-existing rows
-- [ ] T113 Add the FTS5 candidate prefilter in `src/memoratum/search.py` — reuse `db.keyword_search` top-N (`N = max(limit*20, 200)`), fuse via the existing `_RRF_K = 60`
+- [X] T112 Use `c.embedding` selected at `search.py:184` instead of re-embedding at `search.py:251`; add a backfill for pre-existing rows
+- [ ] T113 **DEFERRED (deliberate)** Add the FTS5 candidate prefilter in `src/memoratum/search.py` — reuse `db.keyword_search` top-N (`N = max(limit*20, 200)`), fuse via the existing `_RRF_K = 60`
 - [ ] T114 Narrow the SELECT to `(id, vector)`; fetch `text`/`metadata` only for the ≤10 survivors
 - [ ] T115 Read vectors via `array('f')`/`memoryview`; build `VectorHit`s after top-k
-- [ ] T116 Re-tune the prefilter `k` against the eval harness and record the result
+- [ ] T116 **DEFERRED with T113** Re-tune the prefilter `k` against the eval harness and record the result
 
 **Checkpoint**: latency flat from 500 → 4,000. `sqlite-vec` stays deferred per
 research.md D4, with the ANN trigger recorded in `tests/benchmarks/search.md`.
@@ -330,11 +330,15 @@ research.md D4, with the ANN trigger recorded in `tests/benchmarks/search.md`.
 
 ## Phase 15: Polish and validation
 
-- [ ] T136 Run the full gate set from `quickstart.md` Scenario 12 and record the output
-- [ ] T137 Run every quickstart scenario and attach measured numbers — coverage, search latency at 4 corpus sizes, concurrency wall time, migration retry
-- [ ] T138 Confirm `scripts/check_no_telemetry.py` still passes with the new modules
-- [ ] T139 Remove the Sync Impact Report HTML comment from `.specify/memory/constitution.md` before committing
-- [ ] T140 Open a PR to `main` with a **merge commit** (repo convention — no squash, no rebase) and state what was verified and how
+- [X] T136 Run the full gate set from `quickstart.md` Scenario 12 and record the output
+- [X] T137 Run every quickstart scenario and attach measured numbers — coverage, search latency at 4 corpus sizes, concurrency wall time, migration retry
+- [X] T138 Confirm `scripts/check_no_telemetry.py` still passes with the new modules
+- [X] T139 Remove the Sync Impact Report HTML comment from `.specify/memory/constitution.md` before committing
+- [ ] T140 Open a PR to `main` with a **merge commit** (repo convention — no squash, no rebase) and state what was verified and how.
+  **NOT DONE — needs explicit authorisation.** No remote operation has been performed in
+  this session; all work is committed locally on `001-production-ready`. Pushing and
+  opening a PR are the user's call, per the standing rule that GitHub actions need a
+  fresh go-ahead.
 
 ---
 
