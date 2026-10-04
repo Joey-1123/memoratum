@@ -35,6 +35,7 @@ class Settings:
     oidc_jwks_url: str
     dashboard_dir: str
     webhook_allow_private_targets: bool
+    lenient_compat: bool
     environment: str
 
     @classmethod
@@ -77,6 +78,8 @@ class Settings:
                 and _get("MEMORATUM_ENV", "production").lower() in {"development", "test"}
             ),
             environment=_get("MEMORATUM_ENV", "production"),
+            lenient_compat=_get("MEMORATUM_LENIENT_COMPAT", "false").lower()
+            in {"1", "true", "yes", "on"},
         )
 
     @property

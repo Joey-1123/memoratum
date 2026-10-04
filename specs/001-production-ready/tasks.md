@@ -195,18 +195,18 @@ Goal: a misspelled scope field fails closed instead of writing to global scope.
 
 ### Tests *(write first)*
 
-- [ ] T070 [P] [US1] `tests/test_security_regressions.py::test_unknown_field_rejected` — `projct_id` returns 422 *(fail first — currently 201 and unscoped)*
-- [ ] T071 [P] [US1] `tests/test_security_regressions.py::test_wrong_case_field_rejected` — `projectId` returns 422 *(fail first)*
-- [ ] T072 [P] [US1] `tests/test_mem0_lifecycle.py::test_mem0_add_accepts_project_id` — explicit `project_id` is stored in that project *(fail first — currently silently NULL)*
-- [ ] T073 [P] [US1] `tests/test_security_regressions.py::test_lenient_compat_restores_legacy` — `MEMORATUM_LENIENT_COMPAT=true` reverts to ignore-extras
+- [X] T070 [P] [US1] `tests/test_security_regressions.py::test_unknown_field_rejected` — `projct_id` returns 422 *(fail first — currently 201 and unscoped)*
+- [X] T071 [P] [US1] `tests/test_security_regressions.py::test_wrong_case_field_rejected` — `projectId` returns 422 *(fail first)*
+- [X] T072 [P] [US1] `tests/test_mem0_lifecycle.py::test_mem0_add_accepts_project_id` — explicit `project_id` is stored in that project *(fail first — currently silently NULL)*
+- [X] T073 [P] [US1] `tests/test_security_regressions.py::test_lenient_compat_restores_legacy` — `MEMORATUM_LENIENT_COMPAT=true` reverts to ignore-extras
 
 ### Implementation
 
-- [ ] T074 [US1] Add `StrictModel(BaseModel)` with `model_config = ConfigDict(extra="forbid")` in `src/memoratum/app.py`
-- [ ] T075 [US1] Rebase all ten request models in `src/memoratum/app.py` onto `StrictModel`
-- [ ] T076 [US1] Add `org_id` and `project_id` to `Mem0AddIn` and `Mem0SearchIn` in `src/memoratum/app.py`
-- [ ] T077 [US1] Add `MEMORATUM_LENIENT_COMPAT` (default `false`) to `src/memoratum/config.py`, logged loudly at startup
-- [ ] T078 [US1] Document the breaking change in `docs/MEM0_COMPATIBILITY.md` and `docs/API.md`
+- [X] T074 [US1] Add `StrictModel(BaseModel)` with `model_config = ConfigDict(extra="forbid")` in `src/memoratum/app.py`
+- [X] T075 [US1] Rebase all ten request models in `src/memoratum/app.py` onto `StrictModel`
+- [X] T076 [US1] Add `org_id` and `project_id` to `Mem0AddIn` and `Mem0SearchIn` in `src/memoratum/app.py`
+- [X] T077 [US1] Add `MEMORATUM_LENIENT_COMPAT` (default `false`) to `src/memoratum/config.py`, logged loudly at startup
+- [X] T078 [US1] Document the breaking change in `docs/MEM0_COMPATIBILITY.md` and `docs/API.md`
 
 **Checkpoint**: quickstart Scenario 9 passes. This is a **breaking API change** —
 call it out in the PR title.

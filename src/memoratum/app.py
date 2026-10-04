@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from memoratum import db, jobs, webhooks
 from memoratum import facts as fact_store
@@ -34,7 +34,46 @@ from memoratum.search import expand_query, merge_hits, pack_vector, search, sear
 from memoratum.vectorstore import build_vector_store as build_provider_vector_store
 
 
-class DocumentIn(BaseModel):
+class StrictModel(BaseModel):
+    """Request base that rejects unknown fields.
+
+    Pydantic's default is to silently discard them. For a multi-tenant store that
+    is the worst failure mode available: a caller who misspells ``project_id``
+    receives 201 and their data is written to the *global* scope, readable by any
+    unscoped key. Failing closed turns a silent tenant-isolation break into a
+    visible 422.
+
+    ``MEMORATUM_LENIENT_COMPAT=true`` relaxes this for operators whose
+    Mem0-compatible clients send additional fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _apply_lenient_compat(cls, data, handler):
+        """Honour MEMORATUM_LENIENT_COMPAT without giving up strictness by default.
+
+        Unknown keys are dropped only for this one validation run when the operator
+        has opted in. ``model_config`` is never mutated, so the strict default is
+        unaffected.
+        """
+        if isinstance(data, dict) and _lenient_compat_enabled():
+            known = set(cls.model_fields)
+            data = {key: value for key, value in data.items() if key in known}
+        return handler(data)
+
+
+def _lenient_compat_enabled() -> bool:
+    from memoratum.config import Settings
+
+    try:
+        return Settings.load().lenient_compat
+    except Exception:  # noqa: BLE001 — never let the escape hatch break startup
+        return False
+
+
+class DocumentIn(StrictModel):
     content: str = Field(min_length=1, max_length=500_000)
     containerTag: str = "default"
     customId: str | None = None
@@ -45,7 +84,7 @@ class DocumentIn(BaseModel):
     project_id: str | None = None
 
 
-class SearchIn(BaseModel):
+class SearchIn(StrictModel):
     q: str = Field(min_length=1, max_length=2000)
     containerTag: str = "default"
     limit: int = Field(default=10, ge=1, le=100)
@@ -66,29 +105,29 @@ def _error(
     )
 
 
-class KeyIn(BaseModel):
+class KeyIn(StrictModel):
     containerTag: str | None = None
     org_id: str | None = None
     project_id: str | None = None
     role: Literal["OWNER", "READER"] = "READER"
 
 
-class DocPatch(BaseModel):
+class DocPatch(StrictModel):
     content: str | None = Field(default=None, min_length=1, max_length=500_000)
     metadata: dict[str, Any] | None = None
 
 
-class ShareIn(BaseModel):
+class ShareIn(StrictModel):
     document_id: str = Field(min_length=1, max_length=128)
     expires_in: int = Field(default=7 * 24 * 60 * 60, ge=60, le=365 * 24 * 60 * 60)
 
 
-class Mem0Message(BaseModel):
+class Mem0Message(StrictModel):
     role: Literal["user", "assistant", "system"] = "user"
     content: str = Field(min_length=1, max_length=100_000)
 
 
-class Mem0AddIn(BaseModel):
+class Mem0AddIn(StrictModel):
     messages: list[Mem0Message] = Field(min_length=1, max_length=500)
     user_id: str | None = None
     agent_id: str | None = None
@@ -97,18 +136,24 @@ class Mem0AddIn(BaseModel):
     metadata: dict[str, Any] | None = None
     infer: bool = True
     containerTag: str | None = None
+    # Previously absent, so an admin explicitly targeting a project got 200 and
+    # the write silently landed in the global NULL scope.
+    org_id: str | None = None
+    project_id: str | None = None
 
 
-class Mem0SearchIn(BaseModel):
+class Mem0SearchIn(StrictModel):
     query: str = Field(min_length=1, max_length=2000)
     filters: dict[str, Any] = Field(default_factory=dict)
     top_k: int = Field(default=10, ge=1, le=100)
     threshold: float = Field(default=0.0, ge=0.0, le=1.0)
     rerank: bool = False
     show_expired: bool = False
+    org_id: str | None = None
+    project_id: str | None = None
 
 
-class FactIn(BaseModel):
+class FactIn(StrictModel):
     subject: str = Field(min_length=1)
     predicate: str = Field(min_length=1)
     object: str = Field(min_length=1)
@@ -122,7 +167,7 @@ class FactIn(BaseModel):
     project_id: str | None = None
 
 
-class ImportIn(BaseModel):
+class ImportIn(StrictModel):
     graph_dir: str = Field(min_length=1)
     tag: str = Field(min_length=1, max_length=128)
     org_id: str | None = None
@@ -216,6 +261,21 @@ def _ensure_boot_key(settings: Settings) -> None:
         conn.close()
 
 
+def _warn_if_lenient(settings: Settings) -> None:
+    """A relaxed deployment must announce itself.
+
+    With MEMORATUM_LENIENT_COMPAT on, a misspelled `project_id` is discarded again
+    and the write lands in global scope. That is a tenant-isolation hazard, so it
+    must never be active silently.
+    """
+    if settings.lenient_compat:
+        print(
+            "memoratum: WARNING - MEMORATUM_LENIENT_COMPAT is ON; unknown request"
+            " fields are being ignored, so a misspelled project_id/org_id will"
+            " silently write to global scope. Do not use this in production."
+        )
+
+
 def _is_loopback(ip: str) -> bool:
     return ip == "localhost" or ip.startswith("127.") or ip in ("::1", "::ffff:127.0.0.1")
 
@@ -229,6 +289,7 @@ def create_app(
     settings = settings or Settings.load()
     os.makedirs(settings.data_dir, exist_ok=True)
     webhooks.set_encryption_data_dir(settings.data_dir)
+    _warn_if_lenient(settings)
     app = FastAPI(title="Memoratum")
     app.state.settings = settings
     if rate_limit_per_minute:
@@ -829,7 +890,10 @@ def create_app(
                 422,
             )
         auth = _compat_auth_header(authorization)
-        project_id = effective_project(auth, conn, None)
+        # The Mem0-compatible route now accepts explicit scope. Previously it
+        # hard-coded None, so an admin targeting a project got 200 and the write
+        # silently landed in the global NULL scope.
+        project_id = effective_project(auth, conn, body.project_id)
         denied = require_project_write(auth, conn, project_id)
         if denied is not None:
             return denied
@@ -950,7 +1014,10 @@ def create_app(
             )
         auth = _compat_auth_header(authorization)
         scope = scope_of(auth, conn)
+        # Key scope wins; an admin may narrow to an explicit project, which the
+        # Mem0-compatible search route previously could not express at all.
         project_id = scope.get("project_id") if isinstance(scope, dict) else None
+        project_id = effective_project(auth, conn, body.project_id) or project_id
         org_id = authorize(
             auth,
             conn,
