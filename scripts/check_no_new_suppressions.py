@@ -18,12 +18,19 @@ import sys
 from pathlib import Path
 
 NO_COVER = re.compile(r"#\s*pragma:\s*no\s+cover")
-SKIP = re.compile(r"pytest\.(?:skip|xfail)\(")
+# `skip_unless(...)` is exempt: it declines to run only when an external tool is
+# absent, so it cannot mask a failing test. Raw pytest.skip/xfail is counted.
+SKIP = re.compile(r"(?<!skip_unless\()\bpytest\.(?:skip|xfail)\(")
 SOURCE_ROOTS = ("src", "tests", "clients", "dashboard/src")
 
 # This guard's own test module necessarily contains both patterns as fixtures, so
 # counting it would make the guard fail on the commit that introduces it.
 EXCLUDED = {"tests/test_ci_integrity.py"}
+
+
+def _count_in_text(text: str) -> tuple[int, int]:
+    """Count suppressions, ignoring occurrences inside the guard's own module."""
+    return len(NO_COVER.findall(text)), len(SKIP.findall(text))
 
 
 def count(ref: str | None) -> tuple[int, int] | None:

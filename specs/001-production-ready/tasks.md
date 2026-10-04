@@ -321,10 +321,10 @@ research.md D4, with the ANN trigger recorded in `tests/benchmarks/search.md`.
 
 ## Phase 14: WS-B8 — Packaging [US7]
 
-- [ ] T132 [P] [US7] Build the container image and confirm it serves traffic with SQLite only
-- [ ] T133 [P] [US7] Confirm the base package installs with minimal core deps and every provider sits behind an extra
-- [ ] T134 [US7] Verify licence metadata: AGPL server, MIT clients, no blurring
-- [ ] T135 [US7] Confirm no plaintext secret anywhere in the repository
+- [X] T132 [P] [US7] Build the container image and confirm it serves traffic with SQLite only
+- [X] T133 [P] [US7] Confirm the base package installs with minimal core deps and every provider sits behind an extra
+- [X] T134 [US7] Verify licence metadata: AGPL server, MIT clients, no blurring
+- [X] T135 [US7] Confirm no plaintext secret anywhere in the repository
 
 ---
 

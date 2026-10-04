@@ -92,6 +92,20 @@ def test_suppression_counter_detects_both_forms(tmp_path, monkeypatch):
     assert skip == 1, skip
 
 
+def test_skip_unless_is_not_counted_as_a_suppression(tmp_path, monkeypatch):
+    """An environment-capability guard cannot mask a failing test, so it is exempt."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import check_no_new_suppressions as guard
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text(
+        "skip_unless('docker', 'not available')\nimport pytest\npytest.skip('hiding a failure')\n"
+    )
+    _no_cover, skip = guard.count(None)
+    assert skip == 1, f"expected only the raw pytest.skip to count, got {skip}"
+
+
 def test_suppression_counter_ignores_other_syntax(tmp_path, monkeypatch):
     sys.path.insert(0, str(ROOT / "scripts"))
     import check_no_new_suppressions as guard

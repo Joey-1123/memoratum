@@ -78,3 +78,20 @@ def frozen_time(start: float = 1_000_000.0):
         yield clock
     finally:
         time.time = original  # type: ignore[assignment]
+
+
+def skip_unless(tool: str, reason: str) -> None:
+    """Skip when an external tool is unavailable.
+
+    Deliberately distinct from a bare ``pytest.skip(...)``: this is an
+    environment-capability guard, so it cannot mask a failing test -- it only
+    declines to run when the tool is absent. ``scripts/check_no_new_suppressions.py``
+    counts raw ``pytest.skip``/``xfail`` as suppressions and exempts this helper,
+    so the two cases stay distinguishable instead of the guard being weakened.
+    """
+    import shutil
+
+    import pytest
+
+    if not shutil.which(tool):
+        pytest.skip(f"{reason} ({tool} is not available in this environment)")
