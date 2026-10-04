@@ -121,6 +121,46 @@ def test_suppression_counter_ignores_other_syntax(tmp_path, monkeypatch):
 # --- per-module floors ------------------------------------------------------
 
 
+def test_ci_subset_runs_opt_out_of_the_coverage_gate():
+    """Regression guard for the CI failure this feature caused.
+
+    addopts always measures coverage, so a narrow subset run fails the floor at ~1%
+    unless it passes --no-cov. That broke lint-test on the first push; the
+    subset command in CI must keep the flag.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    subset_lines = [
+        line
+        for line in workflow.splitlines()
+        if "test_mem0_official_sdk.py" in line and "pytest" in line
+    ]
+    assert subset_lines, "the mem0 official-SDK subset step is missing from CI"
+    for line in subset_lines:
+        assert "--no-cov" in line, (
+            "the mem0 subset step must pass --no-cov; a 3-test run cannot meet the "
+            f"coverage floor. Offending line: {line.strip()}"
+        )
+
+
+def test_constitution_documents_the_no_cov_flag():
+    """The constitution lists the exact command, so it must include the flag."""
+    constitution = (ROOT / ".specify" / "memory" / "constitution.md").read_text()
+    assert "--no-cov" in constitution, (
+        "the constitution must document --no-cov for the subset command"
+    )
+
+
+def test_full_suite_gate_still_enforces_coverage():
+    """Opting the subset out must not disable the gate on the real run."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    full_runs = [
+        line for line in workflow.splitlines() if line.strip() == "- run: uv run pytest -q"
+    ]
+    assert full_runs, "the full-suite pytest step is missing from CI"
+    for line in full_runs:
+        assert "--no-cov" not in line, "the full-suite gate must not opt out of coverage"
+
+
 def test_worker_and_webhooks_coverage_guards_exist():
     """Both P0 defects lived in the two worst-covered real modules."""
     for module in ("worker.py", "webhooks.py"):
