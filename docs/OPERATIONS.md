@@ -24,6 +24,36 @@ uv run python -m memoratum.backup restore \
 Backups contain plaintext content and key hashes. Store them with the same
 protection as the live database.
 
+## Recovering stranded jobs
+
+Background work is claimed under a lease (`MEMORATUM_JOB_LEASE_SECONDS`, default
+300 s). If a worker is killed uncatchably — SIGKILL, OOM — it cannot release its
+claim, so the reaper returns the job to the queue once the lease expires. This is
+automatic; you normally need to do nothing.
+
+It matters most for `purge_project`: a stranded purge job used to wedge a project
+permanently, with every write returning `409` and the delete retry handing back the
+same dead job id. That is no longer possible, but if you want to see the state:
+
+```sh
+uv run python scripts/recover_stuck_jobs.py --dry-run
+uv run python scripts/recover_stuck_jobs.py --force
+```
+
+`--force` refuses while any worker still holds a live lease, so stop the workers
+first. Projects that remain wedged are listed with the job id to cancel:
+
+```sh
+curl -s -X POST localhost:6767/v4/maintenance/reap-jobs \
+  -H "Authorization: Bearer $MEMORATUM_API_KEY"   # force one reaper pass, list wedged projects
+```
+
+Cancelling a `purge_project` job resets the project's `deleting` flag, which is
+what makes it writable and deletable again.
+
+A `running` job whose lease is still valid is never cancelled and never stolen:
+that would interrupt live work.
+
 ## Retention
 
 Every table carries an explicit retention policy, stored as data in

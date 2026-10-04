@@ -17,12 +17,25 @@ serve open until a key exists. Set `MEMORATUM_API_KEY` to pin admin access.
   webhooks. Document fetch
   returns uniform 404 for missing-or-forbidden so IDs can't be probed across
   scopes.
-- **Outbound webhooks**: disabled by default. Project-scoped endpoints are
-  validated at creation and delivery; production requires HTTPS, rejects
-  private/loopback/link-local/reserved/metadata DNS targets, disables redirects,
-  bounds response size and timeout, signs a timestamped body with HMAC-SHA256,
-  and keeps delivery/audit state in the local SQLite database. Local HTTP
-  targets require an explicit development-only setting. See
+- **Unknown request fields are rejected (422)**, not silently discarded. Silently
+  dropping a misspelled `project_id` writes the data to the *global* scope, which
+  any unscoped key can read — a tenant-isolation failure that fails open. The
+  Mem0-compatible add and search routes therefore accept `org_id`/`project_id`
+  explicitly. `MEMORATUM_LENIENT_COMPAT=true` restores ignore-extras for clients
+  that need it, and announces itself loudly at startup.
+- **Outbound webhooks**: disabled by default. Production requires HTTPS and
+  rejects any literal or resolved address that is not globally routable —
+  loopback, private, link-local, CGNAT (`100.64.0.0/10`, which covers Tailscale
+  and cloud/container internals), documentation and other special-use ranges, and
+  IPv4-in-IPv6 encodings including mapped, NAT64 and 6to4. Resolution happens
+  **once**: the validated addresses are pinned for the connection, so a hostname
+  whose DNS answer changes between validation and connect cannot reach an internal
+  or metadata destination. Redirects are never followed, response size and
+  timeout are bounded, TLS failures are not retried, and each body is signed with
+  a timestamped HMAC-SHA256. Delivery and audit state stays in the local SQLite
+  database. Local HTTP and private targets require
+  `MEMORATUM_WEBHOOK_ALLOW_PRIVATE_TARGETS`, which is ignored outside development
+  and disables the entire address policy. See
   [`runbooks/webhooks.md`](runbooks/webhooks.md).
 - **MCP server (stdio)**: no auth by design — local-process trust only. Do not
   expose it over a network transport.

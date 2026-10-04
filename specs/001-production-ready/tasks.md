@@ -307,15 +307,15 @@ research.md D4, with the ANN trigger recorded in `tests/benchmarks/search.md`.
 
 ## Phase 13: WS-B7 — Documentation reconciliation [US5]
 
-- [ ] T123 [US5] Correct the webhook validation claim at `docs/SECURITY.md:21` (overlaps T069 — do once)
-- [ ] T124 [US5] Correct the serialisation claim in `docs/OPERATIONS.md` (overlaps T055 — do once)
-- [ ] T125 [US5] Add the 20 undocumented variables to `.env.example` per `contracts/env-vars.md`
-- [ ] T126 [US5] Add `MEMORATUM_WEBHOOK_ENCRYPTION_KEY` to both services in `docker-compose.yml`
-- [ ] T127 [US5] Document the retention policy table in `docs/OPERATIONS.md`
-- [ ] T128 [US5] Add the destructive-operation recoverability annotations to `docs/API.md`
-- [ ] T129 [US5] Document job lease/recovery and the operator recovery script in `docs/OPERATIONS.md`
-- [ ] T130 [US5] Execute the `README.md` quickstart, `docs/OPERATIONS.md` backup/restore, and `docs/SECURITY.md` webhook setup **verbatim** in a clean checkout; fix any undocumented step
-- [ ] T131 [US5] Cross-check `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/OPERATIONS.md` against `.specify/memory/constitution.md`; resolve contradictions
+- [X] T123 [US5] Correct the webhook validation claim at `docs/SECURITY.md:21` (overlaps T069 — do once)
+- [X] T124 [US5] Correct the serialisation claim in `docs/OPERATIONS.md` (overlaps T055 — do once)
+- [X] T125 [US5] Add the 20 undocumented variables to `.env.example` per `contracts/env-vars.md`
+- [X] T126 [US5] Add `MEMORATUM_WEBHOOK_ENCRYPTION_KEY` to both services in `docker-compose.yml`
+- [X] T127 [US5] Document the retention policy table in `docs/OPERATIONS.md`
+- [X] T128 [US5] Add the destructive-operation recoverability annotations to `docs/API.md`
+- [X] T129 [US5] Document job lease/recovery and the operator recovery script in `docs/OPERATIONS.md`
+- [X] T130 [US5] Execute the `README.md` quickstart, `docs/OPERATIONS.md` backup/restore, and `docs/SECURITY.md` webhook setup **verbatim** in a clean checkout; fix any undocumented step
+- [X] T131 [US5] Cross-check `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/OPERATIONS.md` against `.specify/memory/constitution.md`; resolve contradictions
 
 ---
 
