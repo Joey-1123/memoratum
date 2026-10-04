@@ -39,6 +39,11 @@ def _unpack(blob: bytes) -> list[float]:
     return list(struct.unpack(f"{len(blob) // 4}f", blob))
 
 
+def _width(blob: bytes) -> int:
+    """Vector width from a packed float32 blob, or 0 if it is not one."""
+    return len(blob) // 4 if blob else 0
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
@@ -171,6 +176,9 @@ def search(
     kinds: dict[str, str] = {}
     stamped: dict[str, float] = {}
     now = time.time()
+    # Chunk embeddings persisted at ingest, keyed by chunk key. Reused instead
+    # of re-embedding the corpus on every query.
+    stored_vectors: dict[str, bytes] = {}
     if want_chunks:
         doc_where = "d.container_tag = ? AND (d.expires_at IS NULL OR d.expires_at > ?)"
         doc_params: tuple[Any, ...] = (container_tag, now)
@@ -193,6 +201,11 @@ def search(
             texts[key] = r["text"]
             kinds[key] = "chunk"
             stamped[key] = r["created_at"]
+            # Ingest already persists this. It used to be SELECTed and thrown away,
+            # so every search re-embedded the entire corpus -- 157 provider calls at
+            # 10k chunks, given batch_size 64.
+            if r["embedding"]:
+                stored_vectors[key] = bytes(r["embedding"])
     fact_list: list[dict[str, Any]] = []
     fact_keys: dict[str, str] = {}
     fact_texts: dict[str, str] = {}
@@ -248,8 +261,21 @@ def search(
 
     chunk_keys = [k for k in texts if kinds[k] == "chunk"]
     if chunk_keys and not store_ranked:
-        chunk_embs = embedder.embed([texts[k] for k in chunk_keys])
-        vec_items.extend(zip(chunk_keys, chunk_embs, strict=True))
+        dims = len(qvec) if qvec is not None else None
+        reusable: list[str] = []
+        missing: list[str] = []
+        for key in chunk_keys:
+            blob = stored_vectors.get(key)
+            vector = _unpack(blob) if blob and (dims is None or _width(blob) == dims) else None
+            if vector is None:
+                missing.append(key)
+            else:
+                reusable.append(key)
+                vec_items.append((key, vector))
+        if missing:
+            # Only rows without a usable stored vector cost a provider call.
+            chunk_embs = embedder.embed([texts[k] for k in missing])
+            vec_items.extend(zip(missing, chunk_embs, strict=True))
     if want_facts and fact_list:
         missing = [
             f
