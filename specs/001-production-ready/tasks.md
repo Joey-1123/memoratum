@@ -334,11 +334,8 @@ research.md D4, with the ANN trigger recorded in `tests/benchmarks/search.md`.
 - [X] T137 Run every quickstart scenario and attach measured numbers — coverage, search latency at 4 corpus sizes, concurrency wall time, migration retry
 - [X] T138 Confirm `scripts/check_no_telemetry.py` still passes with the new modules
 - [X] T139 Remove the Sync Impact Report HTML comment from `.specify/memory/constitution.md` before committing
-- [ ] T140 Open a PR to `main` with a **merge commit** (repo convention — no squash, no rebase) and state what was verified and how.
-  **NOT DONE — needs explicit authorisation.** No remote operation has been performed in
-  this session; all work is committed locally on `001-production-ready`. Pushing and
-  opening a PR are the user's call, per the standing rule that GitHub actions need a
-  fresh go-ahead.
+- [X] T140 PR #44 opened against `main`: https://github.com/Joey-1123/memoratum/pull/44 —
+  14 commits, merge-commit convention. Awaiting review and CI before merge.
 
 ---
 
