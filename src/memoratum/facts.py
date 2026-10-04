@@ -26,6 +26,7 @@ def _ensure_memory(
     document_id: str | None,
     expires_at: float | None,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> str:
     return db.ensure_fact_memory(
         conn,
@@ -37,6 +38,7 @@ def _ensure_memory(
         document_id=document_id,
         expires_at=expires_at,
         project_id=project_id,
+        commit=commit,
     )
 
 
@@ -54,11 +56,16 @@ def add_fact(
     memory_type: str = "semantic",
     org_id: str | None = None,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Add a fact. Same (s,p,o) re-asserts (reviving a superseded row).
     Same (s,p) with a different object supersedes live rows only when
     supersede=True (functional relations); multi-valued relations
-    (calls/contains/imports) pass supersede=False and coexist."""
+    (calls/contains/imports) pass supersede=False and coexist.
+
+    ``commit=False`` lets a caller compose this into a larger transaction so the
+    fact, the memory it projects into, and its embedding share one commit.
+    """
     now = time.time()
     org_clause = "org_id IS NULL" if org_id is None else "org_id = ?"
     project_clause = "project_id IS NULL" if project_id is None else "project_id = ?"
@@ -85,8 +92,10 @@ def add_fact(
             document_id=document_id,
             expires_at=expires_at,
             project_id=project_id,
+            commit=commit,
         )
-        conn.commit()
+        if commit:
+            conn.commit()
         return get_fact(conn, same["id"])
     current = conn.execute(
         "SELECT id, object FROM facts WHERE container_tag = ? AND subject = ? AND predicate = ? AND valid_to IS NULL"
@@ -131,7 +140,8 @@ def add_fact(
         expires_at=expires_at,
         project_id=project_id,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_fact(conn, fact_id)
 
 

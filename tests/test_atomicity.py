@@ -199,6 +199,73 @@ def test_crash_at_any_commit_point_leaves_no_partial_state(tmp_path, monkeypatch
             conn.close()
 
 
+def test_every_write_path_is_atomic(tmp_path, monkeypatch):
+    """No write route may emit more than one mutation commit.
+
+    Measured before the single-boundary work: /v3/documents and /v4/facts each
+    issued 4 commits, so a crash between the document/fact write and its job or
+    audit row left half a write behind.
+    """
+    from memoratum import db as dbmod
+
+    client = _client(tmp_path, monkeypatch)
+    project_id = _project(client, "AllPaths")
+    emb = {"containerTag": "mem0:user_id:alice", "project_id": project_id}
+
+    cases = [
+        (
+            "POST /v3/documents",
+            lambda: client.post("/v3/documents", headers=_admin(), json={"content": "doc", **emb}),
+        ),
+        (
+            "POST /v4/facts",
+            lambda: client.post(
+                "/v4/facts",
+                headers=_admin(),
+                json={"subject": "s", "predicate": "p", "object": "o", **emb},
+            ),
+        ),
+        (
+            "POST /v3/memories/add/",
+            lambda: client.post(
+                "/v3/memories/add/",
+                headers=_admin(),
+                json={
+                    "messages": [{"role": "user", "content": "m"}],
+                    "user_id": "a",
+                    "infer": False,
+                    "project_id": project_id,
+                },
+            ),
+        ),
+        (
+            "POST /v1/memories/",
+            lambda: client.post(
+                "/v1/memories/",
+                headers=_admin(),
+                json={
+                    "messages": [{"role": "user", "content": "m2"}],
+                    "user_id": "a",
+                    "infer": False,
+                    "project_id": project_id,
+                },
+            ),
+        ),
+    ]
+
+    for name, call in cases:
+        log = _statement_log(dbmod)
+        try:
+            response = call()
+        finally:
+            _restore_connect(dbmod)
+        assert response.status_code in {200, 201}, f"{name}: {response.text}"
+        commits = [s for s in log if s.upper().startswith("COMMIT")]
+        # Two is the floor: one for the mutation, one for usage metering, which
+        # runs during authorization and must still count a request that later fails.
+        assert len(commits) <= 2, f"{name} issued {len(commits)} commits"
+
+
 def test_fact_and_its_memory_commit_together(tmp_path, monkeypatch):
     """A fact insert that fails must not leave an orphan memory behind."""
     from memoratum import db

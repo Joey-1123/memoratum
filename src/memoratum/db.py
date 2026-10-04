@@ -824,6 +824,7 @@ def ensure_fact_memory(
     document_id: str | None,
     expires_at: float | None,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> str:
     """Create the canonical memory projection for a fact without committing."""
     metadata = clean_memory_metadata(metadata)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import math
 import os
 import secrets
@@ -770,38 +771,44 @@ def create_app(
             operation="document",
             input_chars=len(doc.content),
         )
-        created = db.create_document(
-            conn,
-            container_tag=doc.containerTag,
-            content=doc.content,
-            custom_id=doc.customId,
-            metadata=doc.metadata,
-            expires_at=doc.expires_at,
-            org_id=org_id,
-            project_id=project_id,
-        )
-        job_id = jobs.enqueue(
-            conn,
-            kind="ingest",
-            payload={
-                "document_id": created["id"],
-                "dreaming": doc.dreaming,
-                "container_tag": doc.containerTag,
-                "org_id": org_id,
-                "project_id": project_id,
-            },
-        )
-        audit(
-            authorization,
-            conn,
-            container_tag=doc.containerTag,
-            org_id=org_id,
-            project_id=project_id,
-            action="document.created",
-            resource_type="document",
-            resource_id=created["id"],
-            metadata={"job_id": job_id},
-        )
+        # One logical write, one commit. The ingest job is what will ever process
+        # the document, so it must not be able to become durable independently.
+        with db.transaction(conn):
+            created = db.create_document(
+                conn,
+                container_tag=doc.containerTag,
+                content=doc.content,
+                custom_id=doc.customId,
+                metadata=doc.metadata,
+                expires_at=doc.expires_at,
+                org_id=org_id,
+                project_id=project_id,
+                commit=False,
+            )
+            job_id = jobs.enqueue(
+                conn,
+                kind="ingest",
+                payload={
+                    "document_id": created["id"],
+                    "dreaming": doc.dreaming,
+                    "container_tag": doc.containerTag,
+                    "org_id": org_id,
+                    "project_id": project_id,
+                },
+                commit=False,
+            )
+            audit(
+                authorization,
+                conn,
+                container_tag=doc.containerTag,
+                org_id=org_id,
+                project_id=project_id,
+                action="document.created",
+                resource_type="document",
+                resource_id=created["id"],
+                metadata={"job_id": job_id},
+                commit=False,
+            )
         return {"id": created["id"], "status": "queued", "job_id": job_id}
 
     @app.post("/v4/memories", status_code=201)
@@ -3121,40 +3128,47 @@ def create_app(
             operation="fact",
             input_chars=len(body.subject) + len(body.predicate) + len(body.object),
         )
-        fact = fact_store.add_fact(
-            conn,
-            container_tag=body.containerTag,
-            subject=body.subject,
-            predicate=body.predicate,
-            object=body.object,
-            document_id=None,
-            metadata=body.metadata,
-            supersede=body.supersede,
-            expires_at=body.expires_at,
-            memory_type=body.memory_type,
-            org_id=org_id,
-            project_id=project_id,
-        )
-        try:
-            if not body.skipEmbedding:
-                text = f"{fact['subject']} {fact['predicate']} {fact['object']}"
-                vec = app.state.embedder.embed([text])[0]
-                conn.execute(
-                    "UPDATE facts SET embedding = ? WHERE id = ?", (pack_vector(vec), fact["id"])
+        # One logical write: the fact, the memory it projects into, its embedding
+        # and the audit row share a single commit boundary.
+        with db.transaction(conn):
+            fact = fact_store.add_fact(
+                conn,
+                container_tag=body.containerTag,
+                subject=body.subject,
+                predicate=body.predicate,
+                object=body.object,
+                document_id=None,
+                metadata=body.metadata,
+                supersede=body.supersede,
+                expires_at=body.expires_at,
+                memory_type=body.memory_type,
+                org_id=org_id,
+                project_id=project_id,
+                commit=False,
+            )
+            try:
+                if not body.skipEmbedding:
+                    text = f"{fact['subject']} {fact['predicate']} {fact['object']}"
+                    vec = app.state.embedder.embed([text])[0]
+                    conn.execute(
+                        "UPDATE facts SET embedding = ? WHERE id = ?",
+                        (pack_vector(vec), fact["id"]),
+                    )
+            except Exception as exc:  # noqa: BLE001 — a missing vector backfills on search
+                logging_setup.log_event(
+                    "fact.embedding_skipped", level=logging.WARNING, error=str(exc)[:200]
                 )
-                conn.commit()
-        except Exception as exc:  # noqa: BLE001 — fact exists; vector backfills on search
-            print(f"memoratum: inline fact embedding skipped: {exc}")
-        audit(
-            authorization,
-            conn,
-            container_tag=body.containerTag,
-            org_id=org_id,
-            project_id=project_id,
-            action="fact.created",
-            resource_type="fact",
-            resource_id=fact["id"],
-        )
+            audit(
+                authorization,
+                conn,
+                container_tag=body.containerTag,
+                org_id=org_id,
+                project_id=project_id,
+                action="fact.created",
+                resource_type="fact",
+                resource_id=fact["id"],
+                commit=False,
+            )
         return {
             "id": fact["id"],
             "subject": fact["subject"],
