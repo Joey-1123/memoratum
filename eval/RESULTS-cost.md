@@ -26,3 +26,9 @@ gate: PASS
 - retrieval_limit: 20 hits
 - mean_chunks_per_document: 7.299
 - data_sha256: d6f21ea9d60a0d56
+
+## Regenerate this figure
+
+```bash
+python -m memoratum.eval_cost --data data/longmemeval_s_cleaned.json --n 4 --seed 42 --k 5,10 --baseline eval/BASELINES.md --out-md eval/RESULTS-cost.md --out-json eval/cost.json
+```

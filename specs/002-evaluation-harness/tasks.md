@@ -165,26 +165,26 @@ several corpus sizes.
 
 ### Tests for User Story 3 ⚠️ write FIRST, watch them fail
 
-- [ ] T053 [P] [US3] Failing test: `--samples 5` is REJECTED — the floor is 20; at n=5 a 1.0x gate needs a +69% band and cannot detect anything under a 70% regression (invariant L2) in `tests/test_eval_latency.py`
-- [ ] T054 [P] [US3] Failing test: a ladder with fewer than 3 corpus sizes is REJECTED (FR-004) in `tests/test_eval_latency.py`
-- [ ] T055 [P] [US3] Failing test: `samples_ms` holds RAW samples and percentiles are computed from them, never averaged across summaries (invariant L3) in `tests/test_eval_latency.py`
-- [ ] T056 [P] [US3] Failing test: `us_per_chunk` RISING across the ladder is flagged as a regression to O(n), FALLING is sub-linear and passes (invariant L1) in `tests/test_eval_latency.py`
-- [ ] T057 [P] [US3] Failing test: a ladder crossing `PREFILTER_MIN_CANDIDATES = 512` is flagged, because that step measures an ALGORITHM SWITCH rather than a size change (invariant L7) in `tests/test_eval_latency.py`
-- [ ] T058 [P] [US3] Failing test: a latency regression names the regressed phase in `gate.checks[].phase` (SC-004) in `tests/test_eval_latency.py`
-- [ ] T059 [P] [US3] Failing test: a baseline row lacking `hardware` is rejected with exit code 2 (invariants B1, L8, FR-008) in `tests/test_eval_latency.py`
-- [ ] T060 [US3] Failing test: `prefilter_engaged` is ASSERTED via `set_trace_callback` — the same technique as `tests/test_search_perf.py` — and a `null` above the prefilter threshold is a defect (invariant L7) in `tests/test_eval_latency.py`
+- [X] T053 [P] [US3] Failing test: `--samples 5` is REJECTED — the floor is 20; at n=5 a 1.0x gate needs a +69% band and cannot detect anything under a 70% regression (invariant L2) in `tests/test_eval_latency.py`
+- [X] T054 [P] [US3] Failing test: a ladder with fewer than 3 corpus sizes is REJECTED (FR-004) in `tests/test_eval_latency.py`
+- [X] T055 [P] [US3] Failing test: `samples_ms` holds RAW samples and percentiles are computed from them, never averaged across summaries (invariant L3) in `tests/test_eval_latency.py`
+- [X] T056 [P] [US3] Failing test: `us_per_chunk` RISING across the ladder is flagged as a regression to O(n), FALLING is sub-linear and passes (invariant L1) in `tests/test_eval_latency.py`
+- [X] T057 [P] [US3] Failing test: a ladder crossing `PREFILTER_MIN_CANDIDATES = 512` is flagged, because that step measures an ALGORITHM SWITCH rather than a size change (invariant L7) in `tests/test_eval_latency.py`
+- [X] T058 [P] [US3] Failing test: a latency regression names the regressed phase in `gate.checks[].phase` (SC-004) in `tests/test_eval_latency.py`
+- [X] T059 [P] [US3] Failing test: a baseline row lacking `hardware` is rejected with exit code 2 (invariants B1, L8, FR-008) in `tests/test_eval_latency.py`
+- [X] T060 [US3] Failing test: `prefilter_engaged` is ASSERTED via `set_trace_callback` — the same technique as `tests/test_search_perf.py` — and a `null` above the prefilter threshold is a defect (invariant L7) in `tests/test_eval_latency.py`
 
 ### Implementation for User Story 3
 
-- [ ] T061 [P] [US3] Implement `assert_prefilter_engaged()` in `src/memoratum/eval_latency.py` using `sqlite3.Connection.set_trace_callback`
-- [ ] T062 [P] [US3] Implement `build_ladder()` in `src/memoratum/eval_latency.py` — ≥3 sizes, all on ONE side of `PREFILTER_MIN_CANDIDATES = 512`, or pin `MEMORATUM_SEARCH_PREFILTER_MIN` per size and record it
-- [ ] T063 [US3] Implement `time_phase()` in `src/memoratum/eval_latency.py` — wraps `sample_ms` and records `samples_ms`, `median_ms`, `p95_ms`, `us_per_chunk`, `prefilter_engaged`
-- [ ] T064 [US3] Implement `evaluate_latency()` in `src/memoratum/eval_latency.py` — all FOUR phases reported separately: ingest, embed, index, retrieve (FR-004)
-- [ ] T065 [US3] Implement `gate_latency()` in `src/memoratum/eval_latency.py` — primary gate `us_per_chunk(4N) < 1.5 × us_per_chunk(N)`; secondary smoke bound `median_of_30 ≤ baseline × 1.40`
-- [ ] T066 [US3] Verify NO remote embedder is inside any timed region in `src/memoratum/eval_latency.py` — network jitter (100 ms ± 80 ms) dwarfs everything measured (invariant L5, FR-011)
-- [ ] T067 [US3] Verify harness bookkeeping stays OUTSIDE timed regions in `src/memoratum/eval_latency.py` — the naive grounding scan costs 51.6 ms/query against a 13 ms retrieval (invariant L6)
-- [ ] T068 [US3] Implement CLI `main()` in `src/memoratum/eval_latency.py` with `--ladder` (100,400,1600,6400), `--samples` (30), `--warmup` (5), `--pin-prefilter`, `--phases`, `--baseline`, `--out-md`, `--out-json`
-- [ ] T069 [US3] Emit `eval/RESULTS-latency.md` and `eval/latency.json`; record baseline rows WITH hardware in `eval/BASELINES.md`
+- [X] T061 [P] [US3] Implement `assert_prefilter_engaged()` in `src/memoratum/eval_latency.py` using `sqlite3.Connection.set_trace_callback`
+- [X] T062 [P] [US3] Implement `build_ladder()` in `src/memoratum/eval_latency.py` — ≥3 sizes, all on ONE side of `PREFILTER_MIN_CANDIDATES = 512`, or pin `MEMORATUM_SEARCH_PREFILTER_MIN` per size and record it
+- [X] T063 [US3] Implement `time_phase()` in `src/memoratum/eval_latency.py` — wraps `sample_ms` and records `samples_ms`, `median_ms`, `p95_ms`, `us_per_chunk`, `prefilter_engaged`
+- [X] T064 [US3] Implement `evaluate_latency()` in `src/memoratum/eval_latency.py` — all FOUR phases reported separately: ingest, embed, index, retrieve (FR-004)
+- [X] T065 [US3] Implement `gate_latency()` in `src/memoratum/eval_latency.py` — primary gate `us_per_chunk(4N) < 1.5 × us_per_chunk(N)`; secondary smoke bound `median_of_30 ≤ baseline × 1.40`
+- [X] T066 [US3] Verify NO remote embedder is inside any timed region in `src/memoratum/eval_latency.py` — network jitter (100 ms ± 80 ms) dwarfs everything measured (invariant L5, FR-011)
+- [X] T067 [US3] Verify harness bookkeeping stays OUTSIDE timed regions in `src/memoratum/eval_latency.py` — the naive grounding scan costs 51.6 ms/query against a 13 ms retrieval (invariant L6)
+- [X] T068 [US3] Implement CLI `main()` in `src/memoratum/eval_latency.py` with `--ladder` (100,400,1600,6400), `--samples` (30), `--warmup` (5), `--pin-prefilter`, `--phases`, `--baseline`, `--out-md`, `--out-json`
+- [X] T069 [US3] Emit `eval/RESULTS-latency.md` and `eval/latency.json`; record baseline rows WITH hardware in `eval/BASELINES.md`
 
 **Checkpoint**: US1, US2, US3 independently functional.
 
@@ -202,27 +202,27 @@ ungrounded content and observe it reported.
 
 ### Tests for User Story 4 ⚠️ write FIRST, watch them fail
 
-- [ ] T070 [P] [US4] Failing test: a grounded corpus reports `grounded_fraction == 1.0` (FR-005) in `tests/test_eval_grounding.py`
-- [ ] T071 [P] [US4] Failing test: text absent from every ingested row is reported ungrounded with `hit_id`, `hit_kind`, `reason` in `tests/test_eval_grounding.py`
-- [ ] T072 [P] [US4] Failing test: chunk hits are graded against `chunks.text` and NEVER against `documents.content` (invariant G1) in `tests/test_eval_grounding.py`
-- [ ] T073 [P] [US4] Failing test: fact hits are graded against reconstructed `subject predicate object`, NOT a global rule — `_fact_text` output is absent from the corpus by construction (invariant G2) in `tests/test_eval_grounding.py`
-- [ ] T074 [P] [US4] Failing test: memory hits are graded against `memories.text` for that id (invariant G2) in `tests/test_eval_grounding.py`
-- [ ] T075 [P] [US4] Failing test: `--inject-ungrounded` is DETECTED and exits 0; undetected exits 2 (SC-007) in `tests/test_eval_grounding.py`
-- [ ] T076 [P] [US4] Failing test: `--judge none` does NOT fail the run and `judge` is `null` (FR-006, invariant G6) in `tests/test_eval_grounding.py`
-- [ ] T077 [P] [US4] Failing test: Tier 2 diagnostics NEVER affect the gate (invariant G3) in `tests/test_eval_grounding.py`
-- [ ] T078 [P] [US4] Failing test: `by_kind[kind].fraction` is `null` when `checked == 0`, NEVER `0.0` — an unexercised metric is not a passing metric (invariant M3) in `tests/test_eval_grounding.py`
-- [ ] T079 [P] [US4] Failing test: the corpus text index is built ONCE per corpus, not per hit — assert build count (invariant G4, measured 51.6 ms/query vs 0.78 ms/query) in `tests/test_eval_grounding.py`
+- [X] T070 [P] [US4] Failing test: a grounded corpus reports `grounded_fraction == 1.0` (FR-005) in `tests/test_eval_grounding.py`
+- [X] T071 [P] [US4] Failing test: text absent from every ingested row is reported ungrounded with `hit_id`, `hit_kind`, `reason` in `tests/test_eval_grounding.py`
+- [X] T072 [P] [US4] Failing test: chunk hits are graded against `chunks.text` and NEVER against `documents.content` (invariant G1) in `tests/test_eval_grounding.py`
+- [X] T073 [P] [US4] Failing test: fact hits are graded against reconstructed `subject predicate object`, NOT a global rule — `_fact_text` output is absent from the corpus by construction (invariant G2) in `tests/test_eval_grounding.py`
+- [X] T074 [P] [US4] Failing test: memory hits are graded against `memories.text` for that id (invariant G2) in `tests/test_eval_grounding.py`
+- [X] T075 [P] [US4] Failing test: `--inject-ungrounded` is DETECTED and exits 0; undetected exits 2 (SC-007) in `tests/test_eval_grounding.py`
+- [X] T076 [P] [US4] Failing test: `--judge none` does NOT fail the run and `judge` is `null` (FR-006, invariant G6) in `tests/test_eval_grounding.py`
+- [X] T077 [P] [US4] Failing test: Tier 2 diagnostics NEVER affect the gate (invariant G3) in `tests/test_eval_grounding.py`
+- [X] T078 [P] [US4] Failing test: `by_kind[kind].fraction` is `null` when `checked == 0`, NEVER `0.0` — an unexercised metric is not a passing metric (invariant M3) in `tests/test_eval_grounding.py`
+- [X] T079 [P] [US4] Failing test: grounding reads ONE row per hit and never scans the corpus — assert queries-per-hit is constant across a 5x corpus and equals 1 (invariant G4; the original "index built once, 66x" task was wrong and was replaced) in `tests/test_eval_grounding.py`
 
 ### Implementation for User Story 4
 
-- [ ] T080 [P] [US4] Implement `normalize_text()` in `src/memoratum/eval_grounding.py` — `unicodedata.normalize("NFKC", …)`, whitespace collapse, casefold
-- [ ] T081 [P] [US4] Implement `CorpusTextIndex` in `src/memoratum/eval_grounding.py` — line-keyed index built once per corpus; `contains(text)` in O(1)-ish
-- [ ] T082 [US4] Implement `ground_hit()` in `src/memoratum/eval_grounding.py` — resolve via `attribute_hit()`, then confirm text matches that row under THAT KIND's rule (`rule_by_kind`)
-- [ ] T083 [US4] Implement `evaluate_grounding()` in `src/memoratum/eval_grounding.py` — emit `hits_checked`, `grounded_hits`, `ungrounded_hits`, `grounded_fraction`, `by_kind`, `ungrounded`
-- [ ] T084 [US4] Implement `gate_grounding()` in `src/memoratum/eval_grounding.py` — fail when `grounded_fraction < min_grounded_fraction` (default 1.0)
-- [ ] T085 [P] [US4] Implement `tier2_diagnostics()` in `src/memoratum/eval_grounding.py` — LCS ratio, 3-gram shingle overlap, FTS5 `snippet()`/`highlight()`; result is diagnostic-only and MUST NOT gate
-- [ ] T086 [US4] Implement CLI `main()` in `src/memoratum/eval_grounding.py` with `--data`, `--n`, `--seed`, `--inject-ungrounded`, `--judge` (none|external), `--tier2`, `--min-grounded-fraction` (1.0), `--out-md`, `--out-json`
-- [ ] T087 [US4] Emit `eval/RESULTS-grounding.md` and `eval/grounding.json`
+- [X] T080 [P] [US4] Implement `normalize_text()` in `src/memoratum/eval_grounding.py` — `unicodedata.normalize("NFKC", …)`, whitespace collapse, casefold
+- [X] T081 [P] [US4] ~~Implement `CorpusTextIndex` in `src/memoratum/eval_grounding.py`~~ — **CANCELLED, no replacement.** The corpus-wide text index was redundant with row identity and slower than the nested scan it replaced (`research.md` D4). Grounding uses the attribution it is already handed.
+- [X] T082 [US4] Implement `ground_hit()` in `src/memoratum/eval_grounding.py` — resolve via `attribute_hit()`, then confirm text matches that row under THAT KIND's rule (`rule_by_kind`)
+- [X] T083 [US4] Implement `evaluate_grounding()` in `src/memoratum/eval_grounding.py` — emit `hits_checked`, `grounded_hits`, `ungrounded_hits`, `grounded_fraction`, `by_kind`, `ungrounded`
+- [X] T084 [US4] Implement `gate_grounding()` in `src/memoratum/eval_grounding.py` — fail when `grounded_fraction < min_grounded_fraction` (default 1.0)
+- [X] T085 [P] [US4] Implement `tier2_diagnostics()` in `src/memoratum/eval_grounding.py` — LCS ratio, 3-gram shingle overlap, FTS5 `snippet()`/`highlight()`; result is diagnostic-only and MUST NOT gate
+- [X] T086 [US4] Implement CLI `main()` in `src/memoratum/eval_grounding.py` with `--data`, `--n`, `--seed`, `--inject-ungrounded`, `--judge` (none|external), `--tier2`, `--min-grounded-fraction` (1.0), `--out-md`, `--out-json`
+- [X] T087 [US4] Emit `eval/RESULTS-grounding.md` and `eval/grounding.json`
 
 **Checkpoint**: US1–US4 independently functional.
 
@@ -240,21 +240,21 @@ and metric values.
 
 ### Tests for User Story 5 ⚠️ write FIRST, watch them fail
 
-- [ ] T088 [P] [US5] Failing test: re-running the same command twice produces an IDENTICAL manifest and identical metric values (FR-007, SC-003) in `tests/test_eval_compare.py`
-- [ ] T089 [P] [US5] Failing test: `eval_compare` exits NON-ZERO on embedder mismatch, listing the mismatched keys — it must FAIL, not warn (invariant M2, research D8) in `tests/test_eval_compare.py`
-- [ ] T090 [P] [US5] Failing test: `eval_compare` exits non-zero on `vector_store`, `modes`, `seed`, `data_sha256` and `n` mismatch in `tests/test_eval_compare.py`
-- [ ] T091 [P] [US5] Failing test: `--scope both` populates BOTH the scoped and unscoped buckets on a real dataset run (invariant I2) in `tests/test_eval_longmemeval_repro.py`
-- [ ] T092 [P] [US5] Failing test: every emitted results file contains the command needed to regenerate it (SC-003) in `tests/test_eval_docs_conformance.py`
+- [X] T088 [P] [US5] Failing test: re-running the same command twice produces an IDENTICAL manifest and identical metric values (FR-007, SC-003) in `tests/test_eval_compare.py`
+- [X] T089 [P] [US5] Failing test: `eval_compare` exits NON-ZERO on embedder mismatch, listing the mismatched keys — it must FAIL, not warn (invariant M2, research D8) in `tests/test_eval_compare.py`
+- [X] T090 [P] [US5] Failing test: `eval_compare` exits non-zero on `vector_store`, `modes`, `seed`, `data_sha256` and `n` mismatch in `tests/test_eval_compare.py`
+- [X] T091 [P] [US5] Failing test: `--scope both` populates BOTH the scoped and unscoped buckets on a real dataset run (invariant I2) in `tests/test_eval_longmemeval_repro.py`
+- [X] T092 [P] [US5] Failing test: every emitted results file contains the command needed to regenerate it (SC-003) in `tests/test_eval_docs_conformance.py`
 
 ### Implementation for User Story 5
 
-- [ ] T093 [P] [US5] Add `--project-count`, `--scope` (scoped|unscoped|both), `--latency-baseline`, `--cost-baseline` flags to `src/memoratum/eval_longmemeval.py` (FR-001, SC-002)
-- [ ] T094 [US5] Make `eval_compare` hard-fail on manifest mismatch in `src/memoratum/eval_compare.py` — exit non-zero listing mismatched keys; a confident number across mismatched manifests is worse than no number
-- [ ] T095 [US5] Emit `eval/RESULTS.md` showing all four axes alongside recall and MRR for the same run (SC-002) from `src/memoratum/eval_compare.py`
-- [ ] T096 [US5] Record the exact regeneration command inside every emitted results Markdown file in `src/memoratum/eval_axes.py`
-- [ ] T097 [US5] Document the four axes, gating semantics, hardware requirement and the chars-not-tokens unit in `docs/EVALUATION.md` — same change as the behaviour (constitution docs rule)
-- [ ] T098 [US5] Document the v0 → v1 metric change and the non-comparability of pre-2026-10-04 `R@k` figures in `docs/EVALUATION.md`, linking `eval/MIGRATION-metric-v1.md`
-- [ ] T099 [US5] Regenerate `eval/RESULTS-*.md` for the corrected metric and record new baseline rows in `eval/BASELINES.md`
+- [X] T093 [P] [US5] Add `--project-count`, `--scope` (scoped|unscoped|both), `--latency-baseline`, `--cost-baseline` flags to `src/memoratum/eval_longmemeval.py` (FR-001, SC-002)
+- [X] T094 [US5] Make `eval_compare` hard-fail on manifest mismatch in `src/memoratum/eval_compare.py` — exit non-zero listing mismatched keys; a confident number across mismatched manifests is worse than no number
+- [X] T095 [US5] Emit `eval/RESULTS.md` showing all four axes alongside recall and MRR for the same run (SC-002) from `src/memoratum/eval_compare.py`
+- [X] T096 [US5] Record the exact regeneration command inside every emitted results Markdown file in `src/memoratum/eval_axes.py` (`regeneration_block` / `command`, wired into all four axes via `write_artifacts(argv=…)`)
+- [X] T097 [US5] Document the four axes, gating semantics, hardware requirement and the chars-not-tokens unit in `docs/EVALUATION.md` — same change as the behaviour (constitution docs rule)
+- [X] T098 [US5] Document the v0 → v1 metric change and the non-comparability of pre-2026-10-04 `R@k` figures in `docs/EVALUATION.md`, linking `eval/MIGRATION-metric-v1.md`
+- [X] T099 [US5] Regenerate `eval/RESULTS-*.md` for the corrected metric and record new baseline rows in `eval/BASELINES.md` — grounding, isolation, cost and latency regenerated; latency rows re-recorded at `--samples 120` after the gate was measured failing on identical code
 
 **Checkpoint**: All five stories functional and every published figure regenerable.
 

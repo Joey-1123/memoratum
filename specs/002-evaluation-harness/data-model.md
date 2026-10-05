@@ -187,12 +187,19 @@ token-level trace.
 | fact-rendered | reconstructed `"subject predicate object"` from the fact row |
 
 **Invariants**
-- `G1` **Never grade chunk text against `documents.content`.** Over 5,268 real
-  chunks, exact substring match is 99.7%, and NFKC+casefold does not change it. All
-  18 failures come from `split_markdown`'s heading rewrite (`# **Heading**` for
-  `### **Heading**`), and the failure is **catastrophic, not graceful**: the longest
-  in-document prefix was 68 of 1,498 characters (5%). A per-item containment ratio
-  would score a perfectly grounded chunk at 0.05.
+- `G1` **Never grade chunk text against `documents.content`.** The failures come
+  from `split_markdown`'s heading rewrite (every `#{1,6}` becomes `# {h}`), and
+  the failure is **catastrophic, not graceful**: the longest in-document prefix
+  was **1% of the chunk**. A per-item containment ratio would score a perfectly
+  grounded chunk at 0.01.
+  **Measured over this repository's 47 markdown files** (596 chunks): **138
+  (23.2%)** are not exact substrings of their parent document, worst prefix 1%.
+  *Superseded measurement, recorded because the earlier one was wrong:* the
+  original claim — "5,268 real chunks, 99.7%, 18 failures, worst prefix 68 of
+  1,498" — was taken over **LongMemEval**, which **cannot** exhibit the trap:
+  `eval_longmemeval.format_session` emits `role: content` lines with no headings,
+  so the rewrite never fires. Measured over LongMemEval's 5,268 chunks the
+  mismatch count is **0**, not 18.
 - `G2` **One global grounding threshold is invalid.** The fact leg can never pass
   exact substring — `"Alice lives in Lisbon"` is not in the corpus, because
   `_fact_text` renders `"subject predicate object"`. A single threshold would score
@@ -204,9 +211,19 @@ token-level trace.
   documents reach **0.739**, inside any sane 0.8 gate. Set overlap produces false
   positives on paraphrase-shaped fabrication *and* false negatives on short
   windows.
-- `G4` The corpus text index is built **once per corpus**, never per hit. Measured:
-  51.6 ms/query for the naive nested scan versus 0.78 ms/query for a line-keyed
-  index — 66x.
+- `G4` **Grounding costs one keyed row lookup per hit.** There is no corpus-wide
+  text index and none is needed. Two reasons, both measured:
+  *Redundant.* A row that came out of the database **is** corpus membership by
+  definition, so no hit can fail a corpus-wide substring scan after passing row
+  identity. The scan added cost and no detection — which is why a mutant that
+  deleted it survived.
+  *Not actually faster.* The original claim — "51.6 ms/query for the naive nested
+  scan versus 0.78 ms/query for a line-keyed index, 66x" — does not hold.
+  Re-measured over LongMemEval's 5,268 real chunks: nested scan **2.56 ms/hit**
+  median (70.6 ms worst), and the "indexed" variant **slower** still, because
+  normalising the whole corpus dominates. `CorpusTextIndex` was deleted.
+  The test asserts queries-per-hit is constant as the corpus grows 5x, and equal
+  to 1.
 - `G5` Grounding proves **provenance only**. It does not establish correctness or
   relevance; recall and MRR own those.
 - `G6` An external judge is opt-in, non-gating, and its absence MUST NOT fail the
@@ -277,11 +294,19 @@ token-level trace.
   35.6 → 30.1 → 8.2 → **7.3** µs/chunk. Sub-linear growth appears as a *falling*
   number; a regression to O(n) appears as a *rising* one. Primary gate:
   `us_per_chunk(4N) < 1.5 × us_per_chunk(N)`.
-- `L2` Absolute ms is a **smoke bound only**: `median_of_30 ≤ baseline × 1.40`. At
-  n=30 the statistical headroom is +7%, leaving ~33% for real drift and hardware
-  variation. **n=20 is the floor** — n=5 would need a +69% band and could not detect
-  anything smaller than a 70% regression, which makes the gate theatre. Loosen to
-  ±60% for phases under 2 ms; tighten to ±25% for phases over 50 ms.
+- `L2` Absolute ms is a **smoke bound only**: `median_of_samples ≤ baseline × 1.40`,
+  and **the sample floor is 120** (`MIN_LATENCY_SAMPLES`).
+  The floor was 20, justified by bootstrapping median-of-n against the true median over
+  2,000 resamples ("n=30 needs only +7%"). **That estimate was of the wrong
+  quantity**: resampling one run's samples measures *within-run sampling* error and is
+  structurally blind to *between-run machine* noise, which is the larger term here.
+  Measured directly, ten identical runs at 30 samples gave 400-chunk retrieve medians
+  spanning **12.28–26.45 ms (2.15x)**, the per-chunk ratio crossed its own bound in
+  **2 runs of 10**, and the ms bound was exceeded **1 run in 6** with no code change.
+  At 120 samples: **0 of 6** exceeded, and the per-chunk spread fell to 1.03x.
+  **A gate whose noise floor is wider than its band is not a gate** — it just trains
+  operators to ignore it. Loosen to ±60% for phases under 2 ms; tighten to ±25% for
+  phases over 50 ms.
 - `L3` **Never average percentiles.** p95-of-p95 is not a p95. Aggregate raw
   samples, then take the percentile. Single-sample relative MAD is 5–16% and
   max/median over 200 samples is 2.11x, so the mean is never usable.
@@ -289,9 +314,9 @@ token-level trace.
   pays FTS5 tokenizer setup and statement compilation.
 - `L5` **No remote embedder inside a timed region.** Network jitter (100 ms ± 80 ms)
   dwarfs everything measured. `HashEmbedder` only, recorded in the manifest.
-- `L6` **Harness bookkeeping stays outside timed regions.** The naive grounding scan
-  costs 51.6 ms/query against a 13 ms retrieval; inside the timed region the
-  harness benchmarks itself.
+- `L6` **Harness bookkeeping stays outside timed regions.** Inside the timed region the
+  harness benchmarks itself. (The grounding axis's corpus-wide text index this originally
+  cited as the cost is **deleted** — see `G4` and `research.md` D4.)
 - `L7` **The corpus ladder must not cross `PREFILTER_MIN_CANDIDATES = 512`.** That
   step measures a **3.38x → 1.09x → 3.55x** wobble because the interval changes the
   *algorithm*, not the size. This repository has already produced one false result

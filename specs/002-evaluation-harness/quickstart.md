@@ -360,8 +360,29 @@ uv run python -m memoratum.eval_grounding \
   --out-md eval/RESULTS-grounding.md --out-json eval/grounding.json
 ```
 
+All **25** questions' sessions are ingested into **one** corpus before any question is
+evaluated, so a hit from question 3 is resolved against a corpus that also contains
+questions 1 and 2. Grounding each question against only its own haystack would make the
+metric trivially true — a retriever could return the wrong question's chunk and still
+pass.
+
 **Pass**: `grounded_fraction == 1.0`, `ungrounded == []`, exit `0`. An ungrounded
 hit is a **defect**, not a curiosity.
+
+Executed output on the real corpus (`--n 25`):
+
+```
+questions evaluated: 25
+hits_checked: 250        grounded_hits: 250       grounded_fraction: 1.000
+rows resolved: 250 (one keyed lookup per hit)
+chunk:  checked 250, grounded 250, fraction 1.000
+memory: checked 0,   grounded 0,   fraction n/a
+fact:   checked 0,   grounded 0,   fraction n/a
+```
+
+`memory` and `fact` report `fraction n/a` and not `0.0`: this corpus produces no
+fact-derived hits, and an unexercised metric is not a passing metric (M3). The fact leg
+is exercised by `test_a_fact_hit_uses_the_fact_rule_not_the_memory_rule`.
 
 ### 5.1 Falsifiability (SC-007)
 
@@ -370,119 +391,138 @@ uv run python -m memoratum.eval_grounding --inject-ungrounded --out-json /tmp/g.
 echo "exit=$?"     # MUST be 0: the self-check must detect its injected text
 ```
 
-The harness injects text absent from every ingested row and must report it.
+The harness injects text absent from every ingested row and must report it. Two
+details make this check meaningful rather than decorative, and both are asserted by
+tests because a self-check that passes for the wrong reason is worse than none — it turns
+a broken metric green:
 
-### 5.2 The two grounding traps, checked explicitly
+- the injected hit **borrows a real row's id**, so only the text comparison can catch it.
+  An unresolvable id would be caught by the row-identity check and would prove nothing;
+- the injected text is **non-empty**, so it cannot be caught by the empty-text guard.
+
+The self-check also has a **negative control in the other direction**
+(`force_noisy`): a detector that reports *everything* ungrounded must exit `2` too. A
+metric that fails everything teaches operators to ignore the gate.
+
+### 5.2 The two grounding traps, measured on real content
+
+**Correction to an earlier draft of this section.** It claimed the `G1` trap needed
+5,268 real corpus chunks, quoting "99.7% exact substring, 18 failures, longest in-document
+prefix 68 of 1,498 characters". Two things about that are wrong, and both were found by
+running the probes rather than reading them:
+
+1. The LongMemEval corpus **cannot** exhibit the trap. `eval_longmemeval.format_session`
+   emits `role: content` lines with no headings, so `split_markdown`'s heading rewrite never
+   fires. Measured over the first 120 records (690 sessions, 5,268 chunks): **zero** chunks
+   failed exact substring match against their parent document. A limit of 1–10 records
+   gives 8–14 chunks and also zero failures.
+2. Markdown **does** exhibit it, dramatically. Over this repository's own 47 markdown files
+   (596 chunks): **138 of 596 (23.2%)** are not exact substrings of their parent, and the
+   worst in-document prefix is **1% of the chunk**.
+
+So the correct measurement is the markdown one, and the "66x" corpus-index speedup that
+justified building a corpus-wide text index does not hold either: re-measured on the real
+5,268 chunks, a nested substring scan costs 2.56 ms/hit median (70.6 ms worst) and the
+"indexed" variant is **slower**, because normalising the whole corpus dominates. The scan is
+also **redundant** — a row that came out of the database is corpus membership by definition,
+so nothing can fail a corpus-wide scan after passing row identity. `CorpusTextIndex` was
+removed; grounding is now one keyed lookup per hit (invariant `G4` rewritten to say so).
+
+Reproduce the trap against real markdown:
 
 ```bash
 uv run python - <<'PY'
 import sys; sys.path.insert(0, "src")
-import tempfile, os
+import glob, os, tempfile
 from memoratum import db
 from memoratum.embeddings import HashEmbedder
 from memoratum.ingest import process_all
-from memoratum.search import search, _fact_text
-from memoratum.eval_grounding import ground_hit
 
-d = tempfile.mkdtemp(); conn = db.connect(os.path.join(d, "g.db")); emb = HashEmbedder(dims=64)
-body = "# Title\n\n## Section\n\n" + ("alpha beta gamma delta " * 40)
-db.create_document(conn, container_tag="bench", content=body,
-                   custom_id="c1", project_id="proj-a")
-process_all(conn, emb)
+corpus = []
+for path in sorted(glob.glob("**/*.md", recursive=True)):
+    if "/.venv/" in path or "/node_modules/" in path:
+        continue
+    text = open(path, encoding="utf-8").read()
+    if len(text) >= 200:
+        corpus.append((os.path.relpath(path), text))
+print(f"markdown files: {len(corpus)}")
 
-hit = search(conn, emb, "alpha beta", container_tag="bench",
-             project_id="proj-a", limit=1)[0]
-row = conn.execute("SELECT text FROM chunks WHERE id = ?",
-                   (int(hit["id"].split("_", 1)[1]),)).fetchone()
+d = tempfile.mkdtemp(); conn = db.connect(os.path.join(d, "md.db"))
+for custom_id, text in corpus:
+    db.create_document(conn, container_tag="bench", content=text, custom_id=custom_id)
+process_all(conn, HashEmbedder(dims=64))
 
-print("ground_hit() result          :", ground_hit(conn, hit))
-print("  hit text in chunks.text    :", hit["chunk"] in row["text"], " <- correct source")
-print("  hit text in documents.content:", hit["chunk"] in body, " <- WRONG source, G1")
-fact = {"subject": "Alice", "predicate": "lives in", "object": "Lisbon"}
-print("fact rendering               :", repr(_fact_text(fact)))
-print("  in corpus                  :", _fact_text(fact) in body)
-print("  -> a global substring rule would score the fact leg 0.0 (G2)")
+total = mismatched = 0
+worst = (1.0, "")
+for row in conn.execute("SELECT document_id, text FROM chunks"):
+    total += 1
+    parent = conn.execute("SELECT content FROM documents WHERE id = ?",
+                          (row["document_id"],)).fetchone()["content"]
+    text = row["text"]
+    if not text.strip() or text in parent:
+        continue
+    mismatched += 1
+    longest = 0
+    for end in range(1, len(text) + 1):
+        if text[:end] in parent:
+            longest = end
+        else:
+            break
+    if longest / len(text) < worst[0]:
+        worst = (longest / len(text), text[:70])
+
+print(f"chunks={total} not_exact_substring={mismatched} ({mismatched / total:.1%})")
+print(f"worst in-document prefix: {worst[0]:.0%}  {worst[1]!r}")
 conn.close()
 PY
 ```
-
-`_fact_text` takes a **dict** of `subject`/`predicate`/`object`, not a tuple.
 
 Executed output:
 
 ```
-hit id          : chunk_1
-chunk len       : 930
-in chunks.text  : True  <- correct source
-in documents.content: True
-fact rendering : 'Alice lives in Lisbon' | in corpus: False
+markdown files: 47
+chunks=596 not_exact_substring=138 (23.2%)
+worst in-document prefix: 1%  '# Added\n\n- Canonical `mem_<uuid>` lifecycle across native and…'
 ```
 
-Read the third line carefully — **it is `True`, and this probe therefore does *not*
-reproduce the `G1` failure.** `split_markdown` normalises every `#{1,6}` heading to
-`f"# {h}"` (`chunking.py:67`), so a `## Section` heading becomes `# Section` in the
-chunk. `# Section` is a literal substring of `## Section`, so the check passes by
-coincidence.
+That first character of the worst chunk is `# Added`, from a document that contained
+`## Added`. The heading level was rewritten, so the chunk is **not contiguous** in
+`documents.content` — yet it came straight out of `chunks` and is perfectly grounded.
+A per-item containment ratio would score it 0.01.
 
-That coincidence is exactly why the trap is easy to get wrong: a hand-built probe
-will *not* expose it. The real evidence is the measurement over **5,268 actual
-chunks**, where exact substring match against `documents.content` is 99.7% — and the
-18 failures are **catastrophic rather than graceful**, the longest in-document prefix
-being 68 of 1,498 characters (5%). A per-item containment ratio would score a
-perfectly grounded chunk at 0.05.
+Grade against `chunks.text` — the indexed row the retriever actually returns. Both axes of
+the claim are asserted in `tests/test_eval_grounding.py`:
+`test_real_chunks_can_have_a_tiny_prefix_in_their_parent_document` measures the failure,
+and `test_chunk_text_is_grounded_against_chunks_text_not_documents_content` proves the
+axis reports `grounded_fraction == 1.0` for the very chunk with the 1% prefix.
 
-To reproduce it honestly you need real corpus chunks, not synthetic markdown:
+### 5.2.1 The fact leg (G2)
 
 ```bash
 uv run python - <<'PY'
 import sys; sys.path.insert(0, "src")
-import tempfile, os
-from memoratum import db
-from memoratum.embeddings import HashEmbedder
-from memoratum.ingest import process_all
-
-# the real trap needs text that is genuinely non-contiguous in documents.content
-body = "Intro paragraph.\n\n### Deeply Nested Heading\n\n" + ("real content sentence here. " * 60)
-d = tempfile.mkdtemp(); conn = db.connect(os.path.join(d, "g2.db"))
-db.create_document(conn, container_tag="bench", content=body, custom_id="c1", project_id="proj-a")
-process_all(conn, HashEmbedder(dims=64))
-rows = conn.execute("SELECT text FROM chunks").fetchall()
-for r in rows:
-    t = r["text"]
-    if t.strip() and not t.startswith("Intro"):
-        n = len(t)
-        longest = 0
-        for end in range(1, n + 1):
-            if t[:end] in body:
-                longest = end
-            else:
-                break
-        print(f"chunk len={n} longest_in_document_prefix={longest} "
-              f"({longest / n:.0%}) in_documents_content={t in body}")
-conn.close()
+from memoratum.search import _fact_text
+body = "# Notes\n\nAlice moved to Lisbon last spring."
+print("fact rendering :", repr(_fact_text(
+    {"subject": "Alice", "predicate": "lives in", "object": "Lisbon"})))
+print("in corpus      :", _fact_text(
+    {"subject": "Alice", "predicate": "lives in", "object": "Lisbon"}) in body)
+print("-> a single global substring rule would score the fact leg 0.0 (G2)")
 PY
 ```
 
-The reported prefix ratio is the number that matters. Executed output:
+`_fact_text` takes a **dict** of `subject`/`predicate`/`object`, not a tuple. Executed
+output:
 
 ```
-chunk len=1493 longest_in_document_prefix=1493 (100%) in_documents_content=True
-chunk len=335 longest_in_document_prefix=25 (7%) in_documents_content=False
+fact rendering : 'Alice lives in Lisbon'
+in corpus      : False
 ```
 
-The second line is the trap, reproduced. A 335-character chunk that is
-**perfectly grounded** — it came straight out of `chunks` — shares only its first 25
-characters (7%) with `documents.content`. A per-item containment ratio would score
-it **0.07**. The 1,493-character chunk here is also a close independent match to
-the 1,498-character worst case reported over 5,268 real chunks.
-
-Grade against `chunks.text` — the indexed row the retriever actually returns.
-
-The `fact` line is the `G2` evidence and needs no caveat: `'Alice lives in Lisbon'`
-is genuinely absent from the corpus, because `_fact_text` renders
-`"{subject} {predicate} {object}"`. A single global substring rule would therefore
-score the fact leg **0.0** while scoring the document leg 1.0 for identical
-evidence.
+The `fact` line needs no caveat: `'Alice lives in Lisbon'` is genuinely absent from the
+corpus, because `_fact_text` renders `"{subject} {predicate} {object}"`. A single global
+substring rule would score the fact leg **0.0** while scoring the document leg 1.0 for
+identical evidence. Each kind therefore has its own rule, and the manifest records it.
 
 ### 5.3 Tier 2 stays non-gating, and a judge is never required
 

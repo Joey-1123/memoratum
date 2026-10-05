@@ -67,7 +67,7 @@ def test_contract_default_ladder_is_accepted_by_the_validator() -> None:
         embedder="HashEmbedder:64",
         vector_store="SQLiteVectorStore",
         data_sha256="x",
-        latency_config={"samples": 30, "warmup": 5, "ladder": ladder, "hardware": _hardware()},
+        latency_config={"samples": 120, "warmup": 5, "ladder": ladder, "hardware": _hardware()},
     )
 
 
@@ -156,7 +156,7 @@ def test_schema_required_keys_match_the_validator() -> None:
     }
     # Drop each required key in turn; the validator must complain about every one.
     for key in sorted(required):
-        block = {"samples": 30, "warmup": 5, "ladder": [100, 200, 400], "hardware": _hardware()}
+        block = {"samples": 120, "warmup": 5, "ladder": [100, 200, 400], "hardware": _hardware()}
         del block[key]
         manifest = {**base, "latency_config": block}
         with pytest.raises(ManifestError):

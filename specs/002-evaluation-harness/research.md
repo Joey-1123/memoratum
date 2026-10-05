@@ -200,8 +200,11 @@ across machines would violate FR-007.
 
 3. **Record hardware with every figure** (FR-008).
 
-**Sample-size rationale.** Bootstrap of median-of-n against the true median, 2,000
-resamples:
+**Sample-size rationale — the bootstrap below was of the wrong quantity, and the
+direct measurement supersedes it.**
+
+The original rationale bootstrapped median-of-n against the true median over 2,000
+resamples of a single run:
 
 | n | 95% CI | headroom a 1.0x gate needs |
 |---:|---|---:|
@@ -211,11 +214,33 @@ resamples:
 | 30 | [0.96, 1.07] | **+7%** |
 | 50 | [0.96, 1.06] | +6% |
 
-n=30 is the sweet spot: +7% statistical headroom against a +40% band leaves ~33%
-for real drift and hardware variation. **n=20 is the floor** — below that the gate
-is theatre, since n=5 would need a +69% band and could not detect anything smaller
-than a 70% regression. Loosen to ±60% for phases under 2 ms and tighten to ±25%
-for phases over 50 ms, where statistical headroom shrinks.
+That gave "n=30 needs only +7%, so n=20 is the floor". **Resampling one run's
+samples estimates within-run sampling error and is structurally blind to
+between-run machine noise** — which, on a laptop, is the larger term. Measuring the
+gate against itself instead: ten identical runs of unmodified code.
+
+| n | 400-chunk retrieve median | spread | ms bound exceeded | per-chunk ratio spread |
+|---:|---|---:|---:|---:|
+| 30 | 12.28 – 26.45 ms | **2.15x** | **1 in 6** | 1.33x |
+| 120 | 10.88 – 18.08 ms | 1.66x | 0 in 6 | 1.16x |
+| 400 | 12.74 – 13.17 ms | **1.03x** | 0 in 6 | 1.13x |
+
+At 30 samples the gate **failed on unmodified code**: the per-chunk ratio exceeded its
+own 1.5 bound in 2 runs of 10, and the ms smoke bound (11.09 × 1.40 = 15.53 ms) was
+exceeded 1 run in 6. **n=120 is the floor**, set from the measurement. n=30 was not a
+sweet spot; it was a sample count at which the band was narrower than the noise.
+
+Two things this changed beyond the constant:
+
+* **The ms baseline moved** (11.09 → 13.35) when re-recorded at 120 samples, while the
+  `us_per_chunk_ratio` baseline stayed at **0.93**. That is the axis's central claim
+  demonstrated rather than asserted: the direction-travelling figure was stable across a
+  20% change in the absolute one.
+* **The band is now above the noise.** A gate whose noise floor exceeds its width is not
+  a loose gate; it is a coin flip, and a coin flip teaches operators to ignore it.
+
+Loosen to ±60% for phases under 2 ms and tighten to ±25% for phases over 50 ms, where
+statistical headroom shrinks.
 
 Single-sample relative MAD is 5–16% and max/median over 200 samples is 2.11x, so
 **the mean is never usable**; aggregate raw samples and take the percentile
@@ -296,12 +321,35 @@ failure mode is non-contiguous reconstruction.
    against its own construction rule: `chunk_*` → `chunks.text`; memory hit →
    `memories.text`; fact-rendered → reconstructed `s p o` from the fact row.
 
-**Cost.** The obvious implementation is a nested substring scan and it dominates
-the harness: measured 51.6 ms/query against 690 documents versus **0.78 ms/query**
-with a line-keyed index built once per corpus — 66x. Jaccard with per-hit
-re-tokenisation is 1,336 ms versus 176 ms with a precomputed corpus token cache.
-The index is built once per corpus, never per hit. Harness bookkeeping must also
-stay **outside** the timed region, or the harness benchmarks itself.
+**Cost. The "66x index" measurement was wrong, and the index it justified was
+redundant.** This paragraph originally read: *"measured 51.6 ms/query against 690
+documents versus 0.78 ms/query with a line-keyed index built once per corpus — 66x"*.
+Re-measured on the real corpus (690 documents, 5,268 chunks):
+
+| implementation | per hit, median | worst | note |
+|---|---:|---:|---|
+| nested scan over `documents.content` | 2.56 ms | 70.6 ms | the thing being replaced |
+| "line-keyed" normalised index | — | — | **slower**: 60 s vs 14 s for 203 hits, because normalising the whole corpus dominates |
+
+The index never paid for itself, and it was **redundant besides**: grounding already
+resolves `hit.id` to a row, and a row that came out of the database *is* corpus
+membership by definition, so nothing can fail a corpus-wide scan after passing row
+identity. A mutant that deleted the corpus-presence check **survived the entire test
+suite** — which is exactly what redundancy looks like from the outside. `CorpusTextIndex`
+was deleted; grounding is one keyed lookup per hit and the invariant `G4` now says so.
+
+Jaccard with per-hit re-tokenisation is 1,336 ms versus 176 ms with a precomputed corpus
+token cache — that one holds, but it belongs to Tier 2, which never gates. Harness
+bookkeeping must also stay **outside** the timed region, or the harness benchmarks itself.
+
+**The corpus choice decided two of these conclusions.** `eval_longmemeval.format_session`
+emits `role: content` lines with no headings, so `split_markdown`'s heading rewrite never
+fires on LongMemEval: measured over its 5,268 chunks, **zero** fail exact substring match
+against their parent document. Over this repository's own 47 markdown files (596 chunks),
+**138 (23.2%)** fail, worst in-document prefix **1%**. The G1 figure quoted throughout this
+spec ("5,268 chunks, 99.7%, 18 failures, worst prefix 68 of 1,498") was measured on the
+corpus that cannot exhibit the trap. It is corrected to the markdown measurement, which is
+70x worse and is the one that reflects real markdown documents.
 
 **Scope attribution is a separate axis.** Byte-identical content across two
 projects produces two distinct document rows with distinct ids, so text-based
