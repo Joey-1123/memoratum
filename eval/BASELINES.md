@@ -38,12 +38,27 @@ Populated by T052 — 2026-10-05.
 
 Hardware is mandatory for every row in this table.
 
-Populated by T069 - 2026-10-05.
+**These figures were re-recorded on 2026-10-05 at `--samples 120`.** The earlier rows were
+measured at `--samples 30`, and at that sample count the gate was failing on **unmodified
+code**: ten identical runs of the 400-chunk retrieve median spanned 12.28–26.45 ms
+(**2.15x**), the per-chunk ratio crossed its own bound in 2 runs of 10, and the ms smoke
+bound below was exceeded 1 run in 6. At 120 samples the same bound was exceeded 0 runs in 6
+and the per-chunk figure spread fell to 1.03x.
+
+The original sample floor of 20 came from bootstrapping median-of-n against the true median
+over 2,000 resamples. That estimated *within-run sampling* error and was structurally blind
+to *between-run machine* noise — which is the larger term here. The floor is now
+`MIN_LATENCY_SAMPLES = 120`, set from the measurement rather than from the bootstrap.
 
 | axis | figure | tolerance | corpus | seed | mode | hardware | command |
 |---|---|---|---|---|---|---|---|
-| retrieve_median_ms | 11.09 | 0.40 | synthetic ladder 100,200,400 chunks | 42 | documents | Intel(R) Core(TM) i3-7020U CPU @ 2.30GHz / 4c / 3772MB / py3.12.14 | `uv run python -m memoratum.eval_latency --ladder 100,200,400 --samples 30 --warmup 5` |
+| retrieve_median_ms | 13.35 | 0.40 | synthetic ladder 100,200,400 chunks | 42 | documents | Intel(R) Core(TM) i3-7020U CPU @ 2.30GHz / 4c / 3772MB / py3.12.14 | `python -m memoratum.eval_latency --ladder 100,200,400 --samples 120 --warmup 5 --seed 42` |
 | us_per_chunk_ratio | 0.93 | 1.22 | synthetic ladder 100,200,400 chunks | 42 | documents | Intel(R) Core(TM) i3-7020U CPU @ 2.30GHz / 4c / 3772MB / py3.12.14 | (same run; ratio of the 400-chunk to the 100-chunk figure) |
+
+`us_per_chunk_ratio` is unchanged at 0.93 across the re-recording, which is the useful
+result: the *primary* gate — the one whose direction travels between machines — was stable
+while the millisecond figure moved from 11.09 to 13.35. That is exactly the split the axis
+was designed around, now demonstrated on this hardware rather than asserted.
 
 ## Status
 

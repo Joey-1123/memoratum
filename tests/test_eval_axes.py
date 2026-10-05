@@ -314,7 +314,7 @@ def test_manifest_preserves_original_keys_and_bumps_schema() -> None:
         data_sha256="deadbeef",
         scope_config={"container_tag": "bench", "projects": ["a", "b"], "expected_documents": 6},
         cost_config={"unit": "chars", "chars_per_ws_token": 6.27},
-        latency_config={"samples": 30, "warmup": 5, "ladder": [100, 200, 400], "hardware": _hw()},
+        latency_config={"samples": 120, "warmup": 5, "ladder": [100, 200, 400], "hardware": _hw()},
         grounding_config={
             "normalization": "nfkc+whitespace+casefold",
             "rule_by_kind": {
@@ -373,7 +373,7 @@ def test_latency_manifest_requires_hardware() -> None:
     from memoratum.eval_axes import ManifestError, validate_manifest
 
     manifest = _manifest()
-    manifest["latency_config"] = {"samples": 30, "warmup": 5, "ladder": [100, 200, 400]}
+    manifest["latency_config"] = {"samples": 120, "warmup": 5, "ladder": [100, 200, 400]}
     with pytest.raises(ManifestError, match="missing required keys"):
         validate_manifest(manifest)
 
@@ -385,7 +385,7 @@ def test_latency_hardware_must_be_complete_and_real() -> None:
     for bad in ({"cpu": "x"}, {}, "n/a", "unknown", None):
         manifest = _manifest()
         manifest["latency_config"] = {
-            "samples": 30,
+            "samples": 120,
             "warmup": 5,
             "ladder": [100, 200, 400],
             "hardware": bad,
@@ -402,7 +402,7 @@ def test_latency_hardware_reports_zero_ram_as_unmeasured() -> None:
     hardware["ram_mb"] = 0
     manifest = _manifest()
     manifest["latency_config"] = {
-        "samples": 30,
+        "samples": 120,
         "warmup": 5,
         "ladder": [100, 200, 400],
         "hardware": hardware,
@@ -412,23 +412,31 @@ def test_latency_hardware_reports_zero_ram_as_unmeasured() -> None:
 
 
 def test_latency_manifest_rejects_undersampled_and_short_ladder() -> None:
-    """L2/FR-004: n<20 is theatre, and fewer than 3 sizes cannot show growth."""
-    from memoratum.eval_axes import ManifestError, validate_manifest
+    """L2/FR-004: an undersampled run is theatre, and fewer than 3 sizes cannot show growth.
+
+    The floor is `MIN_LATENCY_SAMPLES` (120), set from a measurement of the gate's own noise
+    floor rather than from a bootstrap of one run's samples.
+    """
+    from memoratum.eval_axes import (
+        MIN_LATENCY_SAMPLES,
+        ManifestError,
+        validate_manifest,
+    )
 
     def latency(**overrides):
-        block = {"samples": 30, "warmup": 5, "ladder": [100, 200, 400], "hardware": _hw()}
+        block = {"samples": 120, "warmup": 5, "ladder": [100, 200, 400], "hardware": _hw()}
         block.update(overrides)
         manifest = _manifest()
         manifest["latency_config"] = block
         return manifest
 
-    with pytest.raises(ManifestError, match="below the floor of 20"):
+    with pytest.raises(ManifestError, match="below the floor"):
         validate_manifest(latency(samples=5))
     with pytest.raises(ManifestError, match="at least 3 corpus sizes"):
         validate_manifest(latency(ladder=[100, 200]))
     with pytest.raises(ManifestError, match="at least 3 corpus sizes"):
         validate_manifest(latency(ladder=[100]))
-    validate_manifest(latency(samples=20))
+    validate_manifest(latency(samples=MIN_LATENCY_SAMPLES))
 
 
 def test_latency_samples_must_be_an_int() -> None:
@@ -454,7 +462,7 @@ def test_latency_warmup_must_be_a_positive_int() -> None:
     for bad in (0, -1, None, "5"):
         manifest = _manifest()
         manifest["latency_config"] = {
-            "samples": 30,
+            "samples": 120,
             "warmup": bad,
             "ladder": [100, 200, 400],
             "hardware": _hw(),
@@ -471,7 +479,7 @@ def test_ladder_straddling_the_prefilter_threshold_is_rejected() -> None:
     threshold = prefilter_min_candidates()
     manifest = _manifest()
     manifest["latency_config"] = {
-        "samples": 30,
+        "samples": 120,
         "warmup": 5,
         "ladder": [100, threshold - 1, threshold + 1, 6400],
         "hardware": _hw(),
@@ -488,7 +496,7 @@ def test_pinning_the_prefilter_allows_a_straddling_ladder() -> None:
     threshold = prefilter_min_candidates()
     manifest = _manifest()
     manifest["latency_config"] = {
-        "samples": 30,
+        "samples": 120,
         "warmup": 5,
         "ladder": [100, threshold - 1, threshold + 1, 6400],
         "prefilter_min": threshold,
@@ -1152,7 +1160,7 @@ def test_collected_hardware_satisfies_its_own_validator() -> None:
         vector_store="SQLiteVectorStore",
         data_sha256="x",
         latency_config={
-            "samples": 30,
+            "samples": 120,
             "warmup": 5,
             "ladder": [100, 200, 400],
             "hardware": hardware,
@@ -1237,7 +1245,7 @@ def test_collect_hardware_rejects_an_unknown_cpu(monkeypatch) -> None:
             vector_store="SQLiteVectorStore",
             data_sha256="x",
             latency_config={
-                "samples": 30,
+                "samples": 120,
                 "warmup": 5,
                 "ladder": [100, 200, 400],
                 "hardware": hardware,
@@ -1381,7 +1389,7 @@ def test_ladder_rejects_non_integer_sizes() -> None:
     ):
         manifest = _manifest()
         manifest["latency_config"] = {
-            "samples": 30,
+            "samples": 120,
             "warmup": 5,
             "ladder": bad,
             "hardware": _hw(),

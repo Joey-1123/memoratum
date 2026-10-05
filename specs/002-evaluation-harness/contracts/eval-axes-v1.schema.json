@@ -132,8 +132,8 @@
           "properties": {
             "samples": {
               "type": "integer",
-              "minimum": 20,
-              "description": "Floor is 20. At n=5 a 1.0x gate needs a +69% band and cannot detect anything smaller than a 70% regression, which makes it theatre. 30 is the sweet spot: +7% statistical headroom against a +40% band."
+              "minimum": 120,
+              "description": "Floor is 120, set from measurement rather than from a bootstrap. Resampling one run's samples estimates within-run sampling error and is blind to between-run machine noise: ten identical runs at 30 samples spanned 12.28-26.45 ms (2.15x) for the 400-chunk retrieve median and exceeded the ms smoke bound 1 run in 6. At 120 samples it exceeded 0 in 6. A gate whose noise floor is wider than its band is not a gate."
             },
             "warmup": {
               "type": "integer",

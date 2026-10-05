@@ -30,3 +30,9 @@ answer built from the wrong document is caught by the isolation and recall axes.
 - injected_ungrounded: 1
 - false positives on real hits: 0
 - detection proven: 1 injected ungrounded hit(s) found, 0 false positives on real hits
+
+## Regenerate this figure
+
+```bash
+python -m memoratum.eval_grounding --data data/longmemeval_s_cleaned.json --n 25 --seed 42 --inject-ungrounded --tier2 --out-md eval/RESULTS-grounding.md --out-json /tmp/memoratum-regen-nh7jr3qe/regen.json
+```

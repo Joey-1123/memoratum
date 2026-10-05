@@ -47,6 +47,7 @@ from memoratum.eval_axes import (
     attribute_hits,
     build_manifest,
     build_scoped_corpus,
+    command,
     embedder_label,
     iter_ints,
     retrieval_budget,
@@ -480,6 +481,10 @@ def _project_names(count: int) -> tuple[str, ...]:
     return tuple(f"proj-{chr(ord('a') + i)}" for i in range(count))
 
 
+def _command(argv: list[str] | None) -> list[str]:
+    return command(argv, module="memoratum.eval_isolation")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Scope isolation axis")
     parser.add_argument("--projects", type=int, default=3)
@@ -565,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
             summarize(result, self_check=self_check),
             out_md=args.out_md,
             out_json=args.out_json,
+            argv=_command(argv),
         )
 
         # A broken metric outranks a detected leak: exit 2 first (I4).

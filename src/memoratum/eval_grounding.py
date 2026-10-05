@@ -51,6 +51,7 @@ from memoratum.eval_axes import (
     ManifestError,
     attribute_hits,
     build_manifest,
+    command,
     embedder_label,
     iter_ints,
     write_artifacts,
@@ -509,6 +510,10 @@ def _fmt(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.3f}"
 
 
+def _command(argv: list[str] | None) -> list[str]:
+    return command(argv, module="memoratum.eval_grounding")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Grounding axis")
     parser.add_argument("--data", required=True)
@@ -624,6 +629,7 @@ def main(argv: list[str] | None = None) -> int:
                 summarize(result, self_check=self_check),
                 out_md=args.out_md,
                 out_json=args.out_json,
+                argv=_command(argv),
             )
         except OSError as exc:
             print(f"could not write results: {exc}", file=sys.stderr)
