@@ -202,27 +202,27 @@ ungrounded content and observe it reported.
 
 ### Tests for User Story 4 ⚠️ write FIRST, watch them fail
 
-- [ ] T070 [P] [US4] Failing test: a grounded corpus reports `grounded_fraction == 1.0` (FR-005) in `tests/test_eval_grounding.py`
-- [ ] T071 [P] [US4] Failing test: text absent from every ingested row is reported ungrounded with `hit_id`, `hit_kind`, `reason` in `tests/test_eval_grounding.py`
-- [ ] T072 [P] [US4] Failing test: chunk hits are graded against `chunks.text` and NEVER against `documents.content` (invariant G1) in `tests/test_eval_grounding.py`
-- [ ] T073 [P] [US4] Failing test: fact hits are graded against reconstructed `subject predicate object`, NOT a global rule — `_fact_text` output is absent from the corpus by construction (invariant G2) in `tests/test_eval_grounding.py`
-- [ ] T074 [P] [US4] Failing test: memory hits are graded against `memories.text` for that id (invariant G2) in `tests/test_eval_grounding.py`
-- [ ] T075 [P] [US4] Failing test: `--inject-ungrounded` is DETECTED and exits 0; undetected exits 2 (SC-007) in `tests/test_eval_grounding.py`
-- [ ] T076 [P] [US4] Failing test: `--judge none` does NOT fail the run and `judge` is `null` (FR-006, invariant G6) in `tests/test_eval_grounding.py`
-- [ ] T077 [P] [US4] Failing test: Tier 2 diagnostics NEVER affect the gate (invariant G3) in `tests/test_eval_grounding.py`
-- [ ] T078 [P] [US4] Failing test: `by_kind[kind].fraction` is `null` when `checked == 0`, NEVER `0.0` — an unexercised metric is not a passing metric (invariant M3) in `tests/test_eval_grounding.py`
-- [ ] T079 [P] [US4] Failing test: the corpus text index is built ONCE per corpus, not per hit — assert build count (invariant G4, measured 51.6 ms/query vs 0.78 ms/query) in `tests/test_eval_grounding.py`
+- [X] T070 [P] [US4] Failing test: a grounded corpus reports `grounded_fraction == 1.0` (FR-005) in `tests/test_eval_grounding.py`
+- [X] T071 [P] [US4] Failing test: text absent from every ingested row is reported ungrounded with `hit_id`, `hit_kind`, `reason` in `tests/test_eval_grounding.py`
+- [X] T072 [P] [US4] Failing test: chunk hits are graded against `chunks.text` and NEVER against `documents.content` (invariant G1) in `tests/test_eval_grounding.py`
+- [X] T073 [P] [US4] Failing test: fact hits are graded against reconstructed `subject predicate object`, NOT a global rule — `_fact_text` output is absent from the corpus by construction (invariant G2) in `tests/test_eval_grounding.py`
+- [X] T074 [P] [US4] Failing test: memory hits are graded against `memories.text` for that id (invariant G2) in `tests/test_eval_grounding.py`
+- [X] T075 [P] [US4] Failing test: `--inject-ungrounded` is DETECTED and exits 0; undetected exits 2 (SC-007) in `tests/test_eval_grounding.py`
+- [X] T076 [P] [US4] Failing test: `--judge none` does NOT fail the run and `judge` is `null` (FR-006, invariant G6) in `tests/test_eval_grounding.py`
+- [X] T077 [P] [US4] Failing test: Tier 2 diagnostics NEVER affect the gate (invariant G3) in `tests/test_eval_grounding.py`
+- [X] T078 [P] [US4] Failing test: `by_kind[kind].fraction` is `null` when `checked == 0`, NEVER `0.0` — an unexercised metric is not a passing metric (invariant M3) in `tests/test_eval_grounding.py`
+- [X] T079 [P] [US4] Failing test: grounding reads ONE row per hit and never scans the corpus — assert queries-per-hit is constant across a 5x corpus and equals 1 (invariant G4; the original "index built once, 66x" task was wrong and was replaced) in `tests/test_eval_grounding.py`
 
 ### Implementation for User Story 4
 
-- [ ] T080 [P] [US4] Implement `normalize_text()` in `src/memoratum/eval_grounding.py` — `unicodedata.normalize("NFKC", …)`, whitespace collapse, casefold
-- [ ] T081 [P] [US4] Implement `CorpusTextIndex` in `src/memoratum/eval_grounding.py` — line-keyed index built once per corpus; `contains(text)` in O(1)-ish
-- [ ] T082 [US4] Implement `ground_hit()` in `src/memoratum/eval_grounding.py` — resolve via `attribute_hit()`, then confirm text matches that row under THAT KIND's rule (`rule_by_kind`)
-- [ ] T083 [US4] Implement `evaluate_grounding()` in `src/memoratum/eval_grounding.py` — emit `hits_checked`, `grounded_hits`, `ungrounded_hits`, `grounded_fraction`, `by_kind`, `ungrounded`
-- [ ] T084 [US4] Implement `gate_grounding()` in `src/memoratum/eval_grounding.py` — fail when `grounded_fraction < min_grounded_fraction` (default 1.0)
-- [ ] T085 [P] [US4] Implement `tier2_diagnostics()` in `src/memoratum/eval_grounding.py` — LCS ratio, 3-gram shingle overlap, FTS5 `snippet()`/`highlight()`; result is diagnostic-only and MUST NOT gate
-- [ ] T086 [US4] Implement CLI `main()` in `src/memoratum/eval_grounding.py` with `--data`, `--n`, `--seed`, `--inject-ungrounded`, `--judge` (none|external), `--tier2`, `--min-grounded-fraction` (1.0), `--out-md`, `--out-json`
-- [ ] T087 [US4] Emit `eval/RESULTS-grounding.md` and `eval/grounding.json`
+- [X] T080 [P] [US4] Implement `normalize_text()` in `src/memoratum/eval_grounding.py` — `unicodedata.normalize("NFKC", …)`, whitespace collapse, casefold
+- [X] T081 [P] [US4] ~~Implement `CorpusTextIndex` in `src/memoratum/eval_grounding.py`~~ — **CANCELLED, no replacement.** The corpus-wide text index was redundant with row identity and slower than the nested scan it replaced (`research.md` D4). Grounding uses the attribution it is already handed.
+- [X] T082 [US4] Implement `ground_hit()` in `src/memoratum/eval_grounding.py` — resolve via `attribute_hit()`, then confirm text matches that row under THAT KIND's rule (`rule_by_kind`)
+- [X] T083 [US4] Implement `evaluate_grounding()` in `src/memoratum/eval_grounding.py` — emit `hits_checked`, `grounded_hits`, `ungrounded_hits`, `grounded_fraction`, `by_kind`, `ungrounded`
+- [X] T084 [US4] Implement `gate_grounding()` in `src/memoratum/eval_grounding.py` — fail when `grounded_fraction < min_grounded_fraction` (default 1.0)
+- [X] T085 [P] [US4] Implement `tier2_diagnostics()` in `src/memoratum/eval_grounding.py` — LCS ratio, 3-gram shingle overlap, FTS5 `snippet()`/`highlight()`; result is diagnostic-only and MUST NOT gate
+- [X] T086 [US4] Implement CLI `main()` in `src/memoratum/eval_grounding.py` with `--data`, `--n`, `--seed`, `--inject-ungrounded`, `--judge` (none|external), `--tier2`, `--min-grounded-fraction` (1.0), `--out-md`, `--out-json`
+- [X] T087 [US4] Emit `eval/RESULTS-grounding.md` and `eval/grounding.json`
 
 **Checkpoint**: US1–US4 independently functional.
 

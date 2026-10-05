@@ -1,0 +1,82 @@
+{
+  "axis": "grounding",
+  "schema": "memoratum-eval-axes-v1",
+  "manifest": {
+    "schema": "longmemeval-scoped-v2",
+    "seed": 42,
+    "requested_n": 25,
+    "n": 25,
+    "ks": [
+      5,
+      10
+    ],
+    "modes": [
+      "scoped-probe"
+    ],
+    "embedder": "HashEmbedder:64",
+    "vector_store": "sqlite",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "grounding_config": {
+      "normalization": "nfkc+whitespace+casefold",
+      "rule_by_kind": {
+        "chunk": "chunks.text",
+        "memory": "memories.text",
+        "fact": "subject predicate object"
+      },
+      "tier2_enabled": true,
+      "judge": null,
+      "min_grounded_fraction": 1.0
+    }
+  },
+  "grounding": {
+    "hits_checked": 250,
+    "grounded_hits": 250,
+    "ungrounded_hits": 0,
+    "unresolvable_hits": 0,
+    "grounded_fraction": 1.0,
+    "by_kind": {
+      "chunk": {
+        "checked": 250,
+        "grounded": 250,
+        "fraction": 1.0
+      },
+      "memory": {
+        "checked": 0,
+        "grounded": 0,
+        "fraction": null
+      },
+      "fact": {
+        "checked": 0,
+        "grounded": 0,
+        "fraction": null
+      }
+    },
+    "ungrounded": [],
+    "tier2_diagnostics": {
+      "fts5_query": "\"What\" OR \"degree\" OR \"did\" OR \"I\" OR \"graduate\" OR \"with\"",
+      "fts5_snippet": "...The fox cannot be left alone [with] the..."
+    },
+    "judge": null,
+    "rows_resolved": 250
+  },
+  "gate": {
+    "status": "pass",
+    "checks": [
+      {
+        "name": "grounded_fraction",
+        "status": "pass",
+        "value": 1.0,
+        "bound": 1.0,
+        "reason": "every hit must trace to an ingested row; a hit that cannot be attributed or matched is ungrounded (FR-005)"
+      }
+    ]
+  },
+  "questions_evaluated": 25,
+  "hit_limit": 10,
+  "self_check": {
+    "detected": true,
+    "injected_ungrounded": 1,
+    "clean_ungrounded": 0,
+    "detail": "detection proven: 1 injected ungrounded hit(s) found, 0 false positives on real hits"
+  }
+}

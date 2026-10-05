@@ -57,10 +57,13 @@ no provider extra installed (FR-011).
 
 **Project Type**: library + CLI evaluation harness.
 
-**Performance Goals**: the harness itself must not be the bottleneck. Measured
-grounding cost budget: ≤1 ms/query for the text index build and lookup, versus
-51.6 ms/query for the naive nested scan it replaces (66x). Latency measurement uses
-`HashEmbedder` only, so no network call sits inside a timed region.
+**Performance Goals**: the harness itself must not be the bottleneck. Grounding is
+**one keyed row lookup per hit** — measured end to end at 15.9 ms/query over the real
+corpus, including the `search()` call it accompanies, and the queries-per-hit count is
+constant as the corpus grows. No corpus-wide text index: re-measured, the "66x" speedup
+that justified one does not hold (`research.md` D4), and the scan it replaced was
+redundant anyway (invariant `G4`). Latency measurement uses `HashEmbedder` only, so no
+network call sits inside a timed region.
 
 **Constraints**:
 - Absolute latency is hardware-bound; only ratios and per-unit costs travel (D3).
