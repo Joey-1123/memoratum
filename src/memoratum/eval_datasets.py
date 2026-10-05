@@ -11,6 +11,148 @@ import json
 from pathlib import Path
 from typing import Any
 
+#: Wrapper keys accepted at the top level of a JSON object, tried in order.
+WRAPPER_KEYS = ("data", "questions", "records", "items")
+
+#: Keys that identify a bare single-record object rather than a wrapper.
+SINGLE_RECORD_KEYS = ("question", "query", "sessions", "haystack_sessions")
+
+
+def unwrap_payload(payload: Any) -> list[Any]:
+    """Reduce a decoded JSON payload to its record list.
+
+    Shared by :func:`load_records` and :func:`iter_records` so both accept exactly the
+    same corpus shapes. When this logic lived in only one of them, a file that worked
+    with one loader was rejected by the other with a message calling the file invalid.
+    """
+    if isinstance(payload, dict):
+        for key in WRAPPER_KEYS:
+            if isinstance(payload.get(key), list):
+                return payload[key]
+        if any(key in payload for key in SINGLE_RECORD_KEYS):
+            return [payload]
+    return payload
+
+
+def iter_records(path: str | Path, *, limit: int) -> list[dict[str, Any]]:
+    """Read at most ``limit`` records without materialising the whole file.
+
+    ``load_records`` reads the corpus as one string and parses it whole, which exhausts a
+    small host on the 277 MB LongMemEval file. An axis that only needs a prefix must not
+    pay that cost, so it streams instead.
+
+    Wrapped ``{"data": [...]}`` objects cannot be streamed -- the array position is
+    unknown until the payload is parsed -- so those fall back to ``load_records``, which
+    is correct for the smaller files that use that shape.
+    """
+    if limit < 1:
+        raise ValueError(f"limit must be >= 1, got {limit}")
+    source = Path(path)
+    if source.suffix.lower() == ".jsonl":
+        records: list[dict[str, Any]] = []
+        with source.open(encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    # ValueError, not TypeError: load_records raises ValueError for the
+                    # same condition, and the whole point of sharing this reader is that
+                    # both accept and reject exactly the same corpora.
+                    raise ValueError(  # noqa: TRY004
+                        "evaluation data must be a JSON array of objects"
+                    )
+                records.append(record)
+                if len(records) >= limit:
+                    break
+        return records
+
+    with source.open(encoding="utf-8") as handle:
+        head = handle.read(4096).lstrip()
+    if head.startswith("{"):
+        # A wrapper or a single record: let the canonical loader decide.
+        return load_records(source)[:limit]
+
+    decoder = json.JSONDecoder()
+    out: list[dict[str, Any]] = []
+    with source.open(encoding="utf-8") as handle:
+        buffer = handle.read(1 << 20)
+        position = 0
+        while position < len(buffer) and buffer[position] in " \t\r\n,":
+            position += 1
+        if position >= len(buffer) or buffer[position] != "[":
+            raise ValueError("evaluation data must be a JSON array of objects")
+        position += 1
+        while len(out) < limit:
+            while position < len(buffer) and buffer[position] in " \t\r\n,":
+                position += 1
+            record_start = position
+            if record_start >= len(buffer) or buffer[record_start] == "]":
+                # End of the array -- either the closing bracket or a file with fewer
+                # records than `limit`. Neither is an error: the caller asked for UP TO
+                # `limit` records. Without this, raw_decode is handed `]`, raises, and
+                # _is_complete reports "malformed", rejecting a perfectly good short corpus.
+                break
+            try:
+                obj, end = decoder.raw_decode(buffer, position)
+            except ValueError:
+                # Distinguish "truncated, read more" from "malformed". Retrying a
+                # malformed record to EOF would rebuild the whole file in memory, which
+                # is the exact failure this reader exists to avoid.
+                if _is_complete(buffer, record_start):
+                    raise
+                chunk = handle.read(1 << 20)
+                if not chunk:
+                    break
+                buffer = buffer[position:] + chunk
+                position = 0
+                continue
+            if not isinstance(obj, dict):
+                raise ValueError(  # noqa: TRY004 -- matches load_records, see above
+                    "evaluation data must be a JSON array of objects"
+                )
+            out.append(obj)
+            position = end
+            if position > (1 << 19):
+                buffer = buffer[position:]
+                position = 0
+    return out
+
+
+def _is_complete(buffer: str, record_start: int) -> bool:
+    """True when the record beginning at ``record_start`` is malformed, not truncated.
+
+    Scans from the START OF THE RECORD, not from the failure position: a partial buffer
+    holds the tail of a record whose opening bracket was already consumed, so scanning
+    from the failure point sees balanced braces and wrongly reports malformation -- which
+    would abort every legitimately-truncated record.
+
+    A truncated value ends with unbalanced open brackets or an unterminated string; a
+    malformed one has already closed everything it opened.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in buffer[record_start:]:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            if depth == 0:
+                return True
+            depth -= 1
+    return depth == 0 and not in_string
+
 
 def load_records(path: str | Path) -> list[dict[str, Any]]:
     """Load a JSON array/object wrapper or JSONL file into validated records."""
@@ -19,19 +161,7 @@ def load_records(path: str | Path) -> list[dict[str, Any]]:
     if source.suffix.lower() == ".jsonl":
         records = [json.loads(line) for line in text.splitlines() if line.strip()]
     else:
-        payload = json.loads(text)
-        if isinstance(payload, dict):
-            wrapped = False
-            for key in ("data", "questions", "records", "items"):
-                if isinstance(payload.get(key), list):
-                    payload = payload[key]
-                    wrapped = True
-                    break
-            if not wrapped and any(
-                key in payload for key in ("question", "query", "sessions", "haystack_sessions")
-            ):
-                payload = [payload]
-        records = payload
+        records = unwrap_payload(json.loads(text))
     if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
         raise ValueError("evaluation data must be a JSON array of objects")
     return records

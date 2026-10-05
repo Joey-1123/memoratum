@@ -49,6 +49,7 @@ from memoratum.eval_axes import (
     build_scoped_corpus,
     embedder_label,
     iter_ints,
+    retrieval_budget,
     write_artifacts,
 )
 from memoratum.search import search
@@ -307,6 +308,23 @@ def run_self_check(
     every run for an unrelated reason, teaching operators to ignore the gate.
     """
     detect = detector if detector is not None else default_detector
+    try:
+        return _self_check_in(conn, projects, docs_per_project, container_tag, ks, detect, seed)
+    finally:
+        # run_self_check is handed a connection it does not own, but leaving it open
+        # leaks the SQLite handle plus its WAL and SHM files for the life of the process.
+        conn.close()
+
+
+def _self_check_in(
+    conn: sqlite3.Connection,
+    projects: Sequence[str],
+    docs_per_project: int,
+    container_tag: str,
+    ks: Sequence[int],
+    detect: Callable[[Sequence[Any], str | None], int],
+    seed: int,
+) -> SelfCheckOutcome:
     target = projects[0]
     probe_projects = tuple(projects)
     corpus = build_scoped_corpus(
@@ -485,13 +503,14 @@ def main(argv: list[str] | None = None) -> int:
 
     projects = _project_names(args.projects)
     ks = iter_ints(args.k)
-    limit = max(ks, default=10)
+    limit = retrieval_budget(ks)
     # TemporaryDirectory, matching eval_longmemeval and eval_cost: a bare mkdtemp leaks
     # for the life of the process, and a suite that runs this axis repeatedly is enough
     # to fill /tmp.
     directory = tempfile.TemporaryDirectory(prefix="memoratum-isolation-")
-    conn = db_module.connect(os.path.join(directory.name, "isolation.db"))
+    conn: sqlite3.Connection | None = None
     try:
+        conn = db_module.connect(os.path.join(directory.name, "isolation.db"))
         corpus = build_scoped_corpus(
             conn,
             projects=projects,
@@ -553,7 +572,10 @@ def main(argv: list[str] | None = None) -> int:
             return self_check.exit_code
         return EXIT_GATE_FAILED if result["gate"]["status"] == FAIL else EXIT_OK
     finally:
-        conn.close()
+        # Both the connection and the directory are released on every path, including a
+        # failure inside connect() itself -- which is why the connect moved inside the try.
+        if conn is not None:
+            conn.close()
         directory.cleanup()
 
 

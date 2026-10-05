@@ -32,6 +32,7 @@ from typing import Any
 from memoratum import db
 from memoratum.embeddings import ApiEmbedder, Embedder
 from memoratum.embeddings import build_embedder as build_provider_embedder
+from memoratum.eval_axes import retrieval_budget
 from memoratum.eval_datasets import (
     file_sha256,
     load_records,
@@ -178,7 +179,7 @@ def evaluate(
                         embedder,
                         question["question"],
                         container_tag="bench",
-                        limit=max(max(ks) * 2, 10),
+                        limit=retrieval_budget(ks),
                         search_mode=mode,
                         vector_store=vector_store,
                     )

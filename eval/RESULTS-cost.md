@@ -4,15 +4,15 @@ gate: PASS
 
 ## Reported figures (canonical unit: characters)
 - queries: 4
-- hits: 80.0
+- hits: 80
 - retrieved_chars_mean: 28469.0
 - retrieved_chars_p95: 28956.1
 - retrieved_chars_total: 113876
 - retrieved_ws_tokens_mean: 4630.2 (companion unit)
 
 ## Redundancy
-- redundant_hits: 21.0
-- duplicate_source_rows: 14.0
+- redundant_hits: 21
+- duplicate_source_rows: 14
 
 ## Token estimate (derived, never gates)
 - chars_per_ws_token: 6.264 (measured on this corpus)

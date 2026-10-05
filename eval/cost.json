@@ -14,11 +14,13 @@
       "hybrid"
     ],
     "embedder": "HashEmbedder:64",
-    "vector_store": "SQLiteVectorStore",
+    "vector_store": "sqlite",
     "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
     "cost_config": {
       "unit": "chars",
       "chars_per_ws_token": 6.264242518968635,
+      "ratio_sample": 20,
+      "ratio_source": "corpus_prefix",
       "mean_chunks_per_document": 7.298867924528302,
       "retrieval_limit": 20,
       "tokenizer": null
@@ -26,8 +28,8 @@
   },
   "cost": {
     "queries": 4,
-    "hits": 80.0,
-    "returned_hits": 80.0,
+    "hits": 80,
+    "returned_hits": 80,
     "unit": "chars",
     "retrieved_chars_total": 113876,
     "retrieved_chars_mean": 28469.0,
@@ -36,15 +38,16 @@
     "retrieved_ws_tokens_total": 18521,
     "retrieved_ws_tokens_mean": 4630.25,
     "retrieved_ws_tokens_p95": 4738.9,
-    "retrieved_total": 113876.0,
+    "retrieved_total": 113876,
     "retrieved_mean": 28469.0,
     "retrieved_p95": 28956.1,
     "chars_per_ws_token": 6.264242518968635,
     "token_estimate_mean": 4544.683561307462,
     "token_estimate_caveat": "derived from the corpus-measured chars_per_ws_token; valid only as a ratio between runs on the same corpus, not as an absolute token count",
     "tokenizer": null,
-    "redundant_hits": 21.0,
-    "duplicate_source_rows": 14.0,
+    "redundant_hits": 21,
+    "duplicate_source_rows": 14,
+    "unresolvable_hits": 0,
     "per_query_chars": [
       29035.0,
       28308.0,
@@ -56,6 +59,20 @@
     "status": "pass",
     "checks": [
       {
+        "name": "hits_observed",
+        "status": "pass",
+        "value": 80,
+        "bound": 0,
+        "reason": "no hits were retrieved, so cost was not measured"
+      },
+      {
+        "name": "chunks_ingested",
+        "status": "pass",
+        "value": 1507,
+        "bound": 0,
+        "reason": "ingest produced no chunks, so nothing was retrieved to measure"
+      },
+      {
         "name": "retrieved_chars_mean",
         "status": "pass",
         "value": 28469.0,
@@ -63,5 +80,11 @@
         "delta": 0.0
       }
     ]
+  },
+  "self_check": {
+    "detected": true,
+    "injected_redundant_hits": 1,
+    "baseline_redundant_hits": 0,
+    "detail": "detection proven: redundancy rose 0 -> 1 when one duplicate was injected"
   }
 }

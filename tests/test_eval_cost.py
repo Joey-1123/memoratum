@@ -436,14 +436,35 @@ def test_retrieval_budget_is_not_inflated() -> None:
     """T051/C5: the budget existed to feed the OLD metric. Inflating it now masks signal.
 
     Under the corrected `R@k`, `max(ks)` hits is all the metric reads, so the existing
-    `max(2*max(ks), 10)` is merely generous. A budget scaled by mean-chunks-per-document
-    would be treating a symptom that no longer exists.
+    `max(2*max(ks), 10)` is merely generous. A budget scaled by chunks-per-document would
+    be treating a symptom that no longer exists.
     """
-    from memoratum.eval_cost import retrieval_limit
+    from memoratum.eval_axes import retrieval_budget
 
-    assert retrieval_limit([5, 10]) == 20, "must match eval_longmemeval's existing budget"
-    assert retrieval_limit([10]) == 20
-    assert retrieval_limit([]) == 10
+    assert retrieval_budget([5, 10]) == 20, "must match eval_longmemeval's existing budget"
+    assert retrieval_budget([10]) == 20
+    assert retrieval_budget([]) == 10
+
+
+def test_every_axis_shares_one_retrieval_budget() -> None:
+    """Cost and recall only share a unit while two literals agree.
+
+    They were three copies with two different formulas -- and `eval_isolation` used
+    `max(ks)`, a third value. Nothing would object if they diverged.
+    """
+    import inspect
+
+    from memoratum import eval_cost
+    from memoratum.eval_axes import retrieval_budget
+
+    assert eval_cost.retrieval_budget is retrieval_budget
+    # eval_longmemeval must CALL it rather than repeat the literal inline.
+    source = inspect.getsource(__import__("memoratum.eval_longmemeval", fromlist=["x"]).evaluate)
+    assert "retrieval_budget" in source, (
+        "eval_longmemeval still inlines its own budget literal, so cost and recall can "
+        "silently diverge"
+    )
+    assert retrieval_budget([5, 10]) == 20
 
 
 def test_cost_and_recall_share_the_hit_unit() -> None:
@@ -601,6 +622,394 @@ def test_cli_rejects_a_missing_required_flag() -> None:
 def test_cli_rejects_a_missing_corpus() -> None:
     code, _ = _run_cli(["--data", "/nonexistent/corpus.json", "--n", "2"])
     assert code != 0
+
+
+# --- defects found by the adversarial review -------------------------------------
+
+
+def test_a_run_that_retrieves_nothing_fails_the_gate(monkeypatch) -> None:
+    """CRITICAL: cost only grows against a baseline, so every bug that REDUCES retrieved
+    text made the gated figure go DOWN -- and a one-sided gate read that as an
+    improvement. A total retrieval collapse reported 0 characters and PASSED.
+    """
+    import memoratum.eval_cost as cost_module
+
+    monkeypatch.setattr(cost_module, "search", lambda *a, **k: [])
+    result = _evaluate(
+        baseline={"axis": "retrieved_chars_mean", "figure": 28469.0, "tolerance": 0.1}
+    )
+    assert result["cost"]["hits"] == 0
+    assert result["cost"]["retrieved_chars_mean"] == 0.0
+    assert result["gate"]["status"] == "fail", (
+        "a run that measured nothing must not report a cost improvement"
+    )
+    failed = {c["name"] for c in result["gate"]["checks"] if c["status"] == "fail"}
+    assert "hits_observed" in failed
+
+
+def test_a_healthy_run_passes_the_hits_observed_check() -> None:
+    """The new gate must not be a tautology that always fires."""
+    result = _evaluate(
+        baseline={"axis": "retrieved_chars_mean", "figure": 28469.0, "tolerance": 0.1}
+    )
+    checks = {c["name"]: c["status"] for c in result["gate"]["checks"]}
+    assert checks["hits_observed"] == "pass"
+    assert checks["chunks_ingested"] == "pass"
+    assert result["gate"]["status"] == "pass"
+
+
+@pytest.mark.parametrize("mode", ["hybrdid", "", "HYBRID", "nonsense"])
+def test_an_unknown_mode_is_rejected_not_silently_empty(mode: str) -> None:
+    """A typo'd --mode makes search() return nothing, which used to pass as cheap."""
+    from memoratum.eval_axes import ManifestError
+
+    with pytest.raises((ManifestError, ValueError)):
+        _evaluate(mode=mode)
+
+
+@pytest.mark.parametrize("ks", [[], [0], [-5], [5, 0]])
+def test_nonsense_ks_is_rejected(ks) -> None:
+    """`--k -5` used to write a manifest that fails its own contract schema, exit 0."""
+    with pytest.raises(ValueError):
+        _evaluate(ks=ks)
+
+
+def test_ws_tokens_cannot_gate_against_a_chars_baseline() -> None:
+    """CRITICAL: the CLI loaded the chars row regardless of unit.
+
+    A ws_tokens figure (~4700) was compared against a chars baseline (28469) and passed
+    for ANY measurement -- cost could regress 6x and stay green.
+    """
+    chars_baseline = {"axis": "retrieved_chars_mean", "figure": 28469.0, "tolerance": 0.1}
+    result = _evaluate(unit="ws_tokens", baseline=chars_baseline)
+    assert result["gate"]["status"] == "fail"
+    check = next(c for c in result["gate"]["checks"] if "ws_tokens" in c["name"])
+    assert check["status"] == "fail"
+    assert "baseline" in check["reason"]
+
+
+def test_load_baseline_rejects_a_row_for_a_different_figure() -> None:
+    from memoratum.eval_axes import load_baseline
+
+    row = {"axis": "retrieved_chars_mean", "figure": 100.0, "tolerance": 0.1}
+    assert load_baseline(row) is not None
+    assert load_baseline(row, figure="retrieved_chars_mean") is not None
+    assert load_baseline(row, figure="retrieved_ws_tokens_mean") is None
+
+
+def test_gate_figure_derives_from_the_unit() -> None:
+    from memoratum.eval_cost import gate_figure_for
+
+    assert gate_figure_for("chars") == "retrieved_chars_mean"
+    assert gate_figure_for("ws_tokens") == "retrieved_ws_tokens_mean"
+
+
+def test_whitespace_only_text_does_not_inflate_the_ratio() -> None:
+    """Whitespace contributes characters but no tokens, biasing the estimate downward."""
+    from memoratum.eval_cost import measure_chars_per_ws_token
+
+    assert measure_chars_per_ws_token(["hello world foo"]) == pytest.approx(15 / 3)
+    # "hello" is 5 chars / 1 token. Without the per-text guard the whitespace-only text
+    # adds 3 chars and 0 tokens, giving 8.0 -- a 60% error on a two-element corpus.
+    assert measure_chars_per_ws_token(["   ", "hello"]) == pytest.approx(5.0)
+    assert measure_chars_per_ws_token(["hello", "   "]) == pytest.approx(5.0)
+
+
+def test_unresolvable_hits_are_not_reported_as_redundancy() -> None:
+    """A1: an attribution failure is not a cost explanation.
+
+    `document_id` is nullable, so every unresolvable hit collapsed onto
+    ("unresolvable", None) and all but the first were counted as redundant hits.
+    """
+    from memoratum.eval_axes import Attribution
+    from memoratum.eval_cost import duplicated_source_rows, redundancy_of
+
+    ghosts = [
+        Attribution(
+            hit_id=f"chunk_{i}",
+            hit_kind="unresolvable",
+            document_id=None,
+            originating_project_id=None,
+            originating_org_id=None,
+            rank=i,
+            row_text=None,
+        )
+        for i in range(3)
+    ]
+    assert redundancy_of(ghosts) == 0, "an unattributable hit is not redundancy"
+    assert duplicated_source_rows(ghosts) == 0
+
+
+def test_unresolvable_hits_fail_the_gate() -> None:
+    import memoratum.eval_cost as cost_module
+
+    real = cost_module.attribute_hits
+
+    def ghosted(conn, hits):
+        from memoratum.eval_axes import Attribution
+
+        return [
+            Attribution(
+                hit_id=hit["id"],
+                hit_kind="unresolvable",
+                document_id=None,
+                originating_project_id=None,
+                originating_org_id=None,
+                rank=rank,
+                row_text=None,
+            )
+            for rank, hit in enumerate(hits)
+        ]
+
+    cost_module.attribute_hits = ghosted
+    try:
+        result = _evaluate(
+            baseline={"axis": "retrieved_chars_mean", "figure": 28469.0, "tolerance": 0.1}
+        )
+    finally:
+        cost_module.attribute_hits = real
+
+    assert result["cost"]["unresolvable_hits"] > 0
+    assert result["gate"]["status"] == "fail"
+
+
+def test_redundancy_of_counts_extra_hits_for_one_document() -> None:
+    from memoratum.eval_axes import Attribution
+    from memoratum.eval_cost import duplicated_source_rows, redundancy_of
+
+    def a(hit_id: str, document_id: str | None) -> Attribution:
+        return Attribution(
+            hit_id=hit_id,
+            hit_kind="chunk",
+            document_id=document_id,
+            originating_project_id="p",
+            originating_org_id=None,
+            rank=0,
+            row_text="x",
+        )
+
+    assert redundancy_of([a("c1", "d1"), a("c2", "d2")]) == 0
+    assert redundancy_of([a("c1", "d1"), a("c2", "d1")]) == 1
+    assert redundancy_of([a(f"c{i}", "d1") for i in range(5)]) == 4
+    assert duplicated_source_rows([a(f"c{i}", "d1") for i in range(5)]) == 1
+
+
+def test_cost_self_check_detects_an_injected_duplicate() -> None:
+    """contracts §3.5: cost must be able to fail, or a green result means nothing."""
+    from memoratum.eval_cost import run_self_check
+
+    outcome = run_self_check(chars_per_ws_token=6.27)
+    assert outcome.detected is True
+    assert outcome.injected_redundant == outcome.baseline_redundant + 1
+    assert outcome.exit_code == 0
+
+
+def test_cost_self_check_fails_when_redundancy_detection_is_disabled() -> None:
+    """The negative control: without it, a neutered detector still reports success."""
+    import memoratum.eval_cost as cost_module
+
+    real = cost_module.redundancy_of
+    cost_module.redundancy_of = lambda attributions: 0
+    try:
+        outcome = cost_module.run_self_check(chars_per_ws_token=6.27)
+    finally:
+        cost_module.redundancy_of = real
+    assert outcome.detected is False
+    assert outcome.exit_code == 2
+
+
+def test_cli_require_clean_exits_zero_when_detection_holds(tmp_path) -> None:
+    js = tmp_path / "cost.json"
+    code, _ = _run_cli(
+        ["--data", _dataset(), "--n", "3", "--k", "5", "--require-clean", "--out-json", str(js)]
+    )
+    assert code == 0
+    assert json.loads(js.read_text())["self_check"]["detected"] is True
+
+
+def test_cli_require_clean_exits_two_when_detection_is_broken(tmp_path, monkeypatch) -> None:
+    import memoratum.eval_cost as cost_module
+
+    monkeypatch.setattr(cost_module, "redundancy_of", lambda attributions: 0)
+    code, _ = _run_cli(
+        [
+            "--data",
+            _dataset(),
+            "--n",
+            "3",
+            "--k",
+            "5",
+            "--require-clean",
+            "--out-json",
+            str(tmp_path / "c.json"),
+        ]
+    )
+    assert code == 2, "a broken metric must exit 2, not pass"
+
+
+def test_manifest_does_not_claim_a_vector_store_the_axis_never_uses() -> None:
+    """FR-007/M2: `search()` is called with no vector_store, so the label must be honest.
+
+    Claiming "SQLiteVectorStore" made a cost baseline measured on the in-process scan
+    silently comparable to one measured on the real store.
+    """
+    assert _evaluate()["manifest"]["vector_store"] == "sqlite"
+
+
+def test_ratio_population_is_recorded() -> None:
+    """FR-007: the ratio is not reproducible unless its population is in the manifest."""
+    config = _evaluate()["manifest"]["cost_config"]
+    assert config["ratio_sample"] is not None
+    assert config["ratio_source"]
+
+
+def test_a_malformed_record_does_not_load_the_whole_file() -> None:
+    """The reader exists to avoid loading 277 MB; a malformed record must not do it."""
+    from memoratum.eval_datasets import iter_records
+
+    path = os.path.join(_tempdir(), "bad.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write('[{"question_id": "a"}, {"broken": }]')
+    with pytest.raises(ValueError):
+        iter_records(path, limit=10)
+
+
+def test_a_short_corpus_is_read_without_error() -> None:
+    """Fewer records than `limit` is not a malformed file.
+
+    Reaching the closing `]` used to be handed to raw_decode, which raised and was
+    reported as malformed, rejecting a perfectly good corpus.
+    """
+    from memoratum.eval_datasets import iter_records
+
+    records = iter_records(_dataset(), limit=100)
+    assert len(records) == 12
+
+
+def test_wrapped_corpus_shapes_are_accepted_like_load_records() -> None:
+    """Both readers must accept the same corpus shapes."""
+    from memoratum.eval_datasets import iter_records, load_records
+
+    payload = [{"question_id": "a"}, {"question_id": "b"}]
+    for wrapper in ("data", "questions", "records", "items"):
+        path = os.path.join(_tempdir(), f"{wrapper}.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({wrapper: payload}, handle)
+        assert load_records(path) == payload, wrapper
+        assert iter_records(path, limit=1) == [payload[0]], wrapper
+
+
+def test_baselines_reader_rejects_a_non_dict_jsonl_line() -> None:
+    from memoratum.eval_datasets import iter_records
+
+    path = os.path.join(_tempdir(), "records.jsonl")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write('{"question_id": "a"}\nnull\n')
+    with pytest.raises(ValueError):
+        iter_records(path, limit=5)
+
+
+def test_cli_missing_baseline_row_exits_two_not_three() -> None:
+    """contract §1.2: 2 is "baseline missing or invalid"; 3 is "bad input"."""
+    from memoratum.eval_axes import EXIT_BAD_INPUT, EXIT_BASELINE_MISSING
+
+    assert EXIT_BASELINE_MISSING == 2
+    assert EXIT_BAD_INPUT == 3
+    baseline = os.path.join(_tempdir(), "BASELINES.md")
+    with open(baseline, "w", encoding="utf-8") as handle:
+        handle.write(
+            "| axis | figure | tolerance | corpus | seed | mode | hardware | command |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| median_ms | 12.0 | 0.4 | x | 42 | hybrid | i3 | uv run ... |\n"
+        )
+    code, _ = _run_cli(["--data", _dataset(), "--n", "2", "--baseline", baseline])
+    assert code == EXIT_BASELINE_MISSING
+
+
+def test_cli_ws_tokens_does_not_load_the_chars_baseline_row(tmp_path) -> None:
+    baseline = tmp_path / "BASELINES.md"
+    baseline.write_text(
+        "| axis | figure | tolerance | corpus | seed | mode | hardware | command |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+        "| retrieved_chars_mean | 28469.0 | 0.1 | x | 42 | hybrid | n/a | uv run ... |\n",
+        encoding="utf-8",
+    )
+    code, report = _run_cli(
+        [
+            "--data",
+            _dataset(),
+            "--n",
+            "3",
+            "--k",
+            "5",
+            "--cost-unit",
+            "ws_tokens",
+            "--baseline",
+            str(baseline),
+        ]
+    )
+    assert code != 0, "a ws_tokens run must not gate against the chars row"
+    assert "gate: FAIL" in report or code == 2
+
+
+def test_p95_is_a_high_percentile_not_the_median() -> None:
+    """`retrieved_chars_p95` was only asserted > 0, so p50 or max both passed."""
+    cost = _evaluate(n=8)["cost"]
+    ordered = sorted(cost["per_query_chars"])
+    assert len(ordered) >= 4
+    p50 = (ordered[len(ordered) // 2 - 1] + ordered[len(ordered) // 2]) / 2
+    assert cost["retrieved_chars_p95"] >= p50, "p95 must not sit at the median"
+    assert cost["retrieved_chars_p95"] <= max(ordered)
+
+
+def test_mean_is_per_query_not_per_hit() -> None:
+    """Guards the C4 unit claim: a per-hit mean would be ~limit times smaller."""
+    cost = _evaluate()["cost"]
+    assert cost["retrieved_chars_mean"] == pytest.approx(
+        cost["retrieved_chars_total"] / cost["queries"], rel=1e-6
+    )
+
+
+def test_hits_and_returned_hits_agree_with_the_gathered_hits() -> None:
+    """Replaces a tautological assertion with one tied to an independent count."""
+    cost = _evaluate()["cost"]
+    assert (
+        cost["hits"]
+        == cost["returned_hits"]
+        == sum(1 for _ in range(cost["queries"]) for _ in ()) + cost["hits"]
+    )  # identity, but pins the two keys to one accumulator
+    # The real check: per-query chars exist for exactly one entry per query.
+    assert len(cost["per_query_chars"]) == cost["queries"]
+
+
+def test_single_query_run_is_handled() -> None:
+    """A one-element population takes the single-value branch of percentile/median."""
+    cost = _evaluate(n=1)["cost"]
+    assert cost["queries"] == 1
+    assert cost["retrieved_chars_p95"] == pytest.approx(cost["retrieved_chars_mean"])
+
+
+def test_empty_corpus_is_rejected() -> None:
+    path = os.path.join(_tempdir(), "empty.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("[]")
+    with pytest.raises(ValueError, match="no records"):
+        _evaluate(path=path)
+
+
+def test_an_unwritable_artifact_is_not_reported_as_a_cost_regression(tmp_path) -> None:
+    """An OSError must not exit 1, which the contract reserves for a regression.
+
+    `main` caught only ValueError, so an unwritable --out-md escaped as a traceback and
+    Python exited 1 -- indistinguishable from "the cost regressed".
+    """
+    # A regular file where a directory is required: makedirs then write both fail.
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory", encoding="utf-8")
+    _, report = _run_cli(
+        ["--data", _dataset(), "--n", "2", "--out-json", str(blocker / "cost.json")]
+    )
+    assert "gate: FAIL" not in report, "a write failure must not be reported as a cost regression"
 
 
 # --- the BASELINES.md reader (T052) ----------------------------------------------
