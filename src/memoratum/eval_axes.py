@@ -103,8 +103,17 @@ class Attribution:
     rank: int
     row_text: str | None
 
-    def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    def as_dict(self, *, omit_text: bool = False) -> dict[str, Any]:
+        """Serialise for the report.
+
+        ``omit_text`` drops ``row_text``, which the grounding axis needs but a scope
+        report does not: at ~160 hits the corpus text dominates the artifact and buries
+        the metrics an operator is reading.
+        """
+        payload = asdict(self)
+        if omit_text:
+            payload.pop("row_text", None)
+        return payload
 
 
 def attribute_hit(conn: sqlite3.Connection, hit: dict[str, Any], *, rank: int) -> Attribution:
@@ -311,6 +320,12 @@ def _hardware_is_usable(hardware: Any) -> bool:
 def validate_manifest(manifest: dict[str, Any]) -> None:
     """Enforce hard manifest requirements. Raises :class:`ManifestError`."""
     _require_keys(manifest, ORIGINAL_MANIFEST_KEYS, "manifest")
+
+    ks = manifest["ks"]
+    if not ks or any(not isinstance(k, int) or isinstance(k, bool) or k < 1 for k in ks):
+        # The contract schema requires ks items >= 1. Validating here means a nonsense
+        # `--k -5` cannot write an artifact that fails its own contract (M2).
+        raise ManifestError(f"manifest ks must be a non-empty list of ints >= 1, got {ks!r}")
 
     latency = manifest.get("latency_config")
     if latency is not None:
@@ -596,6 +611,12 @@ def load_baseline(
     if not row:
         return None
     name = figure or str(row.get("axis", "") or "")
+    # A row whose own axis disagrees with the requested figure is rejected outright.
+    # Comparing a whitespace-token figure against a characters baseline is not a tight
+    # gate, it is no gate at all: the units differ by ~6x, so anything would pass.
+    declared = str(row.get("axis", "") or "")
+    if figure and declared and declared != figure:
+        return None
     if name in HARDWARE_BOUND_FIGURES and not _hardware_is_usable(row.get("hardware")):
         return None
     value = _parse_number(row.get("value", row.get("figure")))
@@ -743,8 +764,28 @@ def build_scoped_corpus(
 
 EXIT_OK = 0
 EXIT_GATE_FAILED = 1
+# Named, because both a broken metric and a missing baseline share it, and "2" reading
+# as "bad input" is how a missing baseline ends up reported as a usage error.
 EXIT_SELF_CHECK_FAILED = 2
+EXIT_BASELINE_MISSING = 2
 EXIT_BAD_INPUT = 3
+
+#: The one retrieval budget, shared by every axis that reports a retrieval figure.
+#:
+#: It is deliberately ``max(2*max(ks), 10)`` and deliberately NOT scaled by
+#: chunks-per-document. That inflation existed to feed the *old* ``R@k``, which counted
+#: distinct sessions; under the corrected definition ``R@k`` reads the first ``k`` hits,
+#: so the budget is merely generous. Re-inflating it now would mask a real cost
+#: regression (C5, research.md D7 correction 3).
+#:
+#: One definition, because cost and recall only share a unit while two independent
+#: literals happen to agree -- and nothing would object if they diverged.
+RETRIEVAL_BUDGET_FLOOR = 10
+
+
+def retrieval_budget(ks: Sequence[int]) -> int:
+    """Hits to retrieve for a given set of retrieval depths."""
+    return max(max(ks, default=0) * 2, RETRIEVAL_BUDGET_FLOOR)
 
 
 def write_artifacts(

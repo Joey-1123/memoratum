@@ -94,24 +94,24 @@ cross-scope leak count reported as a metric.
 
 ### Tests for User Story 1 ⚠️ write FIRST, watch them fail
 
-- [ ] T022 [P] [US1] Failing test: two projects, scoped query to project A returns `leaked_hits == 0` and `scoped_queries > 0` in `tests/test_eval_isolation.py`
-- [ ] T023 [P] [US1] Failing test: project B's content ranking highest on lexical similarity is still excluded from a project-A query, and the exclusion is COUNTED not silently applied, in `tests/test_eval_isolation.py`
-- [ ] T024 [P] [US1] Failing test: an unscoped query populates `unscoped_queries` and `unscoped_cross_scope_hits` (>0) and these appear in NEITHER the gate numerator NOR the denominator (invariant I2), in `tests/test_eval_isolation.py`
-- [ ] T025 [P] [US1] Failing test: `returned_hits` is always emitted next to `leak_rate` per query (invariant I3 note) in `tests/test_eval_isolation.py`
-- [ ] T026 [P] [US1] Failing test: a non-zero `leaked_hits` produces gate status `fail` and exit code 1 (FR-002, invariant I1) in `tests/test_eval_isolation.py`
-- [ ] T027 [US1] Failing test: `--require-clean` injects a document that SHOULD leak, the harness DETECTS it, and exits 0 — detection succeeded. Exit 2 means the metric is broken and is WORSE than the leak (SC-001, invariant I4), in `tests/test_eval_isolation.py`
-- [ ] T028 [P] [US1] Failing test: each recorded leak carries `hit_id`, `document_id`, `originating_project_id`, `requested_project_id`, `rank` (SC-004) in `tests/test_eval_isolation.py`
-- [ ] T029 [P] [US1] Failing test: `scope_config.projects` has ≥2 entries and `expected_documents` is present in the manifest (contracts schema `minItems: 2`) in `tests/test_eval_isolation.py`
+- [X] T022 [P] [US1] Failing test: two projects, scoped query to project A returns `leaked_hits == 0` and `scoped_queries > 0` in `tests/test_eval_isolation.py`
+- [X] T023 [P] [US1] Failing test: project B's content ranking highest on lexical similarity is still excluded from a project-A query, and the exclusion is COUNTED not silently applied, in `tests/test_eval_isolation.py`
+- [X] T024 [P] [US1] Failing test: an unscoped query populates `unscoped_queries` and `unscoped_cross_scope_hits` (>0) and these appear in NEITHER the gate numerator NOR the denominator (invariant I2), in `tests/test_eval_isolation.py`
+- [X] T025 [P] [US1] Failing test: `returned_hits` is always emitted next to `leak_rate` per query (invariant I3 note) in `tests/test_eval_isolation.py`
+- [X] T026 [P] [US1] Failing test: a non-zero `leaked_hits` produces gate status `fail` and exit code 1 (FR-002, invariant I1) in `tests/test_eval_isolation.py`
+- [X] T027 [US1] Failing test: `--require-clean` injects a document that SHOULD leak, the harness DETECTS it, and exits 0 — detection succeeded. Exit 2 means the metric is broken and is WORSE than the leak (SC-001, invariant I4), in `tests/test_eval_isolation.py`
+- [X] T028 [P] [US1] Failing test: each recorded leak carries `hit_id`, `document_id`, `originating_project_id`, `requested_project_id`, `rank` (SC-004) in `tests/test_eval_isolation.py`
+- [X] T029 [P] [US1] Failing test: `scope_config.projects` has ≥2 entries and `expected_documents` is present in the manifest (contracts schema `minItems: 2`) in `tests/test_eval_isolation.py`
 
 ### Implementation for User Story 1
 
-- [ ] T030 [P] [US1] Implement `ingest_scoped()` in `src/memoratum/eval_axes.py` — pass `project_id` on BOTH `db.create_document` and `search`; `process_all` is imported from `memoratum.ingest`, NOT `memoratum.db`
-- [ ] T031 [P] [US1] Implement `classify_scope()` in `src/memoratum/eval_isolation.py` — bucket each query as scoped or unscoped; `project_id=None` genuinely means "caller requested no scope"
-- [ ] T032 [US1] Implement `evaluate_isolation()` in `src/memoratum/eval_isolation.py` — emit `scoped_queries`, `leaked_hits`, `leaked_queries`, `returned_hits`, `leak_rate`, `query_leak_rate`, `unscoped_queries`, `unscoped_cross_scope_hits`, `per_query`, `leaks_detail`
-- [ ] T033 [US1] Implement `gate_isolation()` in `src/memoratum/eval_isolation.py` — gate on the ABSOLUTE COUNT `leaked_hits == 0`; `leak_rate` and `query_leak_rate` are trend-only and NEVER gate (invariants I1, I3)
-- [ ] T034 [US1] Implement the `--require-clean` self-check in `src/memoratum/eval_isolation.py` — inject a known leak, assert detection, exit 2 if undetected (invariant I4)
-- [ ] T035 [US1] Implement CLI `main()` in `src/memoratum/eval_isolation.py` with flags `--projects` (default 3), `--sessions-per-project` (40), `--queries` (40), `--k` (5,10), `--modes` (hybrid,documents), `--seed` (42), `--require-clean`, `--out-md`, `--out-json`
-- [ ] T036 [US1] Emit `eval/RESULTS-isolation.md` and `eval/isolation.json` by running the axis; record `scope_config` in the manifest
+- [X] T030 [P] [US1] Implement `ingest_scoped()` in `src/memoratum/eval_axes.py` — pass `project_id` on BOTH `db.create_document` and `search`; `process_all` is imported from `memoratum.ingest`, NOT `memoratum.db`
+- [X] T031 [P] [US1] Implement `classify_scope()` in `src/memoratum/eval_isolation.py` — bucket each query as scoped or unscoped; `project_id=None` genuinely means "caller requested no scope"
+- [X] T032 [US1] Implement `evaluate_isolation()` in `src/memoratum/eval_isolation.py` — emit `scoped_queries`, `leaked_hits`, `leaked_queries`, `returned_hits`, `leak_rate`, `query_leak_rate`, `unscoped_queries`, `unscoped_cross_scope_hits`, `per_query`, `leaks_detail`
+- [X] T033 [US1] Implement `gate_isolation()` in `src/memoratum/eval_isolation.py` — gate on the ABSOLUTE COUNT `leaked_hits == 0`; `leak_rate` and `query_leak_rate` are trend-only and NEVER gate (invariants I1, I3)
+- [X] T034 [US1] Implement the `--require-clean` self-check in `src/memoratum/eval_isolation.py` — inject a known leak, assert detection, exit 2 if undetected (invariant I4)
+- [X] T035 [US1] Implement CLI `main()` in `src/memoratum/eval_isolation.py` with flags `--projects` (default 3), `--sessions-per-project` (40), `--queries` (40), `--k` (5,10), `--modes` (hybrid,documents), `--seed` (42), `--require-clean`, `--out-md`, `--out-json`
+- [X] T036 [US1] Emit `eval/RESULTS-isolation.md` and `eval/isolation.json` by running the axis; record `scope_config` in the manifest
 
 **Checkpoint**: SC-001 satisfied — two projects report 0 leaks, an injected leak fails the run. **MVP complete.**
 
@@ -129,25 +129,25 @@ characters per query against a committed baseline.
 
 ### Tests for User Story 2 ⚠️ write FIRST, watch them fail
 
-- [ ] T037 [P] [US2] Failing test: a retrieval returning N hits reports `retrieved_chars_mean`, `retrieved_chars_p95`, `retrieved_chars_total` (FR-003) in `tests/test_eval_cost.py`
-- [ ] T038 [P] [US2] Failing test: two configs returning the SAME gold sessions but differing cost attribute the difference to `redundant_hits` (US2 scenario 2) in `tests/test_eval_cost.py`
-- [ ] T039 [P] [US2] Failing test: `--cost-unit bytes` is REJECTED — bytes is not an offered unit (invariant C1: bytes inflate 1.1–3x on non-ASCII with nothing visible in the report) in `tests/test_eval_cost.py`
-- [ ] T040 [P] [US2] Failing test: `chars_per_ws_token` is MEASURED from the corpus and written to the manifest, never hardcoded; a hardcoded 4.0 must be absent (invariant C2) in `tests/test_eval_cost.py`
-- [ ] T041 [P] [US2] Failing test: `token_estimate_mean` carries the caveat string that it is valid only as a ratio between runs on the same corpus (invariant C3) in `tests/test_eval_cost.py`
-- [ ] T042 [P] [US2] Failing test: the gated figure is IDENTICAL whether or not a tokenizer is configured — tokenizer presence must never change the gated metric (invariant C6, FR-007) in `tests/test_eval_cost.py`
-- [ ] T043 [US2] Failing test: a cost regression beyond tolerance fails the gate AND reports a non-zero `delta` — a failure with no delta does not satisfy SC-005 in `tests/test_eval_cost.py`
-- [ ] T044 [P] [US2] Failing test: a missing baseline yields exit code 2, NOT a silent pass (invariants B3, M3) in `tests/test_eval_cost.py`
+- [X] T037 [P] [US2] Failing test: a retrieval returning N hits reports `retrieved_chars_mean`, `retrieved_chars_p95`, `retrieved_chars_total` (FR-003) in `tests/test_eval_cost.py`
+- [X] T038 [P] [US2] Failing test: two configs returning the SAME gold sessions but differing cost attribute the difference to `redundant_hits` (US2 scenario 2) in `tests/test_eval_cost.py`
+- [X] T039 [P] [US2] Failing test: `--cost-unit bytes` is REJECTED — bytes is not an offered unit (invariant C1: bytes inflate 1.1–3x on non-ASCII with nothing visible in the report) in `tests/test_eval_cost.py`
+- [X] T040 [P] [US2] Failing test: `chars_per_ws_token` is MEASURED from the corpus and written to the manifest, never hardcoded; a hardcoded 4.0 must be absent (invariant C2) in `tests/test_eval_cost.py`
+- [X] T041 [P] [US2] Failing test: `token_estimate_mean` carries the caveat string that it is valid only as a ratio between runs on the same corpus (invariant C3) in `tests/test_eval_cost.py`
+- [X] T042 [P] [US2] Failing test: the gated figure is IDENTICAL whether or not a tokenizer is configured — tokenizer presence must never change the gated metric (invariant C6, FR-007) in `tests/test_eval_cost.py`
+- [X] T043 [US2] Failing test: a cost regression beyond tolerance fails the gate AND reports a non-zero `delta` — a failure with no delta does not satisfy SC-005 in `tests/test_eval_cost.py`
+- [X] T044 [P] [US2] Failing test: a missing baseline yields exit code 2, NOT a silent pass (invariants B3, M3) in `tests/test_eval_cost.py`
 
 ### Implementation for User Story 2
 
-- [ ] T045 [P] [US2] Implement `measure_chars_per_ws_token()` in `src/memoratum/eval_cost.py` — measure on the corpus, record in `cost_config`
-- [ ] T046 [P] [US2] Implement `count_redundant_hits()` in `src/memoratum/eval_cost.py` — hits duplicating an already-counted source row, resolved by `Attribution`
-- [ ] T047 [US2] Implement `evaluate_cost()` in `src/memoratum/eval_cost.py` — emit all `cost_config` and `cost` fields per contracts §2.3
-- [ ] T048 [US2] Implement `gate_cost()` in `src/memoratum/eval_cost.py` — fail when `retrieved_chars_mean > baseline × (1 + tolerance)`, reporting `delta`
-- [ ] T049 [US2] Implement CLI `main()` in `src/memoratum/eval_cost.py` with `--data`, `--n` (20), `--seed` (42), `--k`, `--baseline`, `--cost-unit` (chars|ws_tokens), `--measure-ratio`, `--out-md`, `--out-json`
-- [ ] T050 [US2] Load the corpus via a STREAMING reader for the ratio probe in `src/memoratum/eval_cost.py` — `eval_datasets.load_records` reads the 277 MB file as one string and OOMs on small hosts (see quickstart §1.4)
-- [ ] T051 [US2] Verify the retrieval budget stays `max(2*max(ks), 10)` and is NOT inflated in `src/memoratum/eval_longmemeval.py` — the budget existed to feed the old metric; inflating it now would mask a real signal (invariant C5)
-- [ ] T052 [US2] Emit `eval/RESULTS-cost.md` and `eval/cost.json`; record the baseline row with corpus, seed, mode and hardware in `eval/BASELINES.md`
+- [X] T045 [P] [US2] Implement `measure_chars_per_ws_token()` in `src/memoratum/eval_cost.py` — measure on the corpus, record in `cost_config`
+- [X] T046 [P] [US2] Implement `count_redundant_hits()` in `src/memoratum/eval_cost.py` — hits duplicating an already-counted source row, resolved by `Attribution`
+- [X] T047 [US2] Implement `evaluate_cost()` in `src/memoratum/eval_cost.py` — emit all `cost_config` and `cost` fields per contracts §2.3
+- [X] T048 [US2] Implement `gate_cost()` in `src/memoratum/eval_cost.py` — fail when `retrieved_chars_mean > baseline × (1 + tolerance)`, reporting `delta`
+- [X] T049 [US2] Implement CLI `main()` in `src/memoratum/eval_cost.py` with `--data`, `--n` (20), `--seed` (42), `--k`, `--baseline`, `--cost-unit` (chars|ws_tokens), `--measure-ratio`, `--out-md`, `--out-json`
+- [X] T050 [US2] Load the corpus via a STREAMING reader for the ratio probe in `src/memoratum/eval_cost.py` — `eval_datasets.load_records` reads the 277 MB file as one string and OOMs on small hosts (see quickstart §1.4)
+- [X] T051 [US2] Verify the retrieval budget stays `max(2*max(ks), 10)` and is NOT inflated in `src/memoratum/eval_longmemeval.py` — the budget existed to feed the old metric; inflating it now would mask a real signal (invariant C5)
+- [X] T052 [US2] Emit `eval/RESULTS-cost.md` and `eval/cost.json`; record the baseline row with corpus, seed, mode and hardware in `eval/BASELINES.md`
 
 **Checkpoint**: US1 and US2 independently functional.
 
