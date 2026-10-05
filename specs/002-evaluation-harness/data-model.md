@@ -187,12 +187,19 @@ token-level trace.
 | fact-rendered | reconstructed `"subject predicate object"` from the fact row |
 
 **Invariants**
-- `G1` **Never grade chunk text against `documents.content`.** Over 5,268 real
-  chunks, exact substring match is 99.7%, and NFKC+casefold does not change it. All
-  18 failures come from `split_markdown`'s heading rewrite (`# **Heading**` for
-  `### **Heading**`), and the failure is **catastrophic, not graceful**: the longest
-  in-document prefix was 68 of 1,498 characters (5%). A per-item containment ratio
-  would score a perfectly grounded chunk at 0.05.
+- `G1` **Never grade chunk text against `documents.content`.** The failures come
+  from `split_markdown`'s heading rewrite (every `#{1,6}` becomes `# {h}`), and
+  the failure is **catastrophic, not graceful**: the longest in-document prefix
+  was **1% of the chunk**. A per-item containment ratio would score a perfectly
+  grounded chunk at 0.01.
+  **Measured over this repository's 47 markdown files** (596 chunks): **138
+  (23.2%)** are not exact substrings of their parent document, worst prefix 1%.
+  *Superseded measurement, recorded because the earlier one was wrong:* the
+  original claim — "5,268 real chunks, 99.7%, 18 failures, worst prefix 68 of
+  1,498" — was taken over **LongMemEval**, which **cannot** exhibit the trap:
+  `eval_longmemeval.format_session` emits `role: content` lines with no headings,
+  so the rewrite never fires. Measured over LongMemEval's 5,268 chunks the
+  mismatch count is **0**, not 18.
 - `G2` **One global grounding threshold is invalid.** The fact leg can never pass
   exact substring — `"Alice lives in Lisbon"` is not in the corpus, because
   `_fact_text` renders `"subject predicate object"`. A single threshold would score
@@ -204,9 +211,19 @@ token-level trace.
   documents reach **0.739**, inside any sane 0.8 gate. Set overlap produces false
   positives on paraphrase-shaped fabrication *and* false negatives on short
   windows.
-- `G4` The corpus text index is built **once per corpus**, never per hit. Measured:
-  51.6 ms/query for the naive nested scan versus 0.78 ms/query for a line-keyed
-  index — 66x.
+- `G4` **Grounding costs one keyed row lookup per hit.** There is no corpus-wide
+  text index and none is needed. Two reasons, both measured:
+  *Redundant.* A row that came out of the database **is** corpus membership by
+  definition, so no hit can fail a corpus-wide substring scan after passing row
+  identity. The scan added cost and no detection — which is why a mutant that
+  deleted it survived.
+  *Not actually faster.* The original claim — "51.6 ms/query for the naive nested
+  scan versus 0.78 ms/query for a line-keyed index, 66x" — does not hold.
+  Re-measured over LongMemEval's 5,268 real chunks: nested scan **2.56 ms/hit**
+  median (70.6 ms worst), and the "indexed" variant **slower** still, because
+  normalising the whole corpus dominates. `CorpusTextIndex` was deleted.
+  The test asserts queries-per-hit is constant as the corpus grows 5x, and equal
+  to 1.
 - `G5` Grounding proves **provenance only**. It does not establish correctness or
   relevance; recall and MRR own those.
 - `G6` An external judge is opt-in, non-gating, and its absence MUST NOT fail the

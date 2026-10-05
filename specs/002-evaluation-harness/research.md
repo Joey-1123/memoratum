@@ -296,12 +296,35 @@ failure mode is non-contiguous reconstruction.
    against its own construction rule: `chunk_*` → `chunks.text`; memory hit →
    `memories.text`; fact-rendered → reconstructed `s p o` from the fact row.
 
-**Cost.** The obvious implementation is a nested substring scan and it dominates
-the harness: measured 51.6 ms/query against 690 documents versus **0.78 ms/query**
-with a line-keyed index built once per corpus — 66x. Jaccard with per-hit
-re-tokenisation is 1,336 ms versus 176 ms with a precomputed corpus token cache.
-The index is built once per corpus, never per hit. Harness bookkeeping must also
-stay **outside** the timed region, or the harness benchmarks itself.
+**Cost. The "66x index" measurement was wrong, and the index it justified was
+redundant.** This paragraph originally read: *"measured 51.6 ms/query against 690
+documents versus 0.78 ms/query with a line-keyed index built once per corpus — 66x"*.
+Re-measured on the real corpus (690 documents, 5,268 chunks):
+
+| implementation | per hit, median | worst | note |
+|---|---:|---:|---|
+| nested scan over `documents.content` | 2.56 ms | 70.6 ms | the thing being replaced |
+| "line-keyed" normalised index | — | — | **slower**: 60 s vs 14 s for 203 hits, because normalising the whole corpus dominates |
+
+The index never paid for itself, and it was **redundant besides**: grounding already
+resolves `hit.id` to a row, and a row that came out of the database *is* corpus
+membership by definition, so nothing can fail a corpus-wide scan after passing row
+identity. A mutant that deleted the corpus-presence check **survived the entire test
+suite** — which is exactly what redundancy looks like from the outside. `CorpusTextIndex`
+was deleted; grounding is one keyed lookup per hit and the invariant `G4` now says so.
+
+Jaccard with per-hit re-tokenisation is 1,336 ms versus 176 ms with a precomputed corpus
+token cache — that one holds, but it belongs to Tier 2, which never gates. Harness
+bookkeeping must also stay **outside** the timed region, or the harness benchmarks itself.
+
+**The corpus choice decided two of these conclusions.** `eval_longmemeval.format_session`
+emits `role: content` lines with no headings, so `split_markdown`'s heading rewrite never
+fires on LongMemEval: measured over its 5,268 chunks, **zero** fail exact substring match
+against their parent document. Over this repository's own 47 markdown files (596 chunks),
+**138 (23.2%)** fail, worst in-document prefix **1%**. The G1 figure quoted throughout this
+spec ("5,268 chunks, 99.7%, 18 failures, worst prefix 68 of 1,498") was measured on the
+corpus that cannot exhibit the trap. It is corrected to the markdown measurement, which is
+70x worse and is the one that reflects real markdown documents.
 
 **Scope attribution is a separate axis.** Byte-identical content across two
 projects produces two distinct document rows with distinct ids, so text-based
