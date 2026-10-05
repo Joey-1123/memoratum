@@ -81,10 +81,23 @@
       }
     ]
   },
-  "self_check": {
-    "detected": true,
-    "injected_redundant_hits": 1,
-    "baseline_redundant_hits": 0,
-    "detail": "detection proven: redundancy rose 0 -> 1 when one duplicate was injected"
-  }
+  "command": [
+    "python",
+    "-m",
+    "memoratum.eval_cost",
+    "--data",
+    "data/longmemeval_s_cleaned.json",
+    "--n",
+    "4",
+    "--seed",
+    "42",
+    "--k",
+    "5,10",
+    "--baseline",
+    "eval/BASELINES.md",
+    "--out-md",
+    "eval/RESULTS-cost.md",
+    "--out-json",
+    "eval/cost.json"
+  ]
 }

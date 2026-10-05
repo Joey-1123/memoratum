@@ -294,11 +294,19 @@ token-level trace.
   35.6 → 30.1 → 8.2 → **7.3** µs/chunk. Sub-linear growth appears as a *falling*
   number; a regression to O(n) appears as a *rising* one. Primary gate:
   `us_per_chunk(4N) < 1.5 × us_per_chunk(N)`.
-- `L2` Absolute ms is a **smoke bound only**: `median_of_30 ≤ baseline × 1.40`. At
-  n=30 the statistical headroom is +7%, leaving ~33% for real drift and hardware
-  variation. **n=20 is the floor** — n=5 would need a +69% band and could not detect
-  anything smaller than a 70% regression, which makes the gate theatre. Loosen to
-  ±60% for phases under 2 ms; tighten to ±25% for phases over 50 ms.
+- `L2` Absolute ms is a **smoke bound only**: `median_of_samples ≤ baseline × 1.40`,
+  and **the sample floor is 120** (`MIN_LATENCY_SAMPLES`).
+  The floor was 20, justified by bootstrapping median-of-n against the true median over
+  2,000 resamples ("n=30 needs only +7%"). **That estimate was of the wrong
+  quantity**: resampling one run's samples measures *within-run sampling* error and is
+  structurally blind to *between-run machine* noise, which is the larger term here.
+  Measured directly, ten identical runs at 30 samples gave 400-chunk retrieve medians
+  spanning **12.28–26.45 ms (2.15x)**, the per-chunk ratio crossed its own bound in
+  **2 runs of 10**, and the ms bound was exceeded **1 run in 6** with no code change.
+  At 120 samples: **0 of 6** exceeded, and the per-chunk spread fell to 1.03x.
+  **A gate whose noise floor is wider than its band is not a gate** — it just trains
+  operators to ignore it. Loosen to ±60% for phases under 2 ms; tighten to ±25% for
+  phases over 50 ms.
 - `L3` **Never average percentiles.** p95-of-p95 is not a p95. Aggregate raw
   samples, then take the percentile. Single-sample relative MAD is 5–16% and
   max/median over 200 samples is 2.11x, so the mean is never usable.
@@ -306,9 +314,9 @@ token-level trace.
   pays FTS5 tokenizer setup and statement compilation.
 - `L5` **No remote embedder inside a timed region.** Network jitter (100 ms ± 80 ms)
   dwarfs everything measured. `HashEmbedder` only, recorded in the manifest.
-- `L6` **Harness bookkeeping stays outside timed regions.** The naive grounding scan
-  costs 51.6 ms/query against a 13 ms retrieval; inside the timed region the
-  harness benchmarks itself.
+- `L6` **Harness bookkeeping stays outside timed regions.** Inside the timed region the
+  harness benchmarks itself. (The grounding axis's corpus-wide text index this originally
+  cited as the cost is **deleted** — see `G4` and `research.md` D4.)
 - `L7` **The corpus ladder must not cross `PREFILTER_MIN_CANDIDATES = 512`.** That
   step measures a **3.38x → 1.09x → 3.55x** wobble because the interval changes the
   *algorithm*, not the size. This repository has already produced one false result

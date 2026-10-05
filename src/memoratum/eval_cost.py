@@ -53,6 +53,7 @@ from memoratum.eval_axes import (
     ManifestError,
     attribute_hits,
     build_manifest,
+    command,
     compare_to_baseline,
     embedder_label,
     iter_ints,
@@ -668,31 +669,28 @@ def _load_baseline_rows(path: str) -> dict[str, dict[str, Any]]:
         if not header or len(cells) != len(header):
             continue
         row = dict(zip(header, cells))
-        if row.get("axis"):
-            rows[row["axis"]] = row
+        figure = row.get("axis", "")
+        # Markdown's own separator row is `|---|---|`, so it arrives as a data row with
+        # "---" in the first column. Keying on it produced a phantom baseline named "---",
+        # which then counted as a baseline present while holding no figure.
+        if figure and figure != "---":
+            rows[figure] = row
     return rows
 
 
 def _load_baseline(path: str, figure: str) -> dict[str, Any] | None:
-    """Read one row from an ``eval/BASELINES.md`` cost table."""
-    if not path or not os.path.exists(path):
-        return None
-    header: list[str] | None = None
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            header = None
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if cells and cells[0] == "axis":
-            header = cells
-            continue
-        if not header or len(cells) != len(header):
-            continue
-        row = dict(zip(header, cells))
-        if row.get("axis") == figure:
-            return row
-    return None
+    """Read one row from an ``eval/BASELINES.md`` cost table.
+
+    A lookup into ``_load_baseline_rows`` rather than a second copy of the parser: two
+    Markdown parsers over one file is how the committed ``BASELINES.md`` came to be
+    unreadable by the axis that was supposed to read it (the bug that made every hardware
+    requirement silently skip).
+    """
+    return _load_baseline_rows(path).get(figure)
+
+
+def _command(argv: list[str] | None) -> list[str]:
+    return command(argv, module="memoratum.eval_cost")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -766,7 +764,13 @@ def main(argv: list[str] | None = None) -> int:
             return check.exit_code
 
     try:
-        write_artifacts(result, summarize(result), out_md=args.out_md, out_json=args.out_json)
+        write_artifacts(
+            result,
+            summarize(result),
+            out_md=args.out_md,
+            out_json=args.out_json,
+            argv=_command(argv),
+        )
     except OSError as exc:
         # Writing the artifact is inside the guarded region too. An unwritable --out-md
         # used to escape as an uncaught OSError, and Python exits 1 -- the code the

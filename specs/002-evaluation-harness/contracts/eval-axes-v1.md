@@ -84,7 +84,7 @@ FR-004, D3.
 ```
 uv run python -m memoratum.eval_latency \
   --ladder 100,200,400 \
-  --samples 30 --warmup 5 \
+  --samples 120 --warmup 5 \
   --pin-prefilter \
   --baseline eval/BASELINES.md \
   --out-md eval/RESULTS-latency.md --out-json eval/latency.json
@@ -93,7 +93,7 @@ uv run python -m memoratum.eval_latency \
 | flag | type | default | meaning |
 |---|---|---|---|
 | `--ladder` | csv int | `100,200,400` | corpus sizes in chunks. ≥3 required (FR-004). **Must not straddle `PREFILTER_MIN_CANDIDATES`** (default 512) unless `prefilter_min` is recorded — see below |
-| `--samples` | int | `30` | **floor is 20**; below that the gate is theatre (`L2`) |
+| `--samples` | int | `120` | **floor is 120** (`MIN_LATENCY_SAMPLES`), set from a measurement: at 30 samples the gate failed on unmodified code in 1 run of 6. See `L2` |
 | `--warmup` | int | `5` | discarded iterations (`L4`) |
 | `--pin-prefilter` | flag | **off** | set `MEMORATUM_SEARCH_PREFILTER_MIN` per size and record `prefilter_min` (`L7`). Off by default so a ladder measures the real production threshold |
 | `--phases` | csv | `ingest,embed,index,retrieve` | FR-004 requires these four reported separately |
@@ -212,7 +212,7 @@ Existing keys unchanged: `schema`, `seed`, `requested_n`, `n`, `ks`, `modes`,
     "tokenizer": null
   },
   "latency_config": {
-    "samples": 30,
+    "samples": 120,
     "warmup": 5,
     "ladder": [100, 200, 400],
     "prefilter_min": null,
@@ -294,7 +294,7 @@ only**. It appears in neither the gate numerator nor the denominator (`I2`).
       "corpus_chunks": 100,
       "phases": {
         "retrieve": {
-          "samples": 30,
+          "samples": 120,
           "samples_ms": [3.11, 3.56, "…"],
           "median_ms": 3.56,
           "p95_ms": 5.42,

@@ -78,5 +78,22 @@
     "injected_ungrounded": 1,
     "clean_ungrounded": 0,
     "detail": "detection proven: 1 injected ungrounded hit(s) found, 0 false positives on real hits"
-  }
+  },
+  "command": [
+    "python",
+    "-m",
+    "memoratum.eval_grounding",
+    "--data",
+    "data/longmemeval_s_cleaned.json",
+    "--n",
+    "25",
+    "--seed",
+    "42",
+    "--inject-ungrounded",
+    "--tier2",
+    "--out-md",
+    "eval/RESULTS-grounding.md",
+    "--out-json",
+    "eval/grounding.json"
+  ]
 }

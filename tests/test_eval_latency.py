@@ -32,13 +32,19 @@ import tempfile
 
 import pytest
 
+from memoratum import eval_axes
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Below the default 512 threshold on purpose: a ladder crossing it measures an algorithm
 # switch rather than a corpus size (L7).
 LADDER = (100, 200, 400)
-SAMPLES = 30
 WARMUP = 5
+
+# The measured noise floor, not a preference. See MIN_LATENCY_SAMPLES in eval_axes and
+# test_the_sample_floor_is_the_measured_noise_floor below.
+MIN_LATENCY_SAMPLES = eval_axes.MIN_LATENCY_SAMPLES
+SAMPLES = MIN_LATENCY_SAMPLES
 
 
 _TEMP_ROOTS: list[tempfile.TemporaryDirectory] = []
@@ -70,22 +76,32 @@ def test_samples_below_twenty_are_rejected(samples: int) -> None:
     """T053/L2: below 20 the gate cannot detect a regression worth detecting."""
     from memoratum.eval_axes import ManifestError
 
-    with pytest.raises(ManifestError, match="below the floor of 20"):
+    with pytest.raises(ManifestError, match="below the floor"):
         _latency_config(samples=samples)
 
 
-def test_twenty_samples_is_accepted() -> None:
-    """The floor is 20, not 30: 30 is the sweet spot, not the minimum."""
-    from memoratum.eval_axes import validate_manifest
+def test_the_sample_floor_is_the_measured_noise_floor() -> None:
+    """The floor is 120 because 30 measured a wider noise floor than the gate band.
 
-    validate_manifest(_latency_config(samples=20))
+    Ten identical runs at 30 samples spanned 12.28-26.45 ms for the 400-chunk retrieve
+    median (2.15x) with no code change, and the ms smoke bound was exceeded 1 run in 6. At
+    120 samples it was exceeded 0 in 6. The previous floor of 20 came from bootstrapping
+    *within* one run's samples, which cannot see between-run machine noise at all.
+    """
+    from memoratum.eval_axes import MIN_LATENCY_SAMPLES, ManifestError, validate_manifest
+
+    assert MIN_LATENCY_SAMPLES == 120
+    validate_manifest(_latency_config(samples=MIN_LATENCY_SAMPLES))
+    with pytest.raises(ManifestError, match="below the floor"):
+        validate_manifest(_latency_config(samples=MIN_LATENCY_SAMPLES - 1))
 
 
-def test_thirty_samples_is_the_default() -> None:
-    """n=30 leaves +7% statistical headroom against the +40% band (L2)."""
+def test_the_default_sample_count_meets_its_own_floor() -> None:
+    """The default must not be one an operator has to raise before the gate can run."""
+    from memoratum.eval_axes import MIN_LATENCY_SAMPLES
     from memoratum.eval_latency import DEFAULT_SAMPLES
 
-    assert DEFAULT_SAMPLES == 30
+    assert DEFAULT_SAMPLES >= MIN_LATENCY_SAMPLES
 
 
 # --- T054: the ladder must have three sizes ---------------------------------------
@@ -407,7 +423,7 @@ def _latency_config(**overrides):
 _SHARED: dict = {}
 
 
-def _evaluate(*, ladder=None, samples=20, warmup=2):
+def _evaluate(*, ladder=None, samples=SAMPLES, warmup=2):
     """One shared 3-size evaluation.
 
     The manifest requires at least three corpus sizes (FR-004), so a single-size run is
@@ -496,7 +512,7 @@ def test_cli_runs_and_writes_artifacts(tmp_path) -> None:
             "--ladder",
             "100,200,400",
             "--samples",
-            "20",
+            str(SAMPLES),
             "--warmup",
             "2",
             "--out-json",
@@ -513,20 +529,20 @@ def test_cli_runs_and_writes_artifacts(tmp_path) -> None:
 
 
 def test_cli_rejects_a_short_sample_count() -> None:
-    code, _, err5 = _run_cli(["--ladder", "100,200,400", "--samples", "5"])
+    code, _, err5 = _run_cli(["--ladder", "100,200,400", "--samples", str(MIN_LATENCY_SAMPLES - 1)])
     assert code != 0
-    assert "below the floor of 20" in err5
+    assert "below the floor" in err5
     assert code != 0
 
 
 def test_cli_rejects_a_short_ladder() -> None:
-    code, _, err = _run_cli(["--ladder", "100,200", "--samples", "20"])
+    code, _, err = _run_cli(["--ladder", "100,200", "--samples", str(SAMPLES)])
     assert code != 0
     assert "at least 3" in err
 
 
 def test_cli_rejects_a_straddling_ladder() -> None:
-    code, _, err = _run_cli(["--ladder", "100,400,1600,6400", "--samples", "20"])
+    code, _, err = _run_cli(["--ladder", "100,400,1600,6400", "--samples", str(SAMPLES)])
     assert code != 0
     assert "straddle" in err.lower()
 
@@ -736,7 +752,7 @@ def test_prefilter_is_only_asserted_above_the_threshold() -> None:
     """Below the threshold there is nothing to assert, and it must report null, not False."""
     from memoratum.eval_latency import evaluate_latency
 
-    result = evaluate_latency(ladder=[100, 200, 400], samples=20, warmup=2)
+    result = evaluate_latency(ladder=[100, 200, 400], samples=SAMPLES, warmup=2)
     threshold = prefilter_threshold()
     for entry in result["latency"]["ladder"]:
         engaged = entry["phases"]["retrieve"]["prefilter_engaged"]
@@ -775,7 +791,7 @@ def test_cli_baseline_flag_actually_reaches_the_gate(tmp_path) -> None:
             "--ladder",
             "100,200,400",
             "--samples",
-            "20",
+            str(SAMPLES),
             "--warmup",
             "2",
             "--baseline",
@@ -802,7 +818,7 @@ def test_cli_rejects_a_baseline_file_with_no_usable_rows(tmp_path) -> None:
     empty = tmp_path / "BASELINES.md"
     empty.write_text("# Baselines\n\nNo table here.\n", encoding="utf-8")
     code, _, err = _run_cli(
-        ["--ladder", "100,200,400", "--samples", "20", "--baseline", str(empty)]
+        ["--ladder", "100,200,400", "--samples", str(SAMPLES), "--baseline", str(empty)]
     )
     assert code == EXIT_BASELINE_MISSING
     assert "baseline" in err.lower()
@@ -824,7 +840,7 @@ def test_a_latency_regression_fails_and_names_the_phase(tmp_path) -> None:
             "--ladder",
             "100,200,400",
             "--samples",
-            "20",
+            str(SAMPLES),
             "--warmup",
             "2",
             "--baseline",
@@ -848,6 +864,6 @@ def test_temp_dirs_are_cleaned_up() -> None:
     from memoratum.eval_latency import evaluate_latency
 
     before = len([n for n in os.listdir("/tmp") if n.startswith("memoratum-latency-")])
-    evaluate_latency(ladder=[100, 200, 400], samples=20, warmup=2)
+    evaluate_latency(ladder=[100, 200, 400], samples=SAMPLES, warmup=2)
     after = len([n for n in os.listdir("/tmp") if n.startswith("memoratum-latency-")])
     assert after <= before, f"leaked {after - before} temp directories"

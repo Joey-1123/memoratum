@@ -240,21 +240,21 @@ and metric values.
 
 ### Tests for User Story 5 ⚠️ write FIRST, watch them fail
 
-- [ ] T088 [P] [US5] Failing test: re-running the same command twice produces an IDENTICAL manifest and identical metric values (FR-007, SC-003) in `tests/test_eval_compare.py`
-- [ ] T089 [P] [US5] Failing test: `eval_compare` exits NON-ZERO on embedder mismatch, listing the mismatched keys — it must FAIL, not warn (invariant M2, research D8) in `tests/test_eval_compare.py`
-- [ ] T090 [P] [US5] Failing test: `eval_compare` exits non-zero on `vector_store`, `modes`, `seed`, `data_sha256` and `n` mismatch in `tests/test_eval_compare.py`
-- [ ] T091 [P] [US5] Failing test: `--scope both` populates BOTH the scoped and unscoped buckets on a real dataset run (invariant I2) in `tests/test_eval_longmemeval_repro.py`
-- [ ] T092 [P] [US5] Failing test: every emitted results file contains the command needed to regenerate it (SC-003) in `tests/test_eval_docs_conformance.py`
+- [X] T088 [P] [US5] Failing test: re-running the same command twice produces an IDENTICAL manifest and identical metric values (FR-007, SC-003) in `tests/test_eval_compare.py`
+- [X] T089 [P] [US5] Failing test: `eval_compare` exits NON-ZERO on embedder mismatch, listing the mismatched keys — it must FAIL, not warn (invariant M2, research D8) in `tests/test_eval_compare.py`
+- [X] T090 [P] [US5] Failing test: `eval_compare` exits non-zero on `vector_store`, `modes`, `seed`, `data_sha256` and `n` mismatch in `tests/test_eval_compare.py`
+- [X] T091 [P] [US5] Failing test: `--scope both` populates BOTH the scoped and unscoped buckets on a real dataset run (invariant I2) in `tests/test_eval_longmemeval_repro.py`
+- [X] T092 [P] [US5] Failing test: every emitted results file contains the command needed to regenerate it (SC-003) in `tests/test_eval_docs_conformance.py`
 
 ### Implementation for User Story 5
 
-- [ ] T093 [P] [US5] Add `--project-count`, `--scope` (scoped|unscoped|both), `--latency-baseline`, `--cost-baseline` flags to `src/memoratum/eval_longmemeval.py` (FR-001, SC-002)
-- [ ] T094 [US5] Make `eval_compare` hard-fail on manifest mismatch in `src/memoratum/eval_compare.py` — exit non-zero listing mismatched keys; a confident number across mismatched manifests is worse than no number
-- [ ] T095 [US5] Emit `eval/RESULTS.md` showing all four axes alongside recall and MRR for the same run (SC-002) from `src/memoratum/eval_compare.py`
-- [ ] T096 [US5] Record the exact regeneration command inside every emitted results Markdown file in `src/memoratum/eval_axes.py`
-- [ ] T097 [US5] Document the four axes, gating semantics, hardware requirement and the chars-not-tokens unit in `docs/EVALUATION.md` — same change as the behaviour (constitution docs rule)
-- [ ] T098 [US5] Document the v0 → v1 metric change and the non-comparability of pre-2026-10-04 `R@k` figures in `docs/EVALUATION.md`, linking `eval/MIGRATION-metric-v1.md`
-- [ ] T099 [US5] Regenerate `eval/RESULTS-*.md` for the corrected metric and record new baseline rows in `eval/BASELINES.md`
+- [X] T093 [P] [US5] Add `--project-count`, `--scope` (scoped|unscoped|both), `--latency-baseline`, `--cost-baseline` flags to `src/memoratum/eval_longmemeval.py` (FR-001, SC-002)
+- [X] T094 [US5] Make `eval_compare` hard-fail on manifest mismatch in `src/memoratum/eval_compare.py` — exit non-zero listing mismatched keys; a confident number across mismatched manifests is worse than no number
+- [X] T095 [US5] Emit `eval/RESULTS.md` showing all four axes alongside recall and MRR for the same run (SC-002) from `src/memoratum/eval_compare.py`
+- [X] T096 [US5] Record the exact regeneration command inside every emitted results Markdown file in `src/memoratum/eval_axes.py` (`regeneration_block` / `command`, wired into all four axes via `write_artifacts(argv=…)`)
+- [X] T097 [US5] Document the four axes, gating semantics, hardware requirement and the chars-not-tokens unit in `docs/EVALUATION.md` — same change as the behaviour (constitution docs rule)
+- [X] T098 [US5] Document the v0 → v1 metric change and the non-comparability of pre-2026-10-04 `R@k` figures in `docs/EVALUATION.md`, linking `eval/MIGRATION-metric-v1.md`
+- [X] T099 [US5] Regenerate `eval/RESULTS-*.md` for the corrected metric and record new baseline rows in `eval/BASELINES.md` — grounding, isolation, cost and latency regenerated; latency rows re-recorded at `--samples 120` after the gate was measured failing on identical code
 
 **Checkpoint**: All five stories functional and every published figure regenerable.
 

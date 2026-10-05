@@ -200,8 +200,11 @@ across machines would violate FR-007.
 
 3. **Record hardware with every figure** (FR-008).
 
-**Sample-size rationale.** Bootstrap of median-of-n against the true median, 2,000
-resamples:
+**Sample-size rationale — the bootstrap below was of the wrong quantity, and the
+direct measurement supersedes it.**
+
+The original rationale bootstrapped median-of-n against the true median over 2,000
+resamples of a single run:
 
 | n | 95% CI | headroom a 1.0x gate needs |
 |---:|---|---:|
@@ -211,11 +214,33 @@ resamples:
 | 30 | [0.96, 1.07] | **+7%** |
 | 50 | [0.96, 1.06] | +6% |
 
-n=30 is the sweet spot: +7% statistical headroom against a +40% band leaves ~33%
-for real drift and hardware variation. **n=20 is the floor** — below that the gate
-is theatre, since n=5 would need a +69% band and could not detect anything smaller
-than a 70% regression. Loosen to ±60% for phases under 2 ms and tighten to ±25%
-for phases over 50 ms, where statistical headroom shrinks.
+That gave "n=30 needs only +7%, so n=20 is the floor". **Resampling one run's
+samples estimates within-run sampling error and is structurally blind to
+between-run machine noise** — which, on a laptop, is the larger term. Measuring the
+gate against itself instead: ten identical runs of unmodified code.
+
+| n | 400-chunk retrieve median | spread | ms bound exceeded | per-chunk ratio spread |
+|---:|---|---:|---:|---:|
+| 30 | 12.28 – 26.45 ms | **2.15x** | **1 in 6** | 1.33x |
+| 120 | 10.88 – 18.08 ms | 1.66x | 0 in 6 | 1.16x |
+| 400 | 12.74 – 13.17 ms | **1.03x** | 0 in 6 | 1.13x |
+
+At 30 samples the gate **failed on unmodified code**: the per-chunk ratio exceeded its
+own 1.5 bound in 2 runs of 10, and the ms smoke bound (11.09 × 1.40 = 15.53 ms) was
+exceeded 1 run in 6. **n=120 is the floor**, set from the measurement. n=30 was not a
+sweet spot; it was a sample count at which the band was narrower than the noise.
+
+Two things this changed beyond the constant:
+
+* **The ms baseline moved** (11.09 → 13.35) when re-recorded at 120 samples, while the
+  `us_per_chunk_ratio` baseline stayed at **0.93**. That is the axis's central claim
+  demonstrated rather than asserted: the direction-travelling figure was stable across a
+  20% change in the absolute one.
+* **The band is now above the noise.** A gate whose noise floor exceeds its width is not
+  a loose gate; it is a coin flip, and a coin flip teaches operators to ignore it.
+
+Loosen to ±60% for phases under 2 ms and tighten to ±25% for phases over 50 ms, where
+statistical headroom shrinks.
 
 Single-sample relative MAD is 5–16% and max/median over 200 samples is 2.11x, so
 **the mean is never usable**; aggregate raw samples and take the percentile

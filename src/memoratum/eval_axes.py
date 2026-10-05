@@ -21,8 +21,10 @@ import json
 import math
 import os
 import platform
+import shlex
 import sqlite3
 import statistics
+import sys
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
@@ -70,6 +72,16 @@ HARDWARE_BOUND_FIGURES = frozenset(
 )
 
 HARDWARE_KEYS = ("cpu", "cores", "ram_mb", "python", "platform")
+
+#: Minimum samples per timed phase.
+#:
+#: Raised from 20 after measuring the gate against itself. Ten identical runs at 30 samples
+#: produced 400-chunk retrieve medians spanning 12.28-26.45 ms (2.15x) on unmodified code,
+#: and the per-chunk ratio crossed its own bound in 2 runs of 10. At 120 samples the ms
+#: bound was exceeded 0 times in 6 and at 400 samples the per-chunk spread fell to 1.13x.
+#: The sample count has to put the noise floor below the gate band, or the band is
+#: measuring the machine.
+MIN_LATENCY_SAMPLES = 120
 
 # Per-kind grounding rules. One global rule is invalid: the fact leg renders
 # "subject predicate object" and would otherwise score 0.0 for identical evidence
@@ -350,10 +362,15 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
                 f"latency_config.samples must be an int, got {type(samples).__name__}; "
                 "a missing or mistyped count silently disables the floor"
             )
-        if samples < 20:
+        if samples < MIN_LATENCY_SAMPLES:
             raise ManifestError(
-                f"latency_config.samples={samples} is below the floor of 20; at n=5 a "
-                "1.0x gate needs a +69% band and cannot detect a 70% regression (L2)"
+                f"latency_config.samples={samples} is below the floor of "
+                f"{MIN_LATENCY_SAMPLES}. Measured, not assumed: at 30 samples the "
+                "400-chunk retrieve median varied 2.15x across identical runs on this "
+                "hardware, and the ms smoke bound (11.09 x 1.40 = 15.53 ms) was exceeded "
+                "1 run in 6 with no code change. At 120 samples the same bound was "
+                "exceeded 0 in 6. A gate whose noise floor is wider than its band is not a "
+                "gate -- it just trains operators to ignore it (L2)"
             )
         if not isinstance(latency["warmup"], int) or latency["warmup"] < 1:
             raise ManifestError(
@@ -804,10 +821,55 @@ def retrieval_budget(ks: Sequence[int]) -> int:
     return max(max(ks, default=0) * 2, RETRIEVAL_BUDGET_FLOOR)
 
 
+def command(argv: Sequence[str] | None, *, module: str) -> list[str]:
+    """The runnable command that regenerates this axis's figures.
+
+    Always ``python -m memoratum.<axis> <flags>``, with the flags taken from ``argv`` when
+    given and from ``sys.argv[1:]`` otherwise. Both paths describe the flags that actually
+    ran, which is what SC-003 asks for.
+
+    ``sys.executable`` is deliberately **not** used: it is an absolute path into whatever
+    virtualenv produced the file, so it does not exist on a reader's machine. The recorded
+    line is what an operator would type, not what this process happened to be.
+    """
+    flags = list(argv) if argv is not None else list(sys.argv[1:])
+    return ["python", "-m", module, *flags]
+
+
+def regeneration_block(argv: Sequence[str] | None) -> str:
+    """The fenced block a results file carries so the figure can be regenerated (SC-003).
+
+    A results file that records what the numbers were but not how to get them again is a
+    claim rather than a measurement. The command is recorded from ``sys.argv`` rather than
+    reconstructed per axis, so it cannot drift from what actually ran — reconstructing it
+    would be a second source of truth, and the two would diverge on the first flag change.
+
+    ``argv=None`` yields a block that says so, rather than an empty one: silence would read
+    as "no command was needed".
+    """
+    if argv is None:
+        return "## Regenerate this figure\n\nNo regeneration command was recorded for this run.\n"
+    quoted = " ".join(shlex.quote(part) for part in argv)
+    return f"## Regenerate this figure\n\n```bash\n{quoted}\n```\n"
+
+
 def write_artifacts(
-    result: dict[str, Any], report: str, *, out_md: str = "", out_json: str = ""
+    result: dict[str, Any],
+    report: str,
+    *,
+    out_md: str = "",
+    out_json: str = "",
+    argv: Sequence[str] | None = None,
 ) -> None:
-    """Print the report and optionally persist Markdown and JSON artifacts."""
+    """Print the report and optionally persist Markdown and JSON artifacts.
+
+    When ``argv`` is supplied the regeneration command is appended, so every emitted
+    results file is self-describing (SC-003). Passing it explicitly rather than reading
+    ``sys.argv`` here keeps ``main()`` reproducible when called with a synthetic argv by a
+    test or a library caller.
+    """
+    if argv is not None:
+        report = report.rstrip("\n") + "\n\n" + regeneration_block(argv)
     print(report)
     if out_md:
         directory = os.path.dirname(out_md)
@@ -818,7 +880,10 @@ def write_artifacts(
         directory = os.path.dirname(out_json)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        Path(out_json).write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        payload = dict(result)
+        if argv is not None:
+            payload = {**payload, "command": list(argv)}
+        Path(out_json).write_text(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def iter_csv(value: str) -> list[str]:

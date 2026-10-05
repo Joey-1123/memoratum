@@ -12,9 +12,15 @@ stylistic -- see ``research.md`` D3 and ``data-model.md`` L1-L8:
   corpus ladder, per-chunk cost fell 35.6 -> 30.1 -> 8.2 -> 7.3 us. Sub-linear growth
   shows as a *falling* number; a regression to O(n) shows as a *rising* one. That
   direction is meaningful in a way absolute milliseconds are not.
-* **The sample floor is 20.** Bootstrapping median-of-n against the true median over
-  2,000 resamples: n=5 needs a +69% band and cannot detect anything smaller than a 70%
-  regression, which makes the gate theatre; n=30 needs only +7%.
+* **The sample floor is 120** (``MIN_LATENCY_SAMPLES``), not 20. The original floor came
+  from bootstrapping median-of-n against the true median over 2,000 resamples, which
+  concluded "n=30 needs only +7%". That measured the wrong thing: resampling the same
+  samples estimates *within-run sampling* error and is blind to *between-run machine*
+  noise. Measured directly -- ten identical runs of unmodified code at 30 samples produced
+  400-chunk retrieve medians spanning 12.28-26.45 ms (**2.15x**), and the per-chunk ratio
+  crossed its own bound in 2 runs of 10. The ms smoke bound (11.09 x 1.40 = 15.53 ms) was
+  exceeded 1 run in 6 at 30 samples, and 0 runs in 6 at 120. A gate whose noise floor is
+  wider than its band is not a gate; it trains operators to ignore it.
 * **Raw samples are returned, never a pre-summarised figure.** p95-of-p95 is not a p95,
   and single-sample relative MAD is 5-16% with max/median 2.11x, so the mean is unusable.
 * **The ladder must not cross the prefilter threshold.** Crossing it changes the
@@ -48,6 +54,7 @@ from memoratum.eval_axes import (
     ManifestError,
     build_manifest,
     collect_hardware,
+    command,
     embedder_label,
     iter_ints,
     median,
@@ -66,7 +73,7 @@ PHASES = ("ingest", "embed", "index", "retrieve")
 #: Entirely below the default prefilter threshold of 512. A ladder crossing it measures an
 #: algorithm switch rather than a corpus size (L7).
 DEFAULT_LADDER = (100, 200, 400)
-DEFAULT_SAMPLES = 30
+DEFAULT_SAMPLES = 120
 DEFAULT_WARMUP = 5
 
 #: The primary gate. Measured sub-linear growth is ~0.85x per doubling, so per-chunk cost
@@ -493,6 +500,10 @@ def load_baselines(path: str) -> dict[str, dict[str, Any]]:
     return _load_baseline_rows(path)
 
 
+def _command(argv: list[str] | None) -> list[str]:
+    return command(argv, module="memoratum.eval_latency")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Latency axis")
     parser.add_argument("--ladder", default=",".join(str(n) for n in DEFAULT_LADDER))
@@ -531,7 +542,13 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_BAD_INPUT
 
     try:
-        write_artifacts(result, summarize(result), out_md=args.out_md, out_json=args.out_json)
+        write_artifacts(
+            result,
+            summarize(result),
+            out_md=args.out_md,
+            out_json=args.out_json,
+            argv=_command(argv),
+        )
     except OSError as exc:
         print(f"could not write results: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT
