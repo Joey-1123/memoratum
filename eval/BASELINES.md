@@ -38,10 +38,12 @@ Populated by T052 — 2026-10-05.
 
 Hardware is mandatory for every row in this table.
 
-_Populated by T069._
+Populated by T069 - 2026-10-05.
 
 | axis | figure | tolerance | corpus | seed | mode | hardware | command |
 |---|---|---|---|---|---|---|---|
+| retrieve_median_ms | 11.09 | 0.40 | synthetic ladder 100,200,400 chunks | 42 | documents | Intel(R) Core(TM) i3-7020U CPU @ 2.30GHz / 4c / 3772MB / py3.12.14 | `uv run python -m memoratum.eval_latency --ladder 100,200,400 --samples 30 --warmup 5` |
+| us_per_chunk_ratio | 0.93 | 1.22 | synthetic ladder 100,200,400 chunks | 42 | documents | Intel(R) Core(TM) i3-7020U CPU @ 2.30GHz / 4c / 3772MB / py3.12.14 | (same run; ratio of the 400-chunk to the 100-chunk figure) |
 
 ## Status
 
@@ -50,6 +52,6 @@ _Populated by T069._
 | A | Foundational | n/a |
 | B | Isolation | gate is an absolute count — no baseline needed |
 | C | Cost | **measured** — see cost table |
-| D | Latency | not yet measured |
+| D | Latency | **measured** - see latency table |
 | E | Grounding | gate is `grounded_fraction == 1.0` — no baseline needed |
 | F | Reproducibility | n/a |
