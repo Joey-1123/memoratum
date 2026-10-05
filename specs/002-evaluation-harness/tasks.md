@@ -94,24 +94,24 @@ cross-scope leak count reported as a metric.
 
 ### Tests for User Story 1 ⚠️ write FIRST, watch them fail
 
-- [ ] T022 [P] [US1] Failing test: two projects, scoped query to project A returns `leaked_hits == 0` and `scoped_queries > 0` in `tests/test_eval_isolation.py`
-- [ ] T023 [P] [US1] Failing test: project B's content ranking highest on lexical similarity is still excluded from a project-A query, and the exclusion is COUNTED not silently applied, in `tests/test_eval_isolation.py`
-- [ ] T024 [P] [US1] Failing test: an unscoped query populates `unscoped_queries` and `unscoped_cross_scope_hits` (>0) and these appear in NEITHER the gate numerator NOR the denominator (invariant I2), in `tests/test_eval_isolation.py`
-- [ ] T025 [P] [US1] Failing test: `returned_hits` is always emitted next to `leak_rate` per query (invariant I3 note) in `tests/test_eval_isolation.py`
-- [ ] T026 [P] [US1] Failing test: a non-zero `leaked_hits` produces gate status `fail` and exit code 1 (FR-002, invariant I1) in `tests/test_eval_isolation.py`
-- [ ] T027 [US1] Failing test: `--require-clean` injects a document that SHOULD leak, the harness DETECTS it, and exits 0 — detection succeeded. Exit 2 means the metric is broken and is WORSE than the leak (SC-001, invariant I4), in `tests/test_eval_isolation.py`
-- [ ] T028 [P] [US1] Failing test: each recorded leak carries `hit_id`, `document_id`, `originating_project_id`, `requested_project_id`, `rank` (SC-004) in `tests/test_eval_isolation.py`
-- [ ] T029 [P] [US1] Failing test: `scope_config.projects` has ≥2 entries and `expected_documents` is present in the manifest (contracts schema `minItems: 2`) in `tests/test_eval_isolation.py`
+- [X] T022 [P] [US1] Failing test: two projects, scoped query to project A returns `leaked_hits == 0` and `scoped_queries > 0` in `tests/test_eval_isolation.py`
+- [X] T023 [P] [US1] Failing test: project B's content ranking highest on lexical similarity is still excluded from a project-A query, and the exclusion is COUNTED not silently applied, in `tests/test_eval_isolation.py`
+- [X] T024 [P] [US1] Failing test: an unscoped query populates `unscoped_queries` and `unscoped_cross_scope_hits` (>0) and these appear in NEITHER the gate numerator NOR the denominator (invariant I2), in `tests/test_eval_isolation.py`
+- [X] T025 [P] [US1] Failing test: `returned_hits` is always emitted next to `leak_rate` per query (invariant I3 note) in `tests/test_eval_isolation.py`
+- [X] T026 [P] [US1] Failing test: a non-zero `leaked_hits` produces gate status `fail` and exit code 1 (FR-002, invariant I1) in `tests/test_eval_isolation.py`
+- [X] T027 [US1] Failing test: `--require-clean` injects a document that SHOULD leak, the harness DETECTS it, and exits 0 — detection succeeded. Exit 2 means the metric is broken and is WORSE than the leak (SC-001, invariant I4), in `tests/test_eval_isolation.py`
+- [X] T028 [P] [US1] Failing test: each recorded leak carries `hit_id`, `document_id`, `originating_project_id`, `requested_project_id`, `rank` (SC-004) in `tests/test_eval_isolation.py`
+- [X] T029 [P] [US1] Failing test: `scope_config.projects` has ≥2 entries and `expected_documents` is present in the manifest (contracts schema `minItems: 2`) in `tests/test_eval_isolation.py`
 
 ### Implementation for User Story 1
 
-- [ ] T030 [P] [US1] Implement `ingest_scoped()` in `src/memoratum/eval_axes.py` — pass `project_id` on BOTH `db.create_document` and `search`; `process_all` is imported from `memoratum.ingest`, NOT `memoratum.db`
-- [ ] T031 [P] [US1] Implement `classify_scope()` in `src/memoratum/eval_isolation.py` — bucket each query as scoped or unscoped; `project_id=None` genuinely means "caller requested no scope"
-- [ ] T032 [US1] Implement `evaluate_isolation()` in `src/memoratum/eval_isolation.py` — emit `scoped_queries`, `leaked_hits`, `leaked_queries`, `returned_hits`, `leak_rate`, `query_leak_rate`, `unscoped_queries`, `unscoped_cross_scope_hits`, `per_query`, `leaks_detail`
-- [ ] T033 [US1] Implement `gate_isolation()` in `src/memoratum/eval_isolation.py` — gate on the ABSOLUTE COUNT `leaked_hits == 0`; `leak_rate` and `query_leak_rate` are trend-only and NEVER gate (invariants I1, I3)
-- [ ] T034 [US1] Implement the `--require-clean` self-check in `src/memoratum/eval_isolation.py` — inject a known leak, assert detection, exit 2 if undetected (invariant I4)
-- [ ] T035 [US1] Implement CLI `main()` in `src/memoratum/eval_isolation.py` with flags `--projects` (default 3), `--sessions-per-project` (40), `--queries` (40), `--k` (5,10), `--modes` (hybrid,documents), `--seed` (42), `--require-clean`, `--out-md`, `--out-json`
-- [ ] T036 [US1] Emit `eval/RESULTS-isolation.md` and `eval/isolation.json` by running the axis; record `scope_config` in the manifest
+- [X] T030 [P] [US1] Implement `ingest_scoped()` in `src/memoratum/eval_axes.py` — pass `project_id` on BOTH `db.create_document` and `search`; `process_all` is imported from `memoratum.ingest`, NOT `memoratum.db`
+- [X] T031 [P] [US1] Implement `classify_scope()` in `src/memoratum/eval_isolation.py` — bucket each query as scoped or unscoped; `project_id=None` genuinely means "caller requested no scope"
+- [X] T032 [US1] Implement `evaluate_isolation()` in `src/memoratum/eval_isolation.py` — emit `scoped_queries`, `leaked_hits`, `leaked_queries`, `returned_hits`, `leak_rate`, `query_leak_rate`, `unscoped_queries`, `unscoped_cross_scope_hits`, `per_query`, `leaks_detail`
+- [X] T033 [US1] Implement `gate_isolation()` in `src/memoratum/eval_isolation.py` — gate on the ABSOLUTE COUNT `leaked_hits == 0`; `leak_rate` and `query_leak_rate` are trend-only and NEVER gate (invariants I1, I3)
+- [X] T034 [US1] Implement the `--require-clean` self-check in `src/memoratum/eval_isolation.py` — inject a known leak, assert detection, exit 2 if undetected (invariant I4)
+- [X] T035 [US1] Implement CLI `main()` in `src/memoratum/eval_isolation.py` with flags `--projects` (default 3), `--sessions-per-project` (40), `--queries` (40), `--k` (5,10), `--modes` (hybrid,documents), `--seed` (42), `--require-clean`, `--out-md`, `--out-json`
+- [X] T036 [US1] Emit `eval/RESULTS-isolation.md` and `eval/isolation.json` by running the axis; record `scope_config` in the manifest
 
 **Checkpoint**: SC-001 satisfied — two projects report 0 leaks, an injected leak fails the run. **MVP complete.**
 

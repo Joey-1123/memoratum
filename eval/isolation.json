@@ -1,0 +1,161 @@
+{
+  "axis": "isolation",
+  "schema": "memoratum-eval-axes-v1",
+  "manifest": {
+    "schema": "longmemeval-scoped-v2",
+    "seed": 42,
+    "requested_n": 16,
+    "n": 16,
+    "ks": [
+      5,
+      10
+    ],
+    "modes": [
+      "scoped-probe"
+    ],
+    "embedder": "HashEmbedder:64",
+    "vector_store": "SQLiteVectorStore",
+    "data_sha256": "synthetic-scoped-corpus",
+    "scope_config": {
+      "container_tag": "bench",
+      "projects": [
+        "proj-a",
+        "proj-b",
+        "proj-c"
+      ],
+      "expected_documents": 60
+    }
+  },
+  "isolation": {
+    "scoped_queries": 12,
+    "leaked_hits": 0,
+    "leaked_queries": 0,
+    "returned_hits": 120,
+    "unresolvable_hits": 0,
+    "leak_rate": 0.0,
+    "query_leak_rate": 0.0,
+    "unscoped_queries": 4,
+    "unscoped_cross_scope_hits": 40,
+    "per_query": [
+      {
+        "scope": "proj-a",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-b",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-c",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-a",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-b",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-c",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-a",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-b",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-c",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-a",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-b",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      },
+      {
+        "scope": "proj-c",
+        "returned_hits": 10,
+        "leaked_hits": 0,
+        "leak_rate": 0.0,
+        "leak_records": 0
+      }
+    ],
+    "leaks_detail": [],
+    "_unscoped_origins": [
+      "proj-a",
+      "proj-b",
+      "proj-c"
+    ],
+    "_scoped_origins": [
+      "proj-a",
+      "proj-b",
+      "proj-c"
+    ]
+  },
+  "gate": {
+    "status": "pass",
+    "checks": [
+      {
+        "name": "leaked_hits",
+        "status": "pass",
+        "value": 0,
+        "bound": 0
+      },
+      {
+        "name": "scoped_queries_observed",
+        "status": "pass",
+        "value": 12,
+        "bound": 1,
+        "reason": "no scoped query ran, so isolation was never observed"
+      }
+    ]
+  },
+  "self_check": {
+    "detected": true,
+    "injected_leaks": 12,
+    "clean_leaked_hits": 0,
+    "detail": "detection proven: 12 injected cross-scope hits found, 0 false positives on a correctly scoped query"
+  }
+}

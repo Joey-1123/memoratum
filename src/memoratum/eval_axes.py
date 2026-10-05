@@ -103,8 +103,17 @@ class Attribution:
     rank: int
     row_text: str | None
 
-    def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    def as_dict(self, *, omit_text: bool = False) -> dict[str, Any]:
+        """Serialise for the report.
+
+        ``omit_text`` drops ``row_text``, which the grounding axis needs but a scope
+        report does not: at ~160 hits the corpus text dominates the artifact and buries
+        the metrics an operator is reading.
+        """
+        payload = asdict(self)
+        if omit_text:
+            payload.pop("row_text", None)
+        return payload
 
 
 def attribute_hit(conn: sqlite3.Connection, hit: dict[str, Any], *, rank: int) -> Attribution:
