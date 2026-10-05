@@ -165,26 +165,26 @@ several corpus sizes.
 
 ### Tests for User Story 3 ⚠️ write FIRST, watch them fail
 
-- [ ] T053 [P] [US3] Failing test: `--samples 5` is REJECTED — the floor is 20; at n=5 a 1.0x gate needs a +69% band and cannot detect anything under a 70% regression (invariant L2) in `tests/test_eval_latency.py`
-- [ ] T054 [P] [US3] Failing test: a ladder with fewer than 3 corpus sizes is REJECTED (FR-004) in `tests/test_eval_latency.py`
-- [ ] T055 [P] [US3] Failing test: `samples_ms` holds RAW samples and percentiles are computed from them, never averaged across summaries (invariant L3) in `tests/test_eval_latency.py`
-- [ ] T056 [P] [US3] Failing test: `us_per_chunk` RISING across the ladder is flagged as a regression to O(n), FALLING is sub-linear and passes (invariant L1) in `tests/test_eval_latency.py`
-- [ ] T057 [P] [US3] Failing test: a ladder crossing `PREFILTER_MIN_CANDIDATES = 512` is flagged, because that step measures an ALGORITHM SWITCH rather than a size change (invariant L7) in `tests/test_eval_latency.py`
-- [ ] T058 [P] [US3] Failing test: a latency regression names the regressed phase in `gate.checks[].phase` (SC-004) in `tests/test_eval_latency.py`
-- [ ] T059 [P] [US3] Failing test: a baseline row lacking `hardware` is rejected with exit code 2 (invariants B1, L8, FR-008) in `tests/test_eval_latency.py`
-- [ ] T060 [US3] Failing test: `prefilter_engaged` is ASSERTED via `set_trace_callback` — the same technique as `tests/test_search_perf.py` — and a `null` above the prefilter threshold is a defect (invariant L7) in `tests/test_eval_latency.py`
+- [X] T053 [P] [US3] Failing test: `--samples 5` is REJECTED — the floor is 20; at n=5 a 1.0x gate needs a +69% band and cannot detect anything under a 70% regression (invariant L2) in `tests/test_eval_latency.py`
+- [X] T054 [P] [US3] Failing test: a ladder with fewer than 3 corpus sizes is REJECTED (FR-004) in `tests/test_eval_latency.py`
+- [X] T055 [P] [US3] Failing test: `samples_ms` holds RAW samples and percentiles are computed from them, never averaged across summaries (invariant L3) in `tests/test_eval_latency.py`
+- [X] T056 [P] [US3] Failing test: `us_per_chunk` RISING across the ladder is flagged as a regression to O(n), FALLING is sub-linear and passes (invariant L1) in `tests/test_eval_latency.py`
+- [X] T057 [P] [US3] Failing test: a ladder crossing `PREFILTER_MIN_CANDIDATES = 512` is flagged, because that step measures an ALGORITHM SWITCH rather than a size change (invariant L7) in `tests/test_eval_latency.py`
+- [X] T058 [P] [US3] Failing test: a latency regression names the regressed phase in `gate.checks[].phase` (SC-004) in `tests/test_eval_latency.py`
+- [X] T059 [P] [US3] Failing test: a baseline row lacking `hardware` is rejected with exit code 2 (invariants B1, L8, FR-008) in `tests/test_eval_latency.py`
+- [X] T060 [US3] Failing test: `prefilter_engaged` is ASSERTED via `set_trace_callback` — the same technique as `tests/test_search_perf.py` — and a `null` above the prefilter threshold is a defect (invariant L7) in `tests/test_eval_latency.py`
 
 ### Implementation for User Story 3
 
-- [ ] T061 [P] [US3] Implement `assert_prefilter_engaged()` in `src/memoratum/eval_latency.py` using `sqlite3.Connection.set_trace_callback`
-- [ ] T062 [P] [US3] Implement `build_ladder()` in `src/memoratum/eval_latency.py` — ≥3 sizes, all on ONE side of `PREFILTER_MIN_CANDIDATES = 512`, or pin `MEMORATUM_SEARCH_PREFILTER_MIN` per size and record it
-- [ ] T063 [US3] Implement `time_phase()` in `src/memoratum/eval_latency.py` — wraps `sample_ms` and records `samples_ms`, `median_ms`, `p95_ms`, `us_per_chunk`, `prefilter_engaged`
-- [ ] T064 [US3] Implement `evaluate_latency()` in `src/memoratum/eval_latency.py` — all FOUR phases reported separately: ingest, embed, index, retrieve (FR-004)
-- [ ] T065 [US3] Implement `gate_latency()` in `src/memoratum/eval_latency.py` — primary gate `us_per_chunk(4N) < 1.5 × us_per_chunk(N)`; secondary smoke bound `median_of_30 ≤ baseline × 1.40`
-- [ ] T066 [US3] Verify NO remote embedder is inside any timed region in `src/memoratum/eval_latency.py` — network jitter (100 ms ± 80 ms) dwarfs everything measured (invariant L5, FR-011)
-- [ ] T067 [US3] Verify harness bookkeeping stays OUTSIDE timed regions in `src/memoratum/eval_latency.py` — the naive grounding scan costs 51.6 ms/query against a 13 ms retrieval (invariant L6)
-- [ ] T068 [US3] Implement CLI `main()` in `src/memoratum/eval_latency.py` with `--ladder` (100,400,1600,6400), `--samples` (30), `--warmup` (5), `--pin-prefilter`, `--phases`, `--baseline`, `--out-md`, `--out-json`
-- [ ] T069 [US3] Emit `eval/RESULTS-latency.md` and `eval/latency.json`; record baseline rows WITH hardware in `eval/BASELINES.md`
+- [X] T061 [P] [US3] Implement `assert_prefilter_engaged()` in `src/memoratum/eval_latency.py` using `sqlite3.Connection.set_trace_callback`
+- [X] T062 [P] [US3] Implement `build_ladder()` in `src/memoratum/eval_latency.py` — ≥3 sizes, all on ONE side of `PREFILTER_MIN_CANDIDATES = 512`, or pin `MEMORATUM_SEARCH_PREFILTER_MIN` per size and record it
+- [X] T063 [US3] Implement `time_phase()` in `src/memoratum/eval_latency.py` — wraps `sample_ms` and records `samples_ms`, `median_ms`, `p95_ms`, `us_per_chunk`, `prefilter_engaged`
+- [X] T064 [US3] Implement `evaluate_latency()` in `src/memoratum/eval_latency.py` — all FOUR phases reported separately: ingest, embed, index, retrieve (FR-004)
+- [X] T065 [US3] Implement `gate_latency()` in `src/memoratum/eval_latency.py` — primary gate `us_per_chunk(4N) < 1.5 × us_per_chunk(N)`; secondary smoke bound `median_of_30 ≤ baseline × 1.40`
+- [X] T066 [US3] Verify NO remote embedder is inside any timed region in `src/memoratum/eval_latency.py` — network jitter (100 ms ± 80 ms) dwarfs everything measured (invariant L5, FR-011)
+- [X] T067 [US3] Verify harness bookkeeping stays OUTSIDE timed regions in `src/memoratum/eval_latency.py` — the naive grounding scan costs 51.6 ms/query against a 13 ms retrieval (invariant L6)
+- [X] T068 [US3] Implement CLI `main()` in `src/memoratum/eval_latency.py` with `--ladder` (100,400,1600,6400), `--samples` (30), `--warmup` (5), `--pin-prefilter`, `--phases`, `--baseline`, `--out-md`, `--out-json`
+- [X] T069 [US3] Emit `eval/RESULTS-latency.md` and `eval/latency.json`; record baseline rows WITH hardware in `eval/BASELINES.md`
 
 **Checkpoint**: US1, US2, US3 independently functional.
 

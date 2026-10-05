@@ -645,6 +645,34 @@ def _fmt(value: float | None) -> str:
     return f"{value:.3f}"
 
 
+def _load_baseline_rows(path: str) -> dict[str, dict[str, Any]]:
+    """Read every baseline row from a Markdown table, keyed by its ``axis`` column.
+
+    Shared with the latency axis, which needs a different figure per phase rather than
+    the single cost figure. Cells stay as strings so ``load_baseline`` performs the one
+    parse and the one hardware check.
+    """
+    if not path or not os.path.exists(path):
+        return {}
+    rows: dict[str, dict[str, Any]] = {}
+    header: list[str] | None = None
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            header = None
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if cells and cells[0] == "axis":
+            header = cells
+            continue
+        if not header or len(cells) != len(header):
+            continue
+        row = dict(zip(header, cells))
+        if row.get("axis"):
+            rows[row["axis"]] = row
+    return rows
+
+
 def _load_baseline(path: str, figure: str) -> dict[str, Any] | None:
     """Read one row from an ``eval/BASELINES.md`` cost table."""
     if not path or not os.path.exists(path):

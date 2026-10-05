@@ -53,7 +53,21 @@ COST_UNITS = frozenset({"chars", "ws_tokens"})
 
 # Figures whose meaning is hardware-bound, so a baseline for them is invalid without
 # recorded hardware (B1, FR-008). Cost in characters is portable and needs none.
-HARDWARE_BOUND_FIGURES = frozenset({"median_ms", "us_per_chunk", "us_per_chunk_ratio"})
+#:
+# The per-phase names matter as much as the bare ones: the latency axis keys its baselines
+# "<phase>_median_ms" (retrieve_median_ms, index_median_ms, ...), and listing only
+# "median_ms" let every one of them bypass the hardware requirement entirely.
+HARDWARE_BOUND_FIGURES = frozenset(
+    {
+        "median_ms",
+        "us_per_chunk",
+        "us_per_chunk_ratio",
+        "ingest_median_ms",
+        "embed_median_ms",
+        "index_median_ms",
+        "retrieve_median_ms",
+    }
+)
 
 HARDWARE_KEYS = ("cpu", "cores", "ram_mb", "python", "platform")
 
@@ -608,7 +622,9 @@ def load_baseline(
     (B1, B3). The hardware rule is applied from the *figure name* rather than a
     caller-supplied ``kind`` string, so it cannot be bypassed by omitting a field.
     """
-    if not row:
+    if not row or not isinstance(row, dict):
+        # A baseline is a mapping. A bare number or None is not a baseline, and reaching
+        # for .get() on it would raise AttributeError mid-gate rather than failing it.
         return None
     name = figure or str(row.get("axis", "") or "")
     # A row whose own axis disagrees with the requested figure is rejected outright.
