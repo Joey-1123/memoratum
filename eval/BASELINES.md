@@ -28,10 +28,11 @@ Recall and MRR are report-only and are **not** gated.
 
 ## Cost baselines
 
-_Populated by T052._
+Populated by T052 — 2026-10-05.
 
 | axis | figure | tolerance | corpus | seed | mode | hardware | command |
 |---|---|---|---|---|---|---|---|
+| retrieved_chars_mean | 28469.0 | 0.10 | longmemeval-s (n=4, prefix 20) | 42 | hybrid | n/a | `uv run python -m memoratum.eval_cost --data data/longmemeval_s_cleaned.json --n 4 --k 5,10` |
 
 ## Latency baselines
 
@@ -48,7 +49,7 @@ _Populated by T069._
 |---|---|---|
 | A | Foundational | n/a |
 | B | Isolation | gate is an absolute count — no baseline needed |
-| C | Cost | not yet measured |
+| C | Cost | **measured** — see cost table |
 | D | Latency | not yet measured |
 | E | Grounding | gate is `grounded_fraction == 1.0` — no baseline needed |
 | F | Reproducibility | n/a |

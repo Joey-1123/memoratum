@@ -486,8 +486,11 @@ def main(argv: list[str] | None = None) -> int:
     projects = _project_names(args.projects)
     ks = iter_ints(args.k)
     limit = max(ks, default=10)
-    directory = tempfile.mkdtemp(prefix="memoratum-isolation-")
-    conn = db_module.connect(os.path.join(directory, "isolation.db"))
+    # TemporaryDirectory, matching eval_longmemeval and eval_cost: a bare mkdtemp leaks
+    # for the life of the process, and a suite that runs this axis repeatedly is enough
+    # to fill /tmp.
+    directory = tempfile.TemporaryDirectory(prefix="memoratum-isolation-")
+    conn = db_module.connect(os.path.join(directory.name, "isolation.db"))
     try:
         corpus = build_scoped_corpus(
             conn,
@@ -524,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         self_check = None
         if args.require_clean:
             self_check = run_self_check(
-                db_module.connect(os.path.join(directory, "selfcheck.db")),
+                db_module.connect(os.path.join(directory.name, "selfcheck.db")),
                 projects=projects,
                 docs_per_project=min(args.sessions_per_project, 8),
                 container_tag=args.container_tag,
@@ -551,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_GATE_FAILED if result["gate"]["status"] == FAIL else EXIT_OK
     finally:
         conn.close()
+        directory.cleanup()
 
 
 if __name__ == "__main__":

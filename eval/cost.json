@@ -1,0 +1,67 @@
+{
+  "axis": "cost",
+  "schema": "memoratum-eval-axes-v1",
+  "manifest": {
+    "schema": "longmemeval-scoped-v2",
+    "seed": 42,
+    "requested_n": 4,
+    "n": 4,
+    "ks": [
+      5,
+      10
+    ],
+    "modes": [
+      "hybrid"
+    ],
+    "embedder": "HashEmbedder:64",
+    "vector_store": "SQLiteVectorStore",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "cost_config": {
+      "unit": "chars",
+      "chars_per_ws_token": 6.264242518968635,
+      "mean_chunks_per_document": 7.298867924528302,
+      "retrieval_limit": 20,
+      "tokenizer": null
+    }
+  },
+  "cost": {
+    "queries": 4,
+    "hits": 80.0,
+    "returned_hits": 80.0,
+    "unit": "chars",
+    "retrieved_chars_total": 113876,
+    "retrieved_chars_mean": 28469.0,
+    "retrieved_chars_p95": 28956.1,
+    "retrieved_chars_median": 28408.5,
+    "retrieved_ws_tokens_total": 18521,
+    "retrieved_ws_tokens_mean": 4630.25,
+    "retrieved_ws_tokens_p95": 4738.9,
+    "retrieved_total": 113876.0,
+    "retrieved_mean": 28469.0,
+    "retrieved_p95": 28956.1,
+    "chars_per_ws_token": 6.264242518968635,
+    "token_estimate_mean": 4544.683561307462,
+    "token_estimate_caveat": "derived from the corpus-measured chars_per_ws_token; valid only as a ratio between runs on the same corpus, not as an absolute token count",
+    "tokenizer": null,
+    "redundant_hits": 21.0,
+    "duplicate_source_rows": 14.0,
+    "per_query_chars": [
+      29035.0,
+      28308.0,
+      28024.0,
+      28509.0
+    ]
+  },
+  "gate": {
+    "status": "pass",
+    "checks": [
+      {
+        "name": "retrieved_chars_mean",
+        "status": "pass",
+        "value": 28469.0,
+        "bound": 31315.9,
+        "delta": 0.0
+      }
+    ]
+  }
+}

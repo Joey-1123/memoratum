@@ -129,25 +129,25 @@ characters per query against a committed baseline.
 
 ### Tests for User Story 2 ⚠️ write FIRST, watch them fail
 
-- [ ] T037 [P] [US2] Failing test: a retrieval returning N hits reports `retrieved_chars_mean`, `retrieved_chars_p95`, `retrieved_chars_total` (FR-003) in `tests/test_eval_cost.py`
-- [ ] T038 [P] [US2] Failing test: two configs returning the SAME gold sessions but differing cost attribute the difference to `redundant_hits` (US2 scenario 2) in `tests/test_eval_cost.py`
-- [ ] T039 [P] [US2] Failing test: `--cost-unit bytes` is REJECTED — bytes is not an offered unit (invariant C1: bytes inflate 1.1–3x on non-ASCII with nothing visible in the report) in `tests/test_eval_cost.py`
-- [ ] T040 [P] [US2] Failing test: `chars_per_ws_token` is MEASURED from the corpus and written to the manifest, never hardcoded; a hardcoded 4.0 must be absent (invariant C2) in `tests/test_eval_cost.py`
-- [ ] T041 [P] [US2] Failing test: `token_estimate_mean` carries the caveat string that it is valid only as a ratio between runs on the same corpus (invariant C3) in `tests/test_eval_cost.py`
-- [ ] T042 [P] [US2] Failing test: the gated figure is IDENTICAL whether or not a tokenizer is configured — tokenizer presence must never change the gated metric (invariant C6, FR-007) in `tests/test_eval_cost.py`
-- [ ] T043 [US2] Failing test: a cost regression beyond tolerance fails the gate AND reports a non-zero `delta` — a failure with no delta does not satisfy SC-005 in `tests/test_eval_cost.py`
-- [ ] T044 [P] [US2] Failing test: a missing baseline yields exit code 2, NOT a silent pass (invariants B3, M3) in `tests/test_eval_cost.py`
+- [X] T037 [P] [US2] Failing test: a retrieval returning N hits reports `retrieved_chars_mean`, `retrieved_chars_p95`, `retrieved_chars_total` (FR-003) in `tests/test_eval_cost.py`
+- [X] T038 [P] [US2] Failing test: two configs returning the SAME gold sessions but differing cost attribute the difference to `redundant_hits` (US2 scenario 2) in `tests/test_eval_cost.py`
+- [X] T039 [P] [US2] Failing test: `--cost-unit bytes` is REJECTED — bytes is not an offered unit (invariant C1: bytes inflate 1.1–3x on non-ASCII with nothing visible in the report) in `tests/test_eval_cost.py`
+- [X] T040 [P] [US2] Failing test: `chars_per_ws_token` is MEASURED from the corpus and written to the manifest, never hardcoded; a hardcoded 4.0 must be absent (invariant C2) in `tests/test_eval_cost.py`
+- [X] T041 [P] [US2] Failing test: `token_estimate_mean` carries the caveat string that it is valid only as a ratio between runs on the same corpus (invariant C3) in `tests/test_eval_cost.py`
+- [X] T042 [P] [US2] Failing test: the gated figure is IDENTICAL whether or not a tokenizer is configured — tokenizer presence must never change the gated metric (invariant C6, FR-007) in `tests/test_eval_cost.py`
+- [X] T043 [US2] Failing test: a cost regression beyond tolerance fails the gate AND reports a non-zero `delta` — a failure with no delta does not satisfy SC-005 in `tests/test_eval_cost.py`
+- [X] T044 [P] [US2] Failing test: a missing baseline yields exit code 2, NOT a silent pass (invariants B3, M3) in `tests/test_eval_cost.py`
 
 ### Implementation for User Story 2
 
-- [ ] T045 [P] [US2] Implement `measure_chars_per_ws_token()` in `src/memoratum/eval_cost.py` — measure on the corpus, record in `cost_config`
-- [ ] T046 [P] [US2] Implement `count_redundant_hits()` in `src/memoratum/eval_cost.py` — hits duplicating an already-counted source row, resolved by `Attribution`
-- [ ] T047 [US2] Implement `evaluate_cost()` in `src/memoratum/eval_cost.py` — emit all `cost_config` and `cost` fields per contracts §2.3
-- [ ] T048 [US2] Implement `gate_cost()` in `src/memoratum/eval_cost.py` — fail when `retrieved_chars_mean > baseline × (1 + tolerance)`, reporting `delta`
-- [ ] T049 [US2] Implement CLI `main()` in `src/memoratum/eval_cost.py` with `--data`, `--n` (20), `--seed` (42), `--k`, `--baseline`, `--cost-unit` (chars|ws_tokens), `--measure-ratio`, `--out-md`, `--out-json`
-- [ ] T050 [US2] Load the corpus via a STREAMING reader for the ratio probe in `src/memoratum/eval_cost.py` — `eval_datasets.load_records` reads the 277 MB file as one string and OOMs on small hosts (see quickstart §1.4)
-- [ ] T051 [US2] Verify the retrieval budget stays `max(2*max(ks), 10)` and is NOT inflated in `src/memoratum/eval_longmemeval.py` — the budget existed to feed the old metric; inflating it now would mask a real signal (invariant C5)
-- [ ] T052 [US2] Emit `eval/RESULTS-cost.md` and `eval/cost.json`; record the baseline row with corpus, seed, mode and hardware in `eval/BASELINES.md`
+- [X] T045 [P] [US2] Implement `measure_chars_per_ws_token()` in `src/memoratum/eval_cost.py` — measure on the corpus, record in `cost_config`
+- [X] T046 [P] [US2] Implement `count_redundant_hits()` in `src/memoratum/eval_cost.py` — hits duplicating an already-counted source row, resolved by `Attribution`
+- [X] T047 [US2] Implement `evaluate_cost()` in `src/memoratum/eval_cost.py` — emit all `cost_config` and `cost` fields per contracts §2.3
+- [X] T048 [US2] Implement `gate_cost()` in `src/memoratum/eval_cost.py` — fail when `retrieved_chars_mean > baseline × (1 + tolerance)`, reporting `delta`
+- [X] T049 [US2] Implement CLI `main()` in `src/memoratum/eval_cost.py` with `--data`, `--n` (20), `--seed` (42), `--k`, `--baseline`, `--cost-unit` (chars|ws_tokens), `--measure-ratio`, `--out-md`, `--out-json`
+- [X] T050 [US2] Load the corpus via a STREAMING reader for the ratio probe in `src/memoratum/eval_cost.py` — `eval_datasets.load_records` reads the 277 MB file as one string and OOMs on small hosts (see quickstart §1.4)
+- [X] T051 [US2] Verify the retrieval budget stays `max(2*max(ks), 10)` and is NOT inflated in `src/memoratum/eval_longmemeval.py` — the budget existed to feed the old metric; inflating it now would mask a real signal (invariant C5)
+- [X] T052 [US2] Emit `eval/RESULTS-cost.md` and `eval/cost.json`; record the baseline row with corpus, seed, mode and hardware in `eval/BASELINES.md`
 
 **Checkpoint**: US1 and US2 independently functional.
 

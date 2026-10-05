@@ -19,12 +19,34 @@ import tempfile
 
 import pytest
 
+_TEMP_ROOTS: list[tempfile.TemporaryDirectory] = []
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _cleanup_temp_roots():
+    """Remove every temp dir these tests create.
+
+    Without this, each ``mkdtemp`` call leaks a directory for the life of the process.
+    Across the four axis suites that reached ~5,000 directories and filled ``/tmp``,
+    which made unrelated tests fail with I/O errors and truncated a source file mid-write.
+    """
+    yield
+    while _TEMP_ROOTS:
+        _TEMP_ROOTS.pop().cleanup()
+
+
+def _tempdir(prefix: str) -> str:
+    """A temp dir registered for cleanup at module teardown."""
+    holder = tempfile.TemporaryDirectory(prefix=prefix)
+    _TEMP_ROOTS.append(holder)
+    return holder.name
+
 
 def _db():
     """Fresh migrated temp database. ``db.connect`` already sets ``sqlite3.Row``."""
     from memoratum import db
 
-    return db.connect(os.path.join(tempfile.mkdtemp(prefix="memoratum-axes-"), "axes.db"))
+    return db.connect(os.path.join(_tempdir("memoratum-axes-"), "axes.db"))
 
 
 def _hw():
