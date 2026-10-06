@@ -149,9 +149,20 @@ def test_manifest_records_the_measured_ratio_and_retrieval_budget() -> None:
 
 
 def test_manifest_validates() -> None:
-    from memoratum.eval_axes import validate_manifest
+    """The manifest the cost axis emits must satisfy its own validator.
 
-    validate_manifest(_evaluate()["manifest"])
+    Paired with a rejection: an "accepted" test passes even if `validate_manifest` were a
+    no-op, so the acceptance is only meaningful next to proof that a tampered manifest is
+    refused.
+    """
+    from memoratum.eval_axes import ManifestError, validate_manifest
+
+    manifest = _evaluate()["manifest"]
+    validate_manifest(manifest)
+
+    tampered = {**manifest, "cost_config": {**manifest["cost_config"], "unit": "bytes"}}
+    with pytest.raises(ManifestError, match="unit"):
+        validate_manifest(tampered)
 
 
 # --- T038: redundancy explains a cost difference ---------------------------------

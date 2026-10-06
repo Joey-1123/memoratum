@@ -622,15 +622,25 @@ must not lower it.
 Every SC maps to a command and an observable result. Any row that cannot be
 executed means that criterion is unverified, not passing.
 
-| SC | Criterion | Verify with | Pass signal |
+**Executed on 2026-10-05 against `main` after all five stories landed.** Where a criterion
+is enforced by a test, the test is named — a criterion described only in prose is not
+verified, it is asserted.
+
+| SC | Criterion | Verify with | Observed |
 |---|---|---|---|
-| **SC-001** | Two projects → leak count `0`; an injected leak → non-zero and fails | §2, §2.1 | `leaked_hits: 0`, exit `0`; self-check exit `0` after detecting its injection; manual leak → exit `1` with `leaks_detail` populated |
-| **SC-002** | Every results file under `eval/` reports all four axes alongside recall and MRR | `uv run python -m memoratum.eval_longmemeval --data data/longmemeval_s_cleaned.json --n 10 --scope both --latency-baseline eval/BASELINES.md --cost-baseline eval/BASELINES.md` | emitted Markdown contains `partial-R@k`, `MRR`, an isolation block, a cost block, a latency block and a grounding block for the same run |
-| **SC-003** | Re-running a committed results command reproduces its metric values and manifest on the recorded hardware | §7b | re-run diff over the manifest is empty; metric values match |
-| **SC-004** | A latency regression beyond tolerance fails CI and names the phase | §4 then inject a 20 ms sleep into one phase, re-run | exit `1`, and `gate.checks[].phase` names `index` (not just "failed") |
-| **SC-005** | A cost regression beyond tolerance fails CI and reports the delta | `uv run python -m memoratum.eval_cost --baseline eval/BASELINES.md`, then tighten `--retrieval-limit` upward | exit `1` and `gate.checks[].delta` is present and non-zero — a failure that reports no delta does not satisfy SC-005 |
-| **SC-006** | Runs with SQLite only, no provider extra, no data leaving the host | §7c | completes with the provider extras **uninstalled**; `scripts/check_no_telemetry.py` clean; zero outbound connections |
-| **SC-007** | An added ungrounded document is detected and reported | §5.1 | self-check exit `0` after detection; manual injection → `grounded_fraction < 1.0` and a populated `ungrounded[]` |
+| **SC-001** | Two projects → leak count `0`; an injected leak → non-zero and fails | §2, §2.1 · `tests/test_eval_isolation.py` | `leaked_hits: 0`, exit `0`; self-check exit `0` after detecting its injection; a wrapped `search()` that ignores `project_id` gives `leaked_hits = 6`, exit `1`, with `leaks_detail` populated |
+| **SC-002** | Every results file under `eval/` reports all four axes alongside recall and MRR | `python -m memoratum.eval_results …` · `tests/test_eval_results_rollup.py` | `eval/RESULTS.md` emitted, exit `0`, all four axes plus `partial-R@k` and `MRR`; marked **NOT COMPARABLE** per row because the axes legitimately run different configurations |
+| **SC-003** | Re-running a committed results command reproduces its manifest and metric values | §8.1 · `tests/test_eval_docs_conformance.py` | every `RESULTS-*.md` embeds a runnable `python -m memoratum.<axis> …` line; each axis's embedded command is **re-executed verbatim** by the test suite, not merely parsed |
+| **SC-004** | A latency regression beyond tolerance fails CI and names the phase | §4 · `tests/test_eval_latency.py` | the negative control in `.github/workflows/eval-axes.yml` asserts a 5-sample run is **refused** (`latency_config.samples is below the floor of 120`), and every gate check carries a `phase` and a non-null `bound` |
+| **SC-005** | A cost regression beyond tolerance fails CI and reports the delta | `python -m memoratum.eval_cost --baseline eval/BASELINES.md` · `tests/test_eval_cost.py` | `retrieved_chars_mean = 28469.0`, bound `31315.9`, `delta = 0.0`, exit `0`; a **missing** baseline exits non-zero (B3), which is the negative control |
+| **SC-006** | Runs with SQLite only, no provider extra, no data leaving the host | §8.2 · `tests/test_eval_offline.py` | all four axes complete with `socket.socket` raising; the blocker is itself proven to block; `openai` and `qdrant-client` **are installed**, so this is not vacuous; `check_no_telemetry.py` clean; `git ls-files data/` empty |
+| **SC-007** | An added ungrounded document is detected and reported | §5.1 · `tests/test_eval_grounding.py` | self-check `detected: True`, `injected_ungrounded: 1`, `false_positives: 0`, exit `0`; a detector forced to report everything grounded exits `2`, and one forced to report everything ungrounded also exits `2` |
+
+**Two rows needed implementation rather than verification.** SC-002 had no aggregator at all
+— `eval_compare` compared two files, and nothing assembled the six figures — so
+`memoratum.eval_results` was built. SC-003 had six committed results files carrying no
+command, so `write_artifacts(argv=…)` was added to every axis. Both were marked complete in
+`tasks.md` before they existed; the marker was wrong, not the plan.
 
 ### 8.1. Reproducibility re-run (SC-003)
 

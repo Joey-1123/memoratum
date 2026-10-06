@@ -55,7 +55,7 @@ def test_contract_default_ladder_is_accepted_by_the_validator() -> None:
     and the axis would refuse its own documented invocation. This test is the guard that
     keeps the contract and the code in agreement.
     """
-    from memoratum.eval_axes import build_manifest
+    from memoratum.eval_axes import ManifestError, build_manifest
 
     ladder = _documented_ladder()
     build_manifest(
@@ -69,6 +69,31 @@ def test_contract_default_ladder_is_accepted_by_the_validator() -> None:
         data_sha256="x",
         latency_config={"samples": 120, "warmup": 5, "ladder": ladder, "hardware": _hardware()},
     )
+
+    # Paired with its own rejection. `build_manifest` raising is the only way this test
+    # can fail, and a validator that never raised would pass it silently — so the same
+    # call is made with a straddling ladder and MUST be refused. If the acceptance above
+    # ever becomes vacuous, this is what notices.
+    from memoratum.search import prefilter_min_candidates
+
+    threshold = prefilter_min_candidates()
+    with pytest.raises(ManifestError, match="straddles the prefilter threshold"):
+        build_manifest(
+            seed=42,
+            requested_n=1,
+            n=1,
+            ks=[5],
+            modes=["hybrid"],
+            embedder="HashEmbedder:64",
+            vector_store="SQLiteVectorStore",
+            data_sha256="x",
+            latency_config={
+                "samples": 120,
+                "warmup": 5,
+                "ladder": [100, threshold - 1, threshold + 1],
+                "hardware": _hardware(),
+            },
+        )
 
 
 def test_contract_default_ladder_meets_the_fr004_minimum() -> None:

@@ -823,13 +823,25 @@ def test_manifest_records_scope_config() -> None:
 
 
 def test_manifest_validates() -> None:
+    """The manifest the isolation axis emits must satisfy its own validator.
+
+    Paired with a rejection: an "accepted" test passes even if `validate_manifest` were a
+    no-op, so the acceptance is only meaningful next to proof that a tampered manifest is
+    refused.
+    """
     conn = _db()
     try:
-        from memoratum.eval_axes import validate_manifest
+        from memoratum.eval_axes import ManifestError, validate_manifest
 
-        validate_manifest(
-            _evaluate(conn, scoped=("proj-a", "proj-b"), unscoped_queries=0)["manifest"]
-        )
+        manifest = _evaluate(conn, scoped=("proj-a", "proj-b"), unscoped_queries=0)["manifest"]
+        validate_manifest(manifest)
+
+        tampered = {
+            **manifest,
+            "scope_config": {**manifest["scope_config"], "projects": ["only-one"]},
+        }
+        with pytest.raises(ManifestError):
+            validate_manifest(tampered)
     finally:
         conn.close()
 

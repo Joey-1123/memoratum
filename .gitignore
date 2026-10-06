@@ -19,6 +19,9 @@ data/
 *.db
 *.sqlite*
 
+# CI scratch directory for the eval axes (uploaded as an artifact, never committed)
+eval-ci/
+
 # local-only working notes (never commit)
 docs/RESEARCH.md
 
