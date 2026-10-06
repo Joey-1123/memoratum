@@ -280,15 +280,29 @@ def test_every_committed_results_file_states_how_to_regenerate_it_or_says_it_can
 
 
 def test_a_results_file_with_a_command_also_records_the_seed_and_data() -> None:
-    """A command without its inputs is half a command."""
+    """A *measuring* command must pin its sample.
+
+    `eval_results` is exempt: it aggregates result files that were already measured, so it
+    has no sample of its own to pin. Demanding one there would have meant adding a flag
+    that does nothing.
+    """
     for path in _results_files():
         text = _read(path)
         argv = _extract_command(text)
         if not argv:
             continue
+        module = next((p for p in argv if "memoratum.eval_" in p), "")
+        # A command that *measures* must pin its sample; a command that *aggregates* already-
+        # measured result files measures nothing itself and has no sample to pin. Conflating
+        # the two would have forced a meaningless --seed onto eval_results.
+        if module.endswith("eval_results"):
+            # The aggregator names the files it consumed; asserting that is what makes the
+            # record checkable rather than a bare module name.
+            assert sum(1 for part in argv if part.endswith(".json")) >= 4, argv
+            continue
         assert "--seed" in argv or "--ladder" in argv or "--full" in argv, (
-            f"{os.path.basename(path)} embeds a command with no --seed, so it cannot be "
-            "reproduced exactly"
+            f"{os.path.basename(path)} embeds a measuring command with no --seed, so it "
+            "cannot be reproduced exactly"
         )
 
 

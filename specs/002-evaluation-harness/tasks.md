@@ -262,14 +262,32 @@ and metric values.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T100 [P] Add the four axis commands to the CI gate list in `.github/workflows/` — each must fail the build on regression
-- [ ] T101 [P] Run the full gate suite verbatim from `.specify/memory/constitution.md` and record each result in the PR body: telemetry check, mem0 subset with `--no-cov`, `ruff check`, `ruff format --check`, `pytest -q`, `npm test --prefix clients/ts`, `node --check`, dashboard `npm ci` + build
-- [ ] T102 [P] Confirm coverage floor not lowered and no new suppressions: `uv run python scripts/check_coverage_floor.py` and `uv run python scripts/check_no_new_suppressions.py`
-- [ ] T103 Verify SQLite-only operation with NO provider extra installed (SC-006): run each axis where the provider extras are absent, confirm no `MEMORATUM_EMBEDDING_PROVIDER` is read, no API key is touched and no outbound socket opens, then run `uv run python scripts/check_no_telemetry.py`
-- [ ] T104 [P] Verify no benchmark data leaves the host: `data/` still holds only `download.log` (FR-010)
-- [ ] T105 [P] Delete any test that cannot fail; audit `tests/test_eval_isolation.py`, `tests/test_eval_cost.py`, `tests/test_eval_latency.py` and `tests/test_eval_grounding.py`. Every axis keeps its falsifiability test
-- [ ] T106 [P] Validate against `specs/002-evaluation-harness/quickstart.md` §8 — every SC row has an executed command and an observed result
-- [ ] T107 Record Phase C (HotPotQA evidence retrieval) as NOT started in `specs/002-evaluation-harness/tasks.md` — deferred until US1–US5 are merged and green
+- [X] T100 [P] Add the four axis commands to the CI gate list in `.github/workflows/` — each must fail the build on regression — each axis runs in `.github/workflows/eval-axes.yml` with its own self-check, plus five negative controls proving every gate can still fail
+- [X] T101 [P] Run the full gate suite verbatim from `.specify/memory/constitution.md` and record each result in the PR body: telemetry check, mem0 subset with `--no-cov`, `ruff check`, `ruff format --check`, `pytest -q`, `npm test --prefix clients/ts`, `node --check`, dashboard `npm ci` + build — all eight constitution gates run verbatim; `pip-audit --local` and `npm audit` are UNVERIFIED locally (not installed / no lockfile)
+- [X] T102 [P] Confirm coverage floor not lowered and no new suppressions: `uv run python scripts/check_coverage_floor.py` and `uv run python scripts/check_no_new_suppressions.py` — floor 74 -> 74; `no_cover` 2 -> 2; skips 2 -> 2
+- [X] T103 Verify SQLite-only operation with NO provider extra installed (SC-006): run each axis where the provider extras are absent, confirm no `MEMORATUM_EMBEDDING_PROVIDER` is read, no API key is touched and no outbound socket opens, then run `uv run python scripts/check_no_telemetry.py` — `tests/test_eval_offline.py`: every axis runs with `socket.socket` raising, plus a negative control proving the blocker can block; `openai`/`qdrant-client` confirmed installed so this is not vacuous
+- [X] T104 [P] Verify no benchmark data leaves the host: `data/` still holds only `download.log` (FR-010) — `git ls-files data/` is empty and every local file under `data/` is confirmed gitignored
+- [X] T105 [P] Delete any test that cannot fail; audit `tests/test_eval_isolation.py`, `tests/test_eval_cost.py`, `tests/test_eval_latency.py` and `tests/test_eval_grounding.py`. Every axis keeps its falsifiability test — six assertion-less tests paired with their own rejections; no assertion-less test remains
+- [X] T106 [P] Validate against `specs/002-evaluation-harness/quickstart.md` §8 — every SC row has an executed command and an observed result — every SC row executed; SC-003, SC-006, SC-007 and SC-002 now have tests rather than prose
+- [X] T107 Record Phase C (HotPotQA evidence retrieval) as NOT started in `specs/002-evaluation-harness/tasks.md` — see the Phase C status block below
+
+### Phase C status — HotPotQA evidence retrieval: **NOT STARTED**
+
+Deferred deliberately, and recorded here rather than dropped, because an unmentioned
+deferred phase reads as an oversight.
+
+- **Scope if resumed: evidence retrieval only.** HotPotQA would supply multi-hop
+  supporting facts, which the current harnesses have no way to grade. It is **not** a
+  replacement for the recall suites.
+- **Not started.** No HotPotQA runner, fixture, or result file exists. No task in the list
+  above belongs to it.
+- **Resume condition:** US1–US5 merged and green. As of this commit all five are merged
+  (`main` at the reproducibility merge) and the suite is green, so the condition is met —
+  but resuming Phase C is a separate decision, not a consequence of this one.
+- **Rejected during planning, recorded so it is not relitigated:** BEAM. It is graded
+  100% by an LLM judge, which fails the spec's own conditional that a new dataset must be
+  deterministically gradeable and dependency-free. HotPotQA was admitted to `spec.md`
+  for evidence retrieval only, as deferred Phase C.
 
 ---
 

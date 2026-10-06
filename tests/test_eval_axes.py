@@ -489,8 +489,13 @@ def test_ladder_straddling_the_prefilter_threshold_is_rejected() -> None:
 
 
 def test_pinning_the_prefilter_allows_a_straddling_ladder() -> None:
-    """L7's documented alternative: pin the threshold and record it."""
-    from memoratum.eval_axes import validate_manifest
+    """L7's documented alternative: pin the threshold and record it.
+
+    Paired with its own rejection. An "accepted" test with no assertion passes even if
+    `validate_manifest` were a no-op, so the acceptance here is only meaningful next to
+    proof that the same ladder is refused when `prefilter_min` is absent.
+    """
+    from memoratum.eval_axes import ManifestError, validate_manifest
     from memoratum.search import prefilter_min_candidates
 
     threshold = prefilter_min_candidates()
@@ -503,6 +508,11 @@ def test_pinning_the_prefilter_allows_a_straddling_ladder() -> None:
         "hardware": _hw(),
     }
     validate_manifest(manifest)
+
+    unpinned = {**manifest, "latency_config": {**manifest["latency_config"]}}
+    del unpinned["latency_config"]["prefilter_min"]
+    with pytest.raises(ManifestError, match="straddles the prefilter threshold"):
+        validate_manifest(unpinned)
 
 
 def test_cost_config_rejects_bytes_and_unknown_units() -> None:
@@ -1147,7 +1157,7 @@ def test_collected_hardware_satisfies_its_own_validator() -> None:
     latency axis either crashes or has to hand-roll a fake. This is the round trip that
     catches a `0` or a bogus CPU string escaping into a committed artifact.
     """
-    from memoratum.eval_axes import build_manifest, collect_hardware
+    from memoratum.eval_axes import ManifestError, build_manifest, collect_hardware
 
     hardware = collect_hardware()
     build_manifest(
@@ -1166,6 +1176,28 @@ def test_collected_hardware_satisfies_its_own_validator() -> None:
             "hardware": hardware,
         },
     )
+
+    # Paired with its own rejection. The acceptance above can only fail by raising, so a
+    # validator that stopped checking hardware entirely would pass it silently. Handing it
+    # the same manifest with `ram_mb: 0` proves the check is live (B1: zero means the
+    # figure was never measured).
+    with pytest.raises(ManifestError, match="ram_mb"):
+        build_manifest(
+            seed=1,
+            requested_n=1,
+            n=1,
+            ks=[5],
+            modes=["hybrid"],
+            embedder="HashEmbedder:64",
+            vector_store="SQLiteVectorStore",
+            data_sha256="x",
+            latency_config={
+                "samples": 120,
+                "warmup": 5,
+                "ladder": [100, 200, 400],
+                "hardware": {**hardware, "ram_mb": 0},
+            },
+        )
 
 
 def test_collected_hardware_reports_a_measurable_cpu() -> None:

@@ -242,7 +242,11 @@ def evaluate_isolation(
         ks=list(ks),
         modes=["scoped-probe"],
         embedder=embedder_label(HashEmbedder(dims=64)),
-        vector_store="SQLiteVectorStore",
+        # Honest label, matching the cost axis: `search()` is called with no vector_store
+        # factory here, so the in-process SQLite scan runs. Claiming "SQLiteVectorStore"
+        # would make this manifest compare as equal to one measured against the real store
+        # while a different code path produced it (M2 hard-compares this field).
+        vector_store="sqlite",
         data_sha256="synthetic-scoped-corpus",
         scope_config=corpus.scope_config(),
     )

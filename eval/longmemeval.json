@@ -1,0 +1,842 @@
+{
+  "dataset": "longmemeval-s",
+  "manifest": {
+    "schema": "longmemeval-scoped-v2",
+    "seed": 42,
+    "requested_n": 10,
+    "n": 10,
+    "ks": [
+      5,
+      10
+    ],
+    "modes": [
+      "hybrid",
+      "documents"
+    ],
+    "embedder": "HashEmbedder:64",
+    "vector_store": "sqlite",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "scope_config": {
+      "project_count": 2,
+      "scope": "both",
+      "project_ids": [
+        "proj-0",
+        "proj-1"
+      ],
+      "scoped_queries": 20,
+      "unscoped_queries": 20,
+      "unscoped_cross_scope_hits": 198,
+      "leaked_hits": 0,
+      "documents_per_question": 96
+    },
+    "baseline_sources": {}
+  },
+  "questions": [
+    {
+      "id": "gpt4_4edbafa2",
+      "type": "temporal-reasoning",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_0a00c163_1",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::22be78fc_2",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::86c505e7_1",
+            "proj-0::answer_0a00c163_1",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::4a006b77",
+            "proj-0::sharegpt_jZOf9E5_21",
+            "proj-0::c620a59e",
+            "proj-0::910ed479_2",
+            "proj-0::725f95e1",
+            "proj-0::725f95e1",
+            "proj-0::7a7a4bf0_3",
+            "proj-0::725f95e1",
+            "proj-0::f0b803b0_4",
+            "proj-0::0396e38f",
+            "proj-0::18c0af9c",
+            "proj-0::eb336de0_4"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_0a00c163_1",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::22be78fc_2",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::86c505e7_1",
+            "proj-0::answer_0a00c163_1",
+            "proj-0::answer_0a00c163_2",
+            "proj-0::4a006b77",
+            "proj-0::sharegpt_jZOf9E5_21",
+            "proj-0::c620a59e",
+            "proj-0::910ed479_2",
+            "proj-0::725f95e1",
+            "proj-0::725f95e1",
+            "proj-0::7a7a4bf0_3",
+            "proj-0::725f95e1",
+            "proj-0::f0b803b0_4",
+            "proj-0::0396e38f",
+            "proj-0::18c0af9c",
+            "proj-0::eb336de0_4"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "1faac195",
+      "type": "single-session-user",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 0.25,
+          "ranked_sessions": [
+            "proj-0::ultrachat_283922",
+            "proj-0::809cabca_4",
+            "proj-0::ultrachat_390439",
+            "proj-0::answer_d01949bf",
+            "proj-0::2def525b_2",
+            "proj-0::f2ccf83b",
+            "proj-0::9d3d54f7",
+            "proj-0::8064b6ca",
+            "proj-0::9e7fee16_3",
+            "proj-0::bcf6953d_3",
+            "proj-0::06fe8cfb_2",
+            "proj-0::bce91ca6",
+            "proj-0::d2905eb6_2",
+            "proj-0::94f460be_1",
+            "proj-0::8064b6ca",
+            "proj-0::ultrachat_1203",
+            "proj-0::067bbe0b",
+            "proj-0::b2543a58_3",
+            "proj-0::ultrachat_297461",
+            "proj-0::ultrachat_12436"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 0.25,
+          "ranked_sessions": [
+            "proj-0::ultrachat_283922",
+            "proj-0::809cabca_4",
+            "proj-0::ultrachat_390439",
+            "proj-0::answer_d01949bf",
+            "proj-0::2def525b_2",
+            "proj-0::f2ccf83b",
+            "proj-0::9d3d54f7",
+            "proj-0::8064b6ca",
+            "proj-0::9e7fee16_3",
+            "proj-0::bcf6953d_3",
+            "proj-0::06fe8cfb_2",
+            "proj-0::bce91ca6",
+            "proj-0::d2905eb6_2",
+            "proj-0::94f460be_1",
+            "proj-0::8064b6ca",
+            "proj-0::ultrachat_1203",
+            "proj-0::067bbe0b",
+            "proj-0::b2543a58_3",
+            "proj-0::ultrachat_297461",
+            "proj-0::ultrachat_12436"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.25,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.25,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "c960da58",
+      "type": "single-session-user",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_e05e4612",
+            "proj-0::5edfe253_2",
+            "proj-0::answer_e05e4612",
+            "proj-0::89d3053f",
+            "proj-0::ultrachat_279668",
+            "proj-0::412fdcf4_1",
+            "proj-0::sharegpt_i0nDinx_0",
+            "proj-0::ultrachat_374640",
+            "proj-0::7a389bd1_6",
+            "proj-0::124f5dc3_2",
+            "proj-0::319163dc",
+            "proj-0::sharegpt_SoyhGNj_0",
+            "proj-0::ultrachat_104156",
+            "proj-0::f01feb31",
+            "proj-0::b76006cb_3",
+            "proj-0::f01feb31",
+            "proj-0::answer_e05e4612",
+            "proj-0::705b5399_3",
+            "proj-0::f7ffddbc",
+            "proj-0::e32f5666_2"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_e05e4612",
+            "proj-0::5edfe253_2",
+            "proj-0::answer_e05e4612",
+            "proj-0::89d3053f",
+            "proj-0::ultrachat_279668",
+            "proj-0::412fdcf4_1",
+            "proj-0::sharegpt_i0nDinx_0",
+            "proj-0::ultrachat_374640",
+            "proj-0::7a389bd1_6",
+            "proj-0::124f5dc3_2",
+            "proj-0::319163dc",
+            "proj-0::sharegpt_SoyhGNj_0",
+            "proj-0::ultrachat_104156",
+            "proj-0::f01feb31",
+            "proj-0::b76006cb_3",
+            "proj-0::f01feb31",
+            "proj-0::answer_e05e4612",
+            "proj-0::705b5399_3",
+            "proj-0::f7ffddbc",
+            "proj-0::e32f5666_2"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "031748ae",
+      "type": "knowledge-update",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_8748f791_1",
+            "proj-0::answer_8748f791_2",
+            "proj-0::f9e54d9c",
+            "proj-0::c86a22a2_2",
+            "proj-0::ultrachat_493540",
+            "proj-0::31702c20_3",
+            "proj-0::f89f184e_1",
+            "proj-0::d0488050",
+            "proj-0::sharegpt_Ukl9zsG_0",
+            "proj-0::52bc942f_1",
+            "proj-0::7a085b95_1",
+            "proj-0::ultrachat_74296",
+            "proj-0::3620a0a3",
+            "proj-0::70764af1_4",
+            "proj-0::39a056ae",
+            "proj-0::52bc942f_1",
+            "proj-0::f9e54d9c",
+            "proj-0::sharegpt_BvuMJIh_0",
+            "proj-0::920fa36f",
+            "proj-0::d0488050"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_8748f791_1",
+            "proj-0::answer_8748f791_2",
+            "proj-0::f9e54d9c",
+            "proj-0::c86a22a2_2",
+            "proj-0::ultrachat_493540",
+            "proj-0::31702c20_3",
+            "proj-0::f89f184e_1",
+            "proj-0::d0488050",
+            "proj-0::sharegpt_Ukl9zsG_0",
+            "proj-0::52bc942f_1",
+            "proj-0::7a085b95_1",
+            "proj-0::ultrachat_74296",
+            "proj-0::3620a0a3",
+            "proj-0::70764af1_4",
+            "proj-0::39a056ae",
+            "proj-0::52bc942f_1",
+            "proj-0::f9e54d9c",
+            "proj-0::sharegpt_BvuMJIh_0",
+            "proj-0::920fa36f",
+            "proj-0::d0488050"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "caf03d32",
+      "type": "single-session-preference",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 0.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 0.0,
+          "ranked_sessions": [
+            "proj-0::b591b912_2",
+            "proj-0::sharegpt_B8UqvDB_4",
+            "proj-0::ultrachat_556968",
+            "proj-0::a52e072b",
+            "proj-0::ec806228",
+            "proj-0::4b1af06f_1",
+            "proj-0::0c6c9f4d",
+            "proj-0::0bab76de",
+            "proj-0::b591b912_2",
+            "proj-0::4374f9a6_2",
+            "proj-0::147e93c4",
+            "proj-0::ultrachat_420353",
+            "proj-0::0bab76de",
+            "proj-0::147e93c4",
+            "proj-0::ec806228",
+            "proj-0::a0b8b0ad_3",
+            "proj-0::sharegpt_kLAPfLd_0",
+            "proj-0::ultrachat_556968",
+            "proj-0::5b39cd66_1",
+            "proj-0::396238f9"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 0.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 0.0,
+          "ranked_sessions": [
+            "proj-0::b591b912_2",
+            "proj-0::sharegpt_B8UqvDB_4",
+            "proj-0::ultrachat_556968",
+            "proj-0::a52e072b",
+            "proj-0::ec806228",
+            "proj-0::4b1af06f_1",
+            "proj-0::0c6c9f4d",
+            "proj-0::0bab76de",
+            "proj-0::b591b912_2",
+            "proj-0::4374f9a6_2",
+            "proj-0::147e93c4",
+            "proj-0::ultrachat_420353",
+            "proj-0::0bab76de",
+            "proj-0::147e93c4",
+            "proj-0::ec806228",
+            "proj-0::a0b8b0ad_3",
+            "proj-0::sharegpt_kLAPfLd_0",
+            "proj-0::ultrachat_556968",
+            "proj-0::5b39cd66_1",
+            "proj-0::396238f9"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.2,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.2,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "81507db6",
+      "type": "multi-session",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 0.25,
+          "ranked_sessions": [
+            "proj-0::9071ba70_3",
+            "proj-0::1f1591b1",
+            "proj-0::sharegpt_xLtmCeT_0",
+            "proj-0::answer_da3c1266_4",
+            "proj-0::ultrachat_162129",
+            "proj-0::5c2f41a0_1",
+            "proj-0::sharegpt_tFAvE80_0",
+            "proj-0::efae71d5_1",
+            "proj-0::ultrachat_394537",
+            "proj-0::answer_da3c1266_1",
+            "proj-0::answer_da3c1266_1",
+            "proj-0::f74cc019",
+            "proj-0::058f17e5_1",
+            "proj-0::42fa05d3",
+            "proj-0::answer_da3c1266_3",
+            "proj-0::cbdbcfbc_1",
+            "proj-0::ultrachat_162129",
+            "proj-0::sharegpt_9d6fP4m_81",
+            "proj-0::e46a5384",
+            "proj-0::cbdbcfbc_1"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 0.25,
+          "ranked_sessions": [
+            "proj-0::9071ba70_3",
+            "proj-0::1f1591b1",
+            "proj-0::sharegpt_xLtmCeT_0",
+            "proj-0::answer_da3c1266_4",
+            "proj-0::ultrachat_162129",
+            "proj-0::5c2f41a0_1",
+            "proj-0::sharegpt_tFAvE80_0",
+            "proj-0::efae71d5_1",
+            "proj-0::ultrachat_394537",
+            "proj-0::answer_da3c1266_1",
+            "proj-0::answer_da3c1266_1",
+            "proj-0::f74cc019",
+            "proj-0::058f17e5_1",
+            "proj-0::42fa05d3",
+            "proj-0::answer_da3c1266_3",
+            "proj-0::cbdbcfbc_1",
+            "proj-0::ultrachat_162129",
+            "proj-0::sharegpt_9d6fP4m_81",
+            "proj-0::e46a5384",
+            "proj-0::cbdbcfbc_1"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.3333333333333333,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.3333333333333333,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "gpt4_e05b82a6",
+      "type": "multi-session",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_6350aa4f_4",
+            "proj-0::ultrachat_256330",
+            "proj-0::ultrachat_256330",
+            "proj-0::ultrachat_64208",
+            "proj-0::ultrachat_43272",
+            "proj-0::78251a43_2",
+            "proj-0::289be070",
+            "proj-0::answer_6350aa4f_4",
+            "proj-0::aed6b1b6_1",
+            "proj-0::sharegpt_ni4OMXf_35",
+            "proj-0::da36bc2c_1",
+            "proj-0::sharegpt_hTgNaX1_0",
+            "proj-0::answer_6350aa4f_2",
+            "proj-0::415ce32d",
+            "proj-0::40d74f35_2",
+            "proj-0::da36bc2c_1",
+            "proj-0::sharegpt_ni4OMXf_35",
+            "proj-0::ultrachat_64208",
+            "proj-0::5e4bb245_1",
+            "proj-0::40d74f35_2"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_6350aa4f_4",
+            "proj-0::ultrachat_256330",
+            "proj-0::ultrachat_256330",
+            "proj-0::ultrachat_64208",
+            "proj-0::ultrachat_43272",
+            "proj-0::78251a43_2",
+            "proj-0::289be070",
+            "proj-0::answer_6350aa4f_4",
+            "proj-0::aed6b1b6_1",
+            "proj-0::sharegpt_ni4OMXf_35",
+            "proj-0::da36bc2c_1",
+            "proj-0::sharegpt_hTgNaX1_0",
+            "proj-0::answer_6350aa4f_2",
+            "proj-0::415ce32d",
+            "proj-0::40d74f35_2",
+            "proj-0::da36bc2c_1",
+            "proj-0::sharegpt_ni4OMXf_35",
+            "proj-0::ultrachat_64208",
+            "proj-0::5e4bb245_1",
+            "proj-0::40d74f35_2"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "6d550036",
+      "type": "multi-session",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_ec904b3c_1",
+            "proj-0::ultrachat_184799",
+            "proj-0::sharegpt_nVi6tIt_0",
+            "proj-0::0bab76de",
+            "proj-0::sharegpt_rDem8l4_13",
+            "proj-0::sharegpt_jDUWXpR_57",
+            "proj-0::sharegpt_UbMVpdp_93",
+            "proj-0::878271ae_2",
+            "proj-0::b37a44e4_5",
+            "proj-0::sharegpt_oXgiN7q_53",
+            "proj-0::answer_ec904b3c_1",
+            "proj-0::sharegpt_yMwEvl7_479",
+            "proj-0::answer_ec904b3c_1",
+            "proj-0::answer_ec904b3c_3",
+            "proj-0::f6246b5f",
+            "proj-0::answer_ec904b3c_3",
+            "proj-0::d74d42a2",
+            "proj-0::sharegpt_yMwEvl7_479",
+            "proj-0::sharegpt_fV5wNsl_0",
+            "proj-0::answer_ec904b3c_2"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 1.0,
+          "ranked_sessions": [
+            "proj-0::answer_ec904b3c_1",
+            "proj-0::ultrachat_184799",
+            "proj-0::sharegpt_nVi6tIt_0",
+            "proj-0::0bab76de",
+            "proj-0::sharegpt_rDem8l4_13",
+            "proj-0::sharegpt_jDUWXpR_57",
+            "proj-0::sharegpt_UbMVpdp_93",
+            "proj-0::878271ae_2",
+            "proj-0::b37a44e4_5",
+            "proj-0::sharegpt_oXgiN7q_53",
+            "proj-0::answer_ec904b3c_1",
+            "proj-0::sharegpt_yMwEvl7_479",
+            "proj-0::answer_ec904b3c_1",
+            "proj-0::answer_ec904b3c_3",
+            "proj-0::f6246b5f",
+            "proj-0::answer_ec904b3c_3",
+            "proj-0::d74d42a2",
+            "proj-0::sharegpt_yMwEvl7_479",
+            "proj-0::sharegpt_fV5wNsl_0",
+            "proj-0::answer_ec904b3c_2"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "a1eacc2a",
+      "type": "knowledge-update",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 0.3333333333333333,
+          "ranked_sessions": [
+            "proj-0::1f035408",
+            "proj-0::521255f7_2",
+            "proj-0::answer_0eb23770_2",
+            "proj-0::answer_0eb23770_1",
+            "proj-0::7daa121d_2",
+            "proj-0::93f23301_1",
+            "proj-0::answer_0eb23770_2",
+            "proj-0::ultrachat_187728",
+            "proj-0::sharegpt_ePBzYD0_57",
+            "proj-0::af2c335c",
+            "proj-0::61fd18e6_1",
+            "proj-0::9e026e29",
+            "proj-0::answer_0eb23770_2",
+            "proj-0::61fd18e6_1",
+            "proj-0::ultrachat_62332",
+            "proj-0::09438306_2",
+            "proj-0::answer_0eb23770_1",
+            "proj-0::d37305a8",
+            "proj-0::cb1a8c98_2",
+            "proj-0::ultrachat_62332"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "full-R@5": 1.0,
+          "full-R@10": 1.0,
+          "MRR": 0.3333333333333333,
+          "ranked_sessions": [
+            "proj-0::1f035408",
+            "proj-0::521255f7_2",
+            "proj-0::answer_0eb23770_2",
+            "proj-0::answer_0eb23770_1",
+            "proj-0::7daa121d_2",
+            "proj-0::93f23301_1",
+            "proj-0::answer_0eb23770_2",
+            "proj-0::ultrachat_187728",
+            "proj-0::sharegpt_ePBzYD0_57",
+            "proj-0::af2c335c",
+            "proj-0::61fd18e6_1",
+            "proj-0::9e026e29",
+            "proj-0::answer_0eb23770_2",
+            "proj-0::61fd18e6_1",
+            "proj-0::ultrachat_62332",
+            "proj-0::09438306_2",
+            "proj-0::answer_0eb23770_1",
+            "proj-0::d37305a8",
+            "proj-0::cb1a8c98_2",
+            "proj-0::ultrachat_62332"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.3333333333333333,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 0.3333333333333333,
+          "returned_hits": 20
+        }
+      }
+    },
+    {
+      "id": "8e9d538c",
+      "type": "single-session-user",
+      "modes": {
+        "hybrid": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 0.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 0.0,
+          "ranked_sessions": [
+            "proj-0::sharegpt_KtWBRv1_4",
+            "proj-0::ultrachat_75229",
+            "proj-0::sharegpt_iJhf8Lw_0",
+            "proj-0::ultrachat_232141",
+            "proj-0::ultrachat_570726",
+            "proj-0::sharegpt_ZsDyCuG_0",
+            "proj-0::654da2ba_1",
+            "proj-0::cbf8c858",
+            "proj-0::cbf8c858",
+            "proj-0::f8fefecc_2",
+            "proj-0::4b5568a5",
+            "proj-0::f8fefecc_2",
+            "proj-0::sharegpt_cADPA4R_0",
+            "proj-0::4b5568a5",
+            "proj-0::cbf8c858",
+            "proj-0::sharegpt_iJhf8Lw_0",
+            "proj-0::cbf8c858",
+            "proj-0::ultrachat_402093",
+            "proj-0::ultrachat_549592",
+            "proj-0::ultrachat_385827"
+          ]
+        },
+        "documents": {
+          "partial-R@5": 0.0,
+          "partial-R@10": 0.0,
+          "full-R@5": 0.0,
+          "full-R@10": 0.0,
+          "MRR": 0.0,
+          "ranked_sessions": [
+            "proj-0::sharegpt_KtWBRv1_4",
+            "proj-0::ultrachat_75229",
+            "proj-0::sharegpt_iJhf8Lw_0",
+            "proj-0::ultrachat_232141",
+            "proj-0::ultrachat_570726",
+            "proj-0::sharegpt_ZsDyCuG_0",
+            "proj-0::654da2ba_1",
+            "proj-0::cbf8c858",
+            "proj-0::cbf8c858",
+            "proj-0::f8fefecc_2",
+            "proj-0::4b5568a5",
+            "proj-0::f8fefecc_2",
+            "proj-0::sharegpt_cADPA4R_0",
+            "proj-0::4b5568a5",
+            "proj-0::cbf8c858",
+            "proj-0::sharegpt_iJhf8Lw_0",
+            "proj-0::cbf8c858",
+            "proj-0::ultrachat_402093",
+            "proj-0::ultrachat_549592",
+            "proj-0::ultrachat_385827"
+          ]
+        }
+      },
+      "scope": {
+        "hybrid:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        },
+        "documents:unscoped": {
+          "partial-R@5": 1.0,
+          "partial-R@10": 1.0,
+          "MRR": 1.0,
+          "returned_hits": 20
+        }
+      }
+    }
+  ],
+  "modes": [
+    "hybrid",
+    "documents"
+  ],
+  "ks": [
+    5,
+    10
+  ],
+  "n": 10,
+  "aggregate": {
+    "hybrid": {
+      "partial-R@5": 0.8,
+      "full-R@5": 0.5,
+      "partial-R@10": 0.8,
+      "full-R@10": 0.5,
+      "MRR": 0.5833333333333333
+    },
+    "documents": {
+      "partial-R@5": 0.8,
+      "full-R@5": 0.5,
+      "partial-R@10": 0.8,
+      "full-R@10": 0.5,
+      "MRR": 0.5833333333333333
+    }
+  },
+  "seconds": 10.0
+}

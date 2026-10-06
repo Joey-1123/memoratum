@@ -234,14 +234,19 @@ def test_a_ladder_straddling_the_threshold_is_rejected() -> None:
 
 
 def test_pinning_the_threshold_allows_a_straddling_ladder() -> None:
-    """L7's documented alternative: pin it and record prefilter_min."""
-    from memoratum.eval_axes import validate_manifest
+    """L7's documented alternative: pin it and record prefilter_min.
+
+    Paired with its own rejection: an "accepted" test with no assertion passes even if
+    `validate_manifest` were a no-op.
+    """
+    from memoratum.eval_axes import ManifestError, validate_manifest
     from memoratum.search import prefilter_min_candidates
 
     threshold = prefilter_min_candidates()
-    validate_manifest(
-        _latency_config(ladder=[100, threshold - 1, threshold + 1, 6400], prefilter_min=threshold)
-    )
+    ladder = [100, threshold - 1, threshold + 1, 6400]
+    validate_manifest(_latency_config(ladder=ladder, prefilter_min=threshold))
+    with pytest.raises(ManifestError, match="straddles the prefilter threshold"):
+        validate_manifest(_latency_config(ladder=ladder))
 
 
 # --- T059/B1: hardware is mandatory -----------------------------------------------
@@ -505,9 +510,20 @@ def _run_cli(argv: list[str]):
 
 
 def test_cli_runs_and_writes_artifacts(tmp_path) -> None:
+    """The CLI produces both artifacts with the expected shape.
+
+    The **exit code is deliberately not asserted**. This axis's gate is a timing comparison,
+    and the machine is part of the measurement: ten identical runs at 30 samples spanned
+    2.15x (see MIN_LATENCY_SAMPLES). Under full-suite load the ratio gate can legitimately
+    fail, so asserting `code == 0` here made this test flaky for a reason that has nothing
+    to do with the code. It failed once in a full suite while passing three times alone.
+
+    What is asserted is the subject of the test: the artifacts exist, carry the axis, and
+    the gate *reports its checks* rather than silently passing.
+    """
     js = tmp_path / "latency.json"
     md = tmp_path / "RESULTS-latency.md"
-    code, _, _err = _run_cli(
+    _code, _out, err = _run_cli(
         [
             "--ladder",
             "100,200,400",
@@ -521,11 +537,17 @@ def test_cli_runs_and_writes_artifacts(tmp_path) -> None:
             str(md),
         ]
     )
-    assert code == 0
+    assert not err.strip(), f"the CLI reported a diagnostic: {err}"
     payload = json.loads(js.read_text())
     assert payload["axis"] == "latency"
     assert len(payload["latency"]["ladder"]) == 3
     assert md.exists()
+    assert payload["gate"]["checks"], "the gate reported no checks, so it checked nothing"
+    assert payload["gate"]["status"] in ("pass", "fail")
+    # A failing gate must name its figure and bound, or it is not actionable.
+    for check in payload["gate"]["checks"]:
+        assert check["name"], check
+        assert check["bound"] is not None, f"{check['name']} gated against nothing"
 
 
 def test_cli_rejects_a_short_sample_count() -> None:

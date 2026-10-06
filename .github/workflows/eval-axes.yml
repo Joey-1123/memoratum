@@ -1,0 +1,144 @@
+name: eval-axes
+
+# The four measured axes, run against the committed synthetic fixtures on every
+# push and pull request (T100).
+#
+# Two properties this job is built around, both learned the hard way in this
+# repository:
+#
+# 1. **It must be able to fail.** An axis job that passes on a broken axis is
+#    worse than no job, because it is read as evidence. So the job runs each axis
+#    with its *own* falsifiability self-check (`--inject-ungrounded`,
+#    `--require-clean`), which exits 2 when the detector has stopped detecting.
+#    A neutered metric therefore fails this job, which is the only way to know the
+#    gate is live.
+#
+# 2. **It must not need the benchmark corpus.** `data/` holds only
+#    `download.log`; the 277 MB LongMemEval file is never committed (FR-010). The
+#    committed fixtures under `eval/fixtures/` are what CI runs against, so a
+#    failing gate here is reproducible by anyone who checks out the repository.
+#
+# The latency ladder deliberately stays below `PREFILTER_MIN_CANDIDATES = 512`.
+# Crossing that threshold measures an algorithm switch rather than a corpus size,
+# and this repository has already shipped one false result from that class.
+#
+# KNOWN LIMIT of the cost step: the committed fixture retrieves ~2 hits / ~108
+# characters, against a baseline of 28,469. The bound is one-sided (it fails only
+# when cost *rises*), so this job exercises the upward direction only — a run that
+# retrieved far *less* than the baseline would still pass. The `hits_observed` and
+# `chunks_ingested` checks are what catch a retrieval that returns nothing at all.
+# The full-magnitude cost figure is verified against the real corpus locally and
+# committed to `eval/RESULTS-cost.md`; CI cannot run that without the 277 MB file
+# (FR-010).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  axes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --group dev
+
+      # --- scope isolation -------------------------------------------------
+      # Synthetic two-project corpus; --require-clean runs the axis against a store
+      # that has stopped enforcing project_id and fails if it detects no leak.
+      - name: Scope isolation
+        run: >-
+          uv run python -m memoratum.eval_isolation
+          --projects 2 --sessions-per-project 5 --queries 3
+          --seed 42 --require-clean
+          --out-json eval-ci/isolation.json
+
+      # --- token cost ------------------------------------------------------
+      # Gates against the committed baseline. A missing baseline FAILS (B3) rather
+      # than passing silently, so this step cannot go green by doing nothing.
+      - name: Token cost
+        run: >-
+          uv run python -m memoratum.eval_cost
+          --data eval/fixtures/longmemeval_smoke.json --n 1 --seed 42
+          --baseline eval/BASELINES.md
+          --out-json eval-ci/cost.json
+
+      # --- latency ---------------------------------------------------------
+      # 120 samples is the measured noise floor (MIN_LATENCY_SAMPLES): at 30 the
+      # gate failed on unmodified code 1 run in 6.
+      - name: Latency
+        run: >-
+          uv run python -m memoratum.eval_latency
+          --ladder 100,200,400 --samples 120 --warmup 5 --seed 42
+          --out-json eval-ci/latency.json
+
+      # --- grounding -------------------------------------------------------
+      # --inject-ungrounded exits 2 if the detector cannot find text that is in no
+      # ingested row, so a neutered grounding axis fails here.
+      - name: Grounding
+        run: >-
+          uv run python -m memoratum.eval_grounding
+          --data eval/fixtures/longmemeval_smoke.json --n 1 --seed 42
+          --inject-ungrounded
+          --out-json eval-ci/grounding.json
+
+      # --- negative controls: the gates must be able to fail ----------------
+      # Each command below MUST exit non-zero. If one succeeds, the gate above it
+      # is measuring nothing, and this step is the only thing that would notice.
+      # Written as `if <cmd>; then fail` rather than a bare non-zero command so a
+      # *passing* gate is the CI failure, not an unexplained red step.
+      - name: Negative controls — every gate must reject a broken input
+        run: |
+          set -uo pipefail
+          failed=0
+
+          # A missing baseline must FAIL (B3). A gate that passes when it has
+          # nothing to compare against is not a gate.
+          if uv run python -m memoratum.eval_cost \
+               --data eval/fixtures/longmemeval_smoke.json --n 1 \
+               --baseline eval-ci/does-not-exist.md >/dev/null 2>&1; then
+            echo "::error::a missing baseline PASSED the cost gate (B3)"; failed=1
+          fi
+
+          # A straddling ladder measures an algorithm switch, not a corpus size (L7).
+          if uv run python -m memoratum.eval_latency \
+               --ladder 100,400,1600 --samples 120 --warmup 5 >/dev/null 2>&1; then
+            echo "::error::a ladder crossing the prefilter threshold was accepted (L7)"
+            failed=1
+          fi
+
+          # Undersampled: the noise floor would exceed the gate band (L2).
+          if uv run python -m memoratum.eval_latency \
+               --ladder 100,200,400 --samples 5 >/dev/null 2>&1; then
+            echo "::error::a 5-sample latency run was accepted (L2)"; failed=1
+          fi
+
+          # Two axes in one comparison disagree on almost every manifest key, so
+          # eval_compare must refuse to read them against each other (D8).
+          if uv run python -m memoratum.eval_compare \
+               eval-ci/grounding.json eval-ci/latency.json >/dev/null 2>&1; then
+            echo "::error::eval_compare accepted two different axes as comparable (D8)"
+            failed=1
+          fi
+
+          # A corpus that does not exist must be rejected, not reported on.
+          if uv run python -m memoratum.eval_grounding \
+               --data eval-ci/missing.json --n 1 >/dev/null 2>&1; then
+            echo "::error::a missing corpus was accepted by the grounding axis"; failed=1
+          fi
+
+          exit "$failed"
+
+      # --- committed figures must be regenerable ---------------------------
+      # SC-003: every committed results file carries the command that produced it.
+      # Re-running those commands here proves they still work after a refactor,
+      # which is the failure mode a committed command has.
+      - name: Committed results files carry a runnable command
+        run: uv run pytest tests/test_eval_docs_conformance.py -q --no-cov
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-axes
+          path: eval-ci/
+          if-no-files-found: error
