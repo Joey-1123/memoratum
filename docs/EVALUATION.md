@@ -157,6 +157,51 @@ A self-check must fail in **both** directions. A detector that reports everythin
 is as broken as one that reports everything grounded, and is worse in practice: it would take
 every correct run down with it and teach operators to ignore the gate.
 
+### HotPotQA — evidence retrieval only
+
+Phase C. HotPotQA was rejected during planning **for answering** and admitted for **retrieving
+the gold evidence**, which the dataset ships alongside a pure-stdlib deterministic scorer.
+
+```bash
+uv run python -m memoratum.eval_hotpotqa \
+  --data /path/to/hotpotqa_fullwiki_validation.json \
+  --n 50 --seed 42 --k 10 \
+  --out-md eval/RESULTS-evidence.md --out-json eval/evidence.json
+```
+
+The dataset is **not vendored** — CC BY-SA 4.0, and ShareAlike attaches to a normalised
+extract. Fetch it yourself, as `data/download.log` records. The committed
+`eval/fixtures/hotpotqa_evidence_smoke.json` is synthetic, so the axis is testable and
+CI-gateable without it.
+
+| figure | meaning |
+|---|---|
+| `evidence_recall` | gold `(title, sent_id)` pairs retrieved, over gold pairs |
+| `evidence_precision` | retrieved pairs that are gold, over retrieved pairs |
+| `evidence_f1` | harmonic mean of the two |
+| `joint_evidence_rate` | questions where **every** gold sentence was found |
+
+Four decisions that make the number mean something:
+
+- **One sentence is one document.** Gold evidence is a set of `(title, sent_id)` pairs, so
+  that pair must be the retrieval unit. Had a chunk held several sentences, scoring would
+  need text similarity — the fuzzy step that made token containment unusable as a grounding
+  signal (`data-model.md` G3).
+- **A hop is a document, not a sentence.** HotPotQA's supporting facts normally come from two
+  different titles. Finding two sentences of one title is one hop; counting it as two would
+  let a retriever win the multi-hop metric with a single paragraph.
+- **Exact set arithmetic.** No threshold, no normalisation, no tolerance band.
+- **`--config distractor` is refused.** Its ~1.2K tokens per question fit in context, so it
+  does not force out-of-window retrieval.
+
+**This is not full-wiki scale.** Sentences are indexed from the union of provided contexts
+(~74K paragraphs), not the ~5M articles of true full-wiki. It is multi-hop evidence recall
+under a ~74K-paragraph distractor load, and both the manifest and the report say so.
+
+**Answers are not scored.** A test perturbs each record's `answer` field and asserts that no
+reported figure changes, so the rejection of this dataset for answering is enforced by
+measurement rather than by a promise in a docstring.
+
 ## Comparing two runs
 
 `eval_compare` **refuses to print two figures as a comparison** when their manifests
