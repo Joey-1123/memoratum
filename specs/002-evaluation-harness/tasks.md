@@ -271,23 +271,34 @@ and metric values.
 - [X] T106 [P] Validate against `specs/002-evaluation-harness/quickstart.md` §8 — every SC row has an executed command and an observed result — every SC row executed; SC-003, SC-006, SC-007 and SC-002 now have tests rather than prose
 - [X] T107 Record Phase C (HotPotQA evidence retrieval) as NOT started in `specs/002-evaluation-harness/tasks.md` — see the Phase C status block below
 
-### Phase C status — HotPotQA evidence retrieval: **NOT STARTED**
+### Phase C status — HotPotQA evidence retrieval: **IMPLEMENTED 2026-10-08**
 
-Deferred deliberately, and recorded here rather than dropped, because an unmentioned
-deferred phase reads as an oversight.
+The phase recorded as NOT STARTED on 2026-10-05 is now built. Its resume condition
+(US1–US5 merged and green) was met on 2026-10-06.
 
-- **Scope if resumed: evidence retrieval only.** HotPotQA would supply multi-hop
-  supporting facts, which the current harnesses have no way to grade. It is **not** a
-  replacement for the recall suites.
-- **Not started.** No HotPotQA runner, fixture, or result file exists. No task in the list
-  above belongs to it.
-- **Resume condition:** US1–US5 merged and green. As of this commit all five are merged
-  (`main` at the reproducibility merge) and the suite is green, so the condition is met —
-  but resuming Phase C is a separate decision, not a consequence of this one.
-- **Rejected during planning, recorded so it is not relitigated:** BEAM. It is graded
-  100% by an LLM judge, which fails the spec's own conditional that a new dataset must be
-  deterministically gradeable and dependency-free. HotPotQA was admitted to `spec.md`
-  for evidence retrieval only, as deferred Phase C.
+- **Scope: evidence retrieval only, as admitted.** `src/memoratum/eval_hotpotqa.py` scores
+  sentence-level `evidence_recall` / `precision` / `f1` and `joint_evidence_rate` over
+  `(title, sent_id)` pairs by exact set arithmetic. **No answerer exists.**
+- **No existing axis was touched.** The constraint "must not block or destabilise them"
+  was met by adding a module rather than by editing one: the four axes are unchanged.
+- **One sentence is one document.** Gold evidence is `(title, sent_id)`, so that pair is the
+  retrieval unit. Otherwise a chunk's sentences would have to be matched by text similarity
+  — the fuzzy step that made containment unusable as a grounding signal (`data-model.md` G3).
+- **The union of provided contexts is indexed**, so a question competes with other
+  questions' paragraphs. `--config distractor` is refused by the runner.
+- **The scale caveat travels with every figure**: the manifest records
+  `is_full_wiki_scale: false`, and the report states it in prose.
+- **Fixture only.** `eval/fixtures/hotpotqa_evidence_smoke.json` is synthetic. The real
+  dataset is CC BY-SA 4.0 and is **not vendored**, matching the `data/download.log`
+  precedent.
+- **Still rejected, recorded so it is not relitigated:** BEAM (100% LLM judge), MemoryBench
+  (conflicts with Principle V), and answer-level scoring on any dataset (the basis for
+  rejecting HotPotQA itself).
+
+Measured on the fixture at k=5: `evidence_recall` 0.583, `evidence_precision` 0.300,
+`joint_evidence_rate` 0.000. k-sensitivity confirms the metric measures retrieval rather than
+a constant — recall rises 0.167 → 1.000 as k goes 1 → 10 while precision falls
+0.500 → 0.250, and an oracle scores exactly 1.000. 25 mutations injected, all caught.
 
 ---
 

@@ -208,7 +208,7 @@ manifest and metric values.
   dependencies) and Principle IV (a committed measurement must be re-runnable).
 - Answer-level free-text correctness scoring as a gating metric.
 
-### Phase C (deferred, approved 2026-10-04, not started)
+### Phase C (approved 2026-10-04, **implemented 2026-10-08**)
 
 **HotPotQA is admitted for evidence retrieval only.** The out-of-scope entry above
 rejected it for *answering*; that reasoning is correct but does not apply to
@@ -225,7 +225,18 @@ pure-stdlib deterministic scorer (`normalize_answer`, `exact_match_score`,
   easier than true full-wiki (~5M articles). This is multi-hop evidence recall under
   a ~74K-paragraph distractor load, not full-wiki scale.
 - **Sequencing**: ships only after the four axes are merged and green. It must not
-  block or destabilise them.
+  block or destabilise them. **Satisfied**: the four axes merged on 2026-10-06
+  (`main` at the reproducibility merge) and `memoratum.eval_hotpotqa` was added as a
+  new module touching none of them.
+
+**As implemented.** `src/memoratum/eval_hotpotqa.py` reports sentence-level
+`evidence_recall`, `evidence_precision`, `evidence_f1` and `joint_evidence_rate`
+(exact set arithmetic over `(title, sent_id)`, no threshold), indexes the union of
+provided contexts so a question competes with other questions' paragraphs, and refuses
+gold evidence that points outside the provided context rather than scoring it 0.0.
+No answerer exists, and a test asserts that perturbing a record's `answer` field changes
+no reported figure — so the rejection of this dataset for *answering* is enforced by
+measurement rather than by a docstring. 25 mutations injected, all caught.
 
 ### Key Entities
 

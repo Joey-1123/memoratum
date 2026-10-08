@@ -1,0 +1,64 @@
+{
+  "_comment": "Synthetic HotPotQA-shaped fixture. The real dataset is NOT vendored: it is CC BY-SA 4.0, and ShareAlike attaches to a normalised extract. See data/download.log for the fetch precedent. This fixture exists so the evidence runner is testable and CI-gateable without the 277 MB / 74K-paragraph real corpus.",
+  "questions": [
+    {
+      "_id": "fixture-q1",
+      "question": "Which river flows through the city that hosts the northern observatory?",
+      "answer": "the Varn",
+      "type": "bridge",
+      "level": "hard",
+      "supporting_facts": [
+        ["Northern Observatory", 0],
+        ["City of Aldmere", 2]
+      ],
+      "context": [
+        ["Northern Observatory", [
+          "The Northern Observatory is located in the city of Aldmere.",
+          "It was completed in 1974 and is operated by a regional trust.",
+          "Its primary instrument is a 2.1 metre reflector."
+        ]],
+        ["Aldmere Transit", [
+          "Aldmere transit services run every eleven minutes at peak time.",
+          "The tram network was extended to the harbour in 2011.",
+          "Fares are collected on board and on the platform."
+        ]],
+        ["City of Aldmere", [
+          "Aldmere is a coastal city with a population of roughly 90,000.",
+          "The old town sits on a headland above the estuary.",
+          "The Varn flows through the city before reaching the sea."
+        ]],
+        ["River Varn", [
+          "The Varn rises in the hills east of Aldmere.",
+          "It has been heavily modified for navigation since the 1800s.",
+          "Its tidal limit is now just below the old town."
+        ]]
+      ]
+    },
+    {
+      "_id": "fixture-q2",
+      "question": "Are the Aldmere Observatory and the Harbour Bridge both older than the Aldmere transit extension?",
+      "answer": "yes",
+      "type": "comparison",
+      "level": "hard",
+      "supporting_facts": [
+        ["Northern Observatory", 0],
+        ["Harbour Bridge", 0],
+        ["Aldmere Transit", 1]
+      ],
+      "context": [
+        ["Northern Observatory", [
+          "The Northern Observatory is located in the city of Aldmere.",
+          "It was completed in 1974 and is operated by a regional trust."
+        ]],
+        ["Harbour Bridge", [
+          "The Harbour Bridge opened in 1908 and spans the northern channel.",
+          "It was replaced with a parallel span after fifty years of service."
+        ]],
+        ["Aldmere Transit", [
+          "Aldmere transit services run every eleven minutes at peak time.",
+          "The tram network was extended to the harbour in 2011."
+        ]]
+      ]
+    }
+  ]
+}

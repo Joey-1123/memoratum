@@ -82,6 +82,17 @@ jobs:
           --inject-ungrounded
           --out-json eval-ci/grounding.json
 
+      # --- HotPotQA evidence retrieval (Phase C) ---------------------------
+      # Admitted for evidence retrieval ONLY. `--config distractor` is refused by the
+      # runner: its ~1.2K tokens fit in context, so it does not force out-of-window
+      # retrieval. The synthetic fixture is committed because the real dataset is
+      # CC BY-SA 4.0 and must not be vendored (ShareAlike attaches to a normalised extract).
+      - name: HotPotQA evidence
+        run: >-
+          uv run python -m memoratum.eval_hotpotqa
+          --data eval/fixtures/hotpotqa_evidence_smoke.json --n 2 --seed 42 --k 5
+          --out-json eval-ci/hotpotqa.json
+
       # --- negative controls: the gates must be able to fail ----------------
       # Each command below MUST exit non-zero. If one succeeds, the gate above it
       # is measuring nothing, and this step is the only thing that would notice.
@@ -125,6 +136,21 @@ jobs:
           if uv run python -m memoratum.eval_grounding \
                --data eval-ci/missing.json --n 1 >/dev/null 2>&1; then
             echo "::error::a missing corpus was accepted by the grounding axis"; failed=1
+          fi
+
+          # The distractor split must stay refused (spec.md, Phase C).
+          if uv run python -m memoratum.eval_hotpotqa \
+               --data eval/fixtures/hotpotqa_evidence_smoke.json --n 1 \
+               --config distractor >/dev/null 2>&1; then
+            echo "::error::the distractor split was admitted (it does not force retrieval)"
+            failed=1
+          fi
+
+          # Gold evidence that cannot be retrieved must be refused, not scored 0.0.
+          if uv run python -m memoratum.eval_hotpotqa \
+               --data eval/fixtures/hotpotqa_evidence_smoke.json --n 1 --k 0 >/dev/null 2>&1; then
+            echo "::error::the evidence axis accepted a non-positive retrieval limit"
+            failed=1
           fi
 
           exit "$failed"
