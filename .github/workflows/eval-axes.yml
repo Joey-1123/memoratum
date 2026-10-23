@@ -91,6 +91,7 @@ jobs:
         run: >-
           uv run python -m memoratum.eval_hotpotqa
           --data eval/fixtures/hotpotqa_evidence_smoke.json --n 2 --seed 42 --k 5
+          --baseline eval/BASELINES.md
           --out-json eval-ci/hotpotqa.json
 
       # --- negative controls: the gates must be able to fail ----------------

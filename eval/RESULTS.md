@@ -14,6 +14,7 @@
 | cost | PASS | hits_observed, chunks_ingested, retrieved_chars_mean | 80, 1507, 2.847e+04 |
 | latency | PASS | us_per_chunk_sublinear, us_per_chunk_sublinear, retrieve_median_ms, retrieve_median_ms, retrieve_median_ms | 0.8102, 0.9371, 4.394, 7.121, 13.35 |
 | grounding | PASS | grounded_fraction | 1 |
+| evidence | PASS | scored_questions, ghost_hits, evidence_recall, evidence_recall_vs_baseline | 2, 0, 0.5833, 0.5833 |
 
 ## Provenance per row
 
@@ -23,6 +24,7 @@
 | cost | HashEmbedder:64 | sqlite | 4 | 42 | d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442 |
 | latency | HashEmbedder:64 | sqlite | 3 | 42 | synthetic-latency-corpus |
 | grounding | HashEmbedder:64 | sqlite | 25 | 42 | d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442 |
+| evidence | HashEmbedder:64 | sqlite | 2 | 42 | 84815977b0bbacb8d5ed35f481312ee4eb26ff6e3f4eabf27f206a0495ea9fb6 |
 | retrieval (longmemeval-s) | HashEmbedder:64 | sqlite | 10 | 42 | d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442 |
 
 ## Retrieval metrics
@@ -49,5 +51,5 @@ This file is assembled from the axis result files it lists, not measured directl
 ## Regenerate this figure
 
 ```bash
-python -m memoratum.eval_results eval/isolation.json eval/cost.json eval/latency.json eval/grounding.json eval/longmemeval.json --out-md eval/RESULTS.md
+python -m memoratum.eval_results eval/isolation.json eval/cost.json eval/latency.json eval/grounding.json eval/evidence.json eval/longmemeval.json --out-md eval/RESULTS.md
 ```

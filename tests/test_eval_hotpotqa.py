@@ -598,11 +598,16 @@ def test_an_unresolvable_hit_is_dropped_rather_than_counted_as_evidence() -> Non
 
     conn = _connect()
     try:
-        assert _retrieved_evidence(conn, [{"id": "chunk_999999", "chunk": "ghost"}]) == []
-        assert _retrieved_evidence(conn, [{"id": "not-a-chunk", "chunk": "x"}]) == []
-        assert _retrieved_evidence(conn, [{"id": "chunk_nan", "chunk": "x"}]) == []
+        pairs, dropped = _retrieved_evidence(conn, [{"id": "chunk_999999", "chunk": "ghost"}])
+        assert (pairs, dropped) == ([], 1)
+        pairs, dropped = _retrieved_evidence(conn, [{"id": "not-a-chunk", "chunk": "x"}])
+        assert (pairs, dropped) == ([], 1)
+        pairs, dropped = _retrieved_evidence(conn, [{"id": "chunk_nan", "chunk": "x"}])
+        assert (pairs, dropped) == ([], 1)
         real = _first_chunk_id(conn)
-        assert _retrieved_evidence(conn, [{"id": f"chunk_{real}", "chunk": "x"}]) != []
+        pairs, dropped = _retrieved_evidence(conn, [{"id": f"chunk_{real}", "chunk": "x"}])
+        assert pairs != [], "a real chunk must still resolve"
+        assert dropped == 0
     finally:
         conn.close()
 
@@ -654,3 +659,125 @@ def _connect():
 
 def _first_chunk_id(conn) -> int:
     return conn.execute("SELECT MIN(id) AS id FROM chunks").fetchone()["id"]
+
+
+# --- the gate ---------------------------------------------------------------------
+# The evidence axis is a fifth entry in the rollup, and a present axis rendering gate
+# status "UNKNOWN" would mean "nothing was checked". It gates on absolute facts — the
+# isolation/grounding style — plus an optional baseline floor.
+
+
+def test_a_run_carries_a_gate_that_passes_on_a_working_run() -> None:
+    """A working run must not need a baseline to report a checked gate.
+
+    Isolation gates on `leaked_hits == 0` and grounding on `grounded_fraction == 1.0`
+    without a baseline row, per BASELINES.md. The evidence axis gates the same way:
+    zero scored questions, ghost hits and a null recall each fail on their own.
+    """
+    result = _evaluate(k=5)
+    gate = result["gate"]
+    assert gate["status"] == "pass", gate
+    names = {c["name"] for c in gate["checks"]}
+    assert {"scored_questions", "ghost_hits", "evidence_recall"} <= names
+
+
+def test_the_gate_fails_when_no_question_was_scored() -> None:
+    """`scored_questions == 0` must fail the gate, never render as a vacuous pass."""
+    from memoratum.eval_hotpotqa import gate_from_run
+
+    gate = gate_from_run(scored=0, ghost=0, recall=None, baseline=None)
+    assert gate["status"] == "fail", gate
+
+
+def test_the_gate_fails_on_ghost_hits() -> None:
+    """A hit resolving to no document has not been shown to belong to the corpus."""
+    from memoratum.eval_hotpotqa import gate_from_run
+
+    gate = gate_from_run(scored=2, ghost=1, recall=0.5, baseline=None)
+    assert gate["status"] == "fail", gate
+
+
+def test_the_gate_fails_on_a_null_recall() -> None:
+    from memoratum.eval_hotpotqa import gate_from_run
+
+    gate = gate_from_run(scored=2, ghost=0, recall=None, baseline=None)
+    assert gate["status"] == "fail", gate
+
+
+def test_a_baseline_floor_is_enforced_downward() -> None:
+    """Recall must not fall below the baseline; the comparison direction is the opposite
+    of the cost axis's ceiling, so it needs its own check rather than a shared helper."""
+    import pathlib
+
+    from memoratum.eval_hotpotqa import gate_from_run
+
+    baseline_path = os.path.join(_tempdir(), "baselines.md")
+    pathlib.Path(baseline_path).write_text(
+        "| axis | figure | tolerance | corpus | seed | mode | hardware | command |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+        "| evidence_recall | 0.9 | 0.10 | smoke | 42 | documents | n/a | `run` |\n",
+        encoding="utf-8",
+    )
+    from memoratum.eval_cost import _load_baseline_rows
+
+    row = _load_baseline_rows(baseline_path)["evidence_recall"]
+    assert row["figure"] == "0.9", row
+
+    below = gate_from_run(scored=2, ghost=0, recall=0.5, baseline=row)
+    assert below["status"] == "fail", below
+    above = gate_from_run(scored=2, ghost=0, recall=0.9, baseline=row)
+    assert above["status"] == "pass", above
+
+
+def test_the_cli_exits_gate_failed_when_recall_misses_the_baseline(tmp_path) -> None:
+    baseline = tmp_path / "baselines.md"
+    baseline.write_text(
+        "| axis | figure | tolerance | corpus | seed | mode | hardware | command |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+        "| evidence_recall | 0.99 | 0.0 | smoke | 42 | documents | n/a | `run` |\n",
+        encoding="utf-8",
+    )
+    code, _, err = _run_cli(
+        ["--data", FIXTURE, "--n", "2", "--seed", "42", "--k", "5", "--baseline", str(baseline)]
+    )
+    assert code == 1, (code, err)
+    assert "gate" in err.lower(), err
+
+
+def test_the_cli_passes_when_recall_meets_the_baseline(tmp_path) -> None:
+    baseline = tmp_path / "baselines.md"
+    baseline.write_text(
+        "| axis | figure | tolerance | corpus | seed | mode | hardware | command |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+        "| evidence_recall | 0.1 | 0.10 | smoke | 42 | documents | n/a | `run` |\n",
+        encoding="utf-8",
+    )
+    code, _, err = _run_cli(
+        ["--data", FIXTURE, "--n", "2", "--seed", "42", "--k", "5", "--baseline", str(baseline)]
+    )
+    assert code == 0, (code, err)
+
+
+def test_a_result_json_names_the_axis_so_the_rollup_sees_it() -> None:
+    """eval_results treats every unknown payload as a *retrieval* file, which would
+    render this axis's figures as an empty aggregate table."""
+    result = _evaluate(k=5)
+    assert result["axis"] == "evidence", sorted(result)
+
+
+def test_the_rollup_renders_the_evidence_row() -> None:
+    from memoratum.eval_results import REQUIRED_AXES, render_rollup
+
+    assert "evidence" in REQUIRED_AXES
+    report = render_rollup([_evaluate(k=5)])
+    assert "| evidence |" in report, report
+    assert "evidence_recall" in report
+
+
+def test_the_rollup_marks_evidence_not_run_when_absent() -> None:
+    """An axis that was never run is reported as NOT RUN rather than omitted."""
+    from memoratum.eval_results import REQUIRED_AXES, render_rollup
+
+    rows = render_rollup([])  # no payloads at all
+    assert "**NOT RUN**" in rows
+    assert rows.count("**NOT RUN**") == len(REQUIRED_AXES), rows

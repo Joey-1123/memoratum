@@ -34,7 +34,7 @@ from memoratum.eval_axes import EXIT_BAD_INPUT, EXIT_OK, command
 
 #: Axes the rollup must account for. A missing one is reported as "not run" rather than
 #: omitted: silence would read as a pass.
-REQUIRED_AXES = ("isolation", "cost", "latency", "grounding")
+REQUIRED_AXES = ("isolation", "cost", "latency", "grounding", "evidence")
 
 #: The figure each axis gates on, when the result file does not say so itself. Fallbacks for
 #: hand-written fixtures; a real run reports its gate checks and these go unused.
@@ -43,6 +43,7 @@ _DEFAULT_GATED_FIGURE = {
     "cost": "retrieved_chars_mean",
     "latency": "us_per_chunk_sublinear",
     "grounding": "grounded_fraction",
+    "evidence": "evidence_recall",
 }
 
 #: Manifest fields worth showing per row, in this order. Deliberately the same list
