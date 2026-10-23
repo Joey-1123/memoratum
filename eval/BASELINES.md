@@ -23,6 +23,7 @@ lands; rows are added only from a real recorded run.
 | Latency | `us_per_chunk(4N)` ratio | `>= 1.5x` |
 | Latency | `median_ms` | `> baseline x 1.40` |
 | Grounding | `grounded_fraction` | `< min_grounded_fraction` |
+| Evidence | `evidence_recall` | `< baseline x (1 - tolerance)` (a floor, unlike cost's ceiling) |
 
 Recall and MRR are report-only and are **not** gated.
 
@@ -60,6 +61,24 @@ result: the *primary* gate — the one whose direction travels between machines 
 while the millisecond figure moved from 11.09 to 13.35. That is exactly the split the axis
 was designed around, now demonstrated on this hardware rather than asserted.
 
+## Evidence baselines
+
+Populated by Phase C — 2026-10-08. Recorded on the committed smoke fixture, which is
+deliberate: the fixture is in-repo and the run is deterministic (same records, seed,
+embedder and k), so this figure is a cross-machine regression tripwire on the *retrieval
+config* — any change to k, the embedder, or scoring behaviour shows up here. It is **not**
+a claim about the real 74K-paragraph corpus; that needs the (unvendored) real dataset, and
+only then would a second, real-corpus row be recorded.
+
+`evidence_recall` is a hardware-independent ratio, so unlike the latency rows this one
+travels. The gate direction is a **floor**: recall must not fall below
+`baseline x (1 - tolerance)`. Improving recall does not fail the gate; the extra
+`evidence_recall_vs_baseline` check is skipped per run rather than passing vacuously.
+
+| axis | figure | tolerance | corpus | seed | mode | hardware | command |
+|---|---|---|---|---|---|---|---|
+| evidence_recall | 0.5833 | 0.05 | hotpotqa_evidence_smoke.json (n=2, k=5) | 42 | documents | n/a (ratio) | `python -m memoratum.eval_hotpotqa --data eval/fixtures/hotpotqa_evidence_smoke.json --n 2 --seed 42 --k 5` |
+
 ## Status
 
 | Phase | Axis | Baseline state |
@@ -70,3 +89,4 @@ was designed around, now demonstrated on this hardware rather than asserted.
 | D | Latency | **measured** - see latency table |
 | E | Grounding | gate is `grounded_fraction == 1.0` — no baseline needed |
 | F | Reproducibility | n/a |
+| Phase C | Evidence | **measured** — see evidence table; floor direction |

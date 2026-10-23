@@ -1,0 +1,195 @@
+{
+  "axis": "evidence",
+  "dataset": "hotpotqa-evidence",
+  "schema": "memoratum-eval-axes-v1",
+  "manifest": {
+    "schema": "longmemeval-scoped-v2",
+    "seed": 42,
+    "requested_n": 2,
+    "n": 2,
+    "ks": [
+      5
+    ],
+    "modes": [
+      "documents"
+    ],
+    "embedder": "HashEmbedder:64",
+    "vector_store": "sqlite",
+    "data_sha256": "84815977b0bbacb8d5ed35f481312ee4eb26ff6e3f4eabf27f206a0495ea9fb6",
+    "evidence_config": {
+      "unit": "(title, sent_id)",
+      "scorer": "exact-set",
+      "answer_scored": false,
+      "config": "fullwiki",
+      "is_full_wiki_scale": false,
+      "caveat": "Sentences are indexed from the union of provided contexts (~74K paragraphs), which is NOT true full-wiki scale (~5M articles). This is multi-hop evidence recall under a ~74K-paragraph distractor load.",
+      "paragraphs_indexed": 5,
+      "sentences_indexed": 14,
+      "retrieval_limit": 5,
+      "corpus": "union of provided contexts"
+    }
+  },
+  "gate": {
+    "status": "pass",
+    "checks": [
+      {
+        "name": "scored_questions",
+        "status": "pass",
+        "value": 2,
+        "bound": 0,
+        "reason": "no question was scored, so the axis measured nothing"
+      },
+      {
+        "name": "ghost_hits",
+        "status": "pass",
+        "value": 0,
+        "bound": 0,
+        "reason": "a hit whose id resolves to no document has not been shown to be evidence"
+      },
+      {
+        "name": "evidence_recall",
+        "status": "pass",
+        "value": 0.5833333333333333,
+        "bound": 0.0,
+        "reason": "recall is null; a skipped metric must never read as a pass"
+      },
+      {
+        "name": "evidence_recall_vs_baseline",
+        "status": "pass",
+        "value": 0.5833333333333333,
+        "bound": 0.554135,
+        "delta": 3.333333333321864e-05
+      }
+    ]
+  },
+  "evidence_recall": 0.5833333333333333,
+  "evidence_precision": 0.30000000000000004,
+  "evidence_f1": 0.3928571428571429,
+  "joint_evidence_rate": 0.0,
+  "scored_questions": 2,
+  "by_type": {
+    "bridge": {
+      "n": 1,
+      "evidence_recall": 0.5
+    },
+    "comparison": {
+      "n": 1,
+      "evidence_recall": 0.6666666666666666
+    }
+  },
+  "questions": [
+    {
+      "id": "fixture-q1",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "City of Aldmere",
+          2
+        ],
+        [
+          "Northern Observatory",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Aldmere Transit",
+          2
+        ],
+        [
+          "Northern Observatory",
+          0
+        ],
+        [
+          "River Varn",
+          1
+        ],
+        [
+          "Harbour Bridge",
+          0
+        ],
+        [
+          "Aldmere Transit",
+          1
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.28571428571428575,
+      "gold_count": 2.0,
+      "predicted_count": 5.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "fixture-q2",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Aldmere Transit",
+          1
+        ],
+        [
+          "Harbour Bridge",
+          0
+        ],
+        [
+          "Northern Observatory",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Northern Observatory",
+          0
+        ],
+        [
+          "City of Aldmere",
+          1
+        ],
+        [
+          "Aldmere Transit",
+          0
+        ],
+        [
+          "Aldmere Transit",
+          1
+        ],
+        [
+          "Northern Observatory",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 3,
+      "evidence_recall": 0.6666666666666666,
+      "evidence_precision": 0.4,
+      "evidence_f1": 0.5,
+      "gold_count": 3.0,
+      "predicted_count": 5.0,
+      "overlap_count": 2.0
+    }
+  ],
+  "command": [
+    "python",
+    "-m",
+    "memoratum.eval_hotpotqa",
+    "--data",
+    "eval/fixtures/hotpotqa_evidence_smoke.json",
+    "--n",
+    "2",
+    "--seed",
+    "42",
+    "--k",
+    "5",
+    "--baseline",
+    "eval/BASELINES.md",
+    "--out-json",
+    "/tmp/opencode/evidence.json",
+    "--out-md",
+    "/tmp/opencode/RESULTS-evidence.md"
+  ]
+}

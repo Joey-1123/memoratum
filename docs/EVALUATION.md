@@ -202,6 +202,13 @@ under a ~74K-paragraph distractor load, and both the manifest and the report say
 reported figure changes, so the rejection of this dataset for answering is enforced by
 measurement rather than by a promise in a docstring.
 
+**Gating.** The axis always checks absolute facts — zero scored questions, ghost hits, null
+recall each fail. With `--baseline eval/BASELINES.md` it additionally enforces a **floor**:
+`evidence_recall >= baseline x (1 - tolerance)`, the opposite direction of the cost axis's
+ceiling. The committed `eval/evidence.json` is the fixture run with that baseline applied;
+`eval/BASELINES.md` records it as a cross-machine tripwire on the retrieval config, not as a
+claim about the real corpus.
+
 ## Comparing two runs
 
 `eval_compare` **refuses to print two figures as a comparison** when their manifests

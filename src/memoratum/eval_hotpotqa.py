@@ -49,9 +49,13 @@ from memoratum import db
 from memoratum.embeddings import Embedder, HashEmbedder
 from memoratum.eval_axes import (
     EXIT_BAD_INPUT,
+    EXIT_BASELINE_MISSING,
+    EXIT_GATE_FAILED,
     EXIT_OK,
+    Gate,
     build_manifest,
     embedder_label,
+    evaluate_gate,
     load_baseline,
     write_artifacts,
 )
@@ -265,20 +269,25 @@ def hops_found(gold: set[tuple[str, int]], predicted: set[tuple[str, int]]) -> i
 
 def _retrieved_evidence(
     conn: sqlite3.Connection, hits: Sequence[dict[str, Any]]
-) -> list[tuple[str, int]]:
+) -> tuple[list[tuple[str, int]], int]:
     """Map hits to ``(title, sent_id)``, in rank order, de-duplicated.
 
     A hit that resolves to no document is **dropped and counted**, never assumed to be
-    evidence: an unresolvable hit has not been shown to belong to the corpus.
+    evidence: an unresolvable hit has not been shown to belong to the corpus. The second
+    return value is how many hits were dropped, which the gate treats as a failure —
+    the same rule the cost axis applies to ``unresolvable_hits`` (A1).
     """
     seen: list[tuple[str, int]] = []
+    dropped = 0
     for hit in hits:
         hit_id = str(hit.get("id", ""))
         if not hit_id.startswith("chunk_"):
+            dropped += 1
             continue
         try:
             chunk_id = int(hit_id.split("_", 1)[1])
         except ValueError:
+            dropped += 1
             continue
         row = conn.execute(
             "SELECT d.custom_id FROM chunks c JOIN documents d ON d.id = c.document_id"
@@ -286,14 +295,16 @@ def _retrieved_evidence(
             (chunk_id,),
         ).fetchone()
         if row is None:
+            dropped += 1
             continue
         try:
             pair = _split_id(str(row["custom_id"]))
         except ValueError:
+            dropped += 1
             continue
         if pair not in seen:
             seen.append(pair)
-    return seen
+    return seen, dropped
 
 
 def evaluate_evidence(
@@ -306,6 +317,7 @@ def evaluate_evidence(
     vector_store_factory: Callable[[sqlite3.Connection], VectorStore] | None = None,
     dataset_hash: str = "",
     dataset_name: str = "hotpotqa-evidence",
+    baseline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score sentence-level evidence retrieval over the union of provided contexts."""
     if k <= 0:
@@ -343,6 +355,7 @@ def evaluate_evidence(
             }
 
             rows: list[dict[str, Any]] = []
+            ghost_total = 0
             for item in picked:
                 hits = search(
                     conn,
@@ -353,7 +366,8 @@ def evaluate_evidence(
                     search_mode="documents",
                     vector_store=store,
                 )
-                predicted = _retrieved_evidence(conn, hits)
+                predicted, ghost = _retrieved_evidence(conn, hits)
+                ghost_total += ghost
                 scores = evidence_scores(item["gold_evidence"], set(predicted))
                 rows.append(
                     {
@@ -423,9 +437,16 @@ def evaluate_evidence(
     }
 
     return {
+        "axis": "evidence",
         "dataset": dataset_name,
         "schema": "memoratum-eval-axes-v1",
         "manifest": manifest,
+        "gate": gate_from_run(
+            scored=len(scored),
+            ghost=ghost_total,
+            recall=recall,
+            baseline=baseline,
+        ),
         "evidence_recall": recall,
         "evidence_precision": precision,
         "evidence_f1": f1,
@@ -434,6 +455,61 @@ def evaluate_evidence(
         "by_type": by_type_summary,
         "questions": rows,
     }
+
+
+def gate_from_run(
+    *,
+    scored: int,
+    ghost: int,
+    recall: float | None,
+    baseline: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The absolute checks, plus the baseline floor when a baseline is supplied.
+
+    Isolation gates on ``leaked_hits == 0`` and grounding on ``grounded_fraction == 1.0``
+    without any baseline row (``BASELINES.md``), because some guarantees are facts about
+    the run rather than comparisons with history. The evidence axis gates the same way:
+    zero scored questions measured nothing, a ghost hit is an ungrounded retrieval, and a
+    null recall is a failure rather than a skip (M3).
+    """
+    gate = Gate()
+    gate.check(
+        "scored_questions",
+        value=scored or None,
+        bound=0,
+        comparison="<=",
+        reason="no question was scored, so the axis measured nothing",
+    )
+    gate.check(
+        "ghost_hits",
+        value=ghost,
+        bound=0,
+        comparison=">",
+        reason="a hit whose id resolves to no document has not been shown to be evidence",
+    )
+    gate.check(
+        "evidence_recall",
+        value=recall,
+        bound=0.0,
+        comparison="<",
+        reason="recall is null; a skipped metric must never read as a pass",
+    )
+    usable = load_baseline(baseline, figure="evidence_recall") if baseline is not None else None
+    if usable is not None:
+        # A recall baseline is a FLOOR: the delta reports how far below the baseline the
+        # run fell, and the failure is on the "<" direction. compare_to_baseline encodes
+        # the ceiling direction ("value > bound fails") used by cost, so the floor is
+        # spelled here rather than parameterised there.
+        bound = float(usable["value"]) * (1.0 - float(usable.get("tolerance", 0.0) or 0.0))
+        delta = None if recall is None else float(recall) - float(usable["value"])
+        gate.check(
+            "evidence_recall_vs_baseline",
+            value=recall,
+            bound=bound,
+            comparison="<",
+            delta=delta,
+        )
+    return evaluate_gate(gate)
 
 
 # --------------------------------------------------------------------------- #
@@ -551,6 +627,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.baseline and not os.path.exists(args.baseline):
         print(f"--baseline not found: {args.baseline}", file=sys.stderr)
         return EXIT_BAD_INPUT
+    baseline_row = _baseline_row(args.baseline, "evidence_recall") if args.baseline else None
+    if args.baseline and baseline_row is None:
+        print(
+            "no usable evidence_recall baseline; an unmeasurable baseline must fail rather "
+            "than pass (B3)",
+            file=sys.stderr,
+        )
+        return EXIT_BASELINE_MISSING
 
     try:
         records = load_records(args.data)
@@ -560,17 +644,13 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             k=args.k,
             dataset_hash=file_sha256(args.data) if os.path.exists(args.data) else "",
+            baseline=baseline_row,
         )
     except (ValueError, TypeError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_BAD_INPUT
 
     result["manifest"]["evidence_config"]["config"] = args.config.lower()
-    baseline = (
-        load_baseline(_baseline_row(args.baseline, "evidence_recall"), figure="evidence_recall")
-        if args.baseline
-        else None
-    )
 
     try:
         write_artifacts(
@@ -584,13 +664,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"could not write results: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT
 
-    if args.baseline and baseline is None:
-        print(
-            "no usable evidence_recall baseline; an unmeasurable baseline must fail rather "
-            "than pass (B3)",
-            file=sys.stderr,
-        )
-        return EXIT_BAD_INPUT
+    gate = result.get("gate") or {}
+    if str(gate.get("status")) == "fail":
+        for check in gate.get("checks", []):
+            if check.get("status") != "pass":
+                reason = f" — {check['reason']}" if check.get("reason") else ""
+                print(
+                    f"gate: {check['name']} = {check.get('value')!r} "
+                    f"(bound {check.get('bound')!r}){reason}",
+                    file=sys.stderr,
+                )
+        return EXIT_GATE_FAILED
     return EXIT_OK
 
 
