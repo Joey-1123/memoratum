@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.36.0] - 2026-10-23
+
+The evaluation-harness release: the server finally measures itself, on four offline
+axes with committed figures, gates, and mutations caught in each one.
+
+### Added
+- **Evaluation harness (`002-evaluation-harness`, 107 tasks, all closed).** Four
+  deterministic, dependency-free axes with mutated-then-caught test suites:
+  **scope isolation** (`leaked_hits == 0` as an absolute gate), **token cost**
+  (canonical character unit, measured chars↔token ratio, byte units rejected),
+  **latency** (µs/chunk scaling as the primary gate — 1.5x per 4x size step — and
+  a sample floor of 120 set from measurement after 10 identical 30-sample runs
+  spanned 2.15x and failed unmodified code), and **grounding** (provenance by row
+  identity, per-kind rules; `chunks.text` is never compared against
+  `documents.content`).
+- **HotPotQA evidence retrieval (Phase C).** Sentence-level
+  `evidence_recall`/`precision`/`f1`/`joint_evidence_rate` over `(title, sent_id)`
+  pairs by exact set arithmetic. One sentence is one document, a hop is a document
+  not a sentence, `--config distractor` is refused in code, and a test proves the
+  answer field cannot influence any figure. The dataset is not vendored (CC BY-SA
+  4.0); the committed fixture is synthetic and the axis is CI-gated against a
+  committed baseline.
+- **Rollup and comparison.** `eval_results` renders all axes plus retrieval metrics
+  with per-row provenance and marks rows NOT COMPARABLE when configs differ;
+  `eval_compare` refuses to compare two runs whose manifests disagree (absent keys
+  count as mismatches).
+- **Local observability.** Prometheus-style metrics, split health endpoints
+  (`/health/live`, `/health/ready`), and structured logs.
+- **Durability.** Job leases with a reaper and P0 stranded-job recovery; a
+  documented retention policy for every table with a real sweep.
+- **CI ratchets.** A coverage floor and a no-new-suppressions check so the test
+  gates cannot be quietly weakened; evaluation axes run as CI gates with five
+  negative controls (missing baseline, straddling ladder, 5-sample, mismatched
+  eval_compare, missing corpus — plus distractor-refusal and k=0 refusal).
+
+### Changed
+- **Search performance, recall held.** The candidate set is bounded by the FTS5
+  leg and ingest reuses already-persisted chunk embeddings, both measured against
+  recall rather than asserted.
+- **Concurrency.** The request lock is released before the endpoint body runs, and
+  every migration is transaction-wrapped with the schema verified afterwards.
+- **One commit boundary per logical write** across the memory lifecycle.
+- **Read-only project roles** (`READER`) are enforced on reads and writes; project
+  deletion cleanup is durable.
+- **Licence and coverage discipline is mechanical.** Licence-minimality and
+  minimal-install are tested; a task that still fails after a ratchet run must be
+  fixed, not skipped.
+- **Documentation reconciled with behaviour**, enforced by conformance tests.
+
+### Fixed
+- **Webhook SSRF.** Delivery targets are pinned to resolved addresses and the
+  CGNAT address range is closed; unknown request fields are rejected instead of
+  widening scope.
+- **`R@k` counted duplicates.** The hit list is now sliced before dedup; the
+  pre-correction numbers are marked "metric definition v0" and are not comparable
+  (`eval/MIGRATION-metric-v1.md`).
+- **The latency gate initially failed on unmodified code** — the sample floor was
+  too small for machine noise; fixed by measurement, not by loosening the bound.
+- **Packaging.** The published port is reachable (image binds `0.0.0.0`), and the
+  eval isolation manifest names its actual vector store (`sqlite`).
+
+### Verification
+- `pytest -q`: **964 passed, 1 skipped**; coverage **81.90%** (floor held);
+  Ruff clean over 216 files; no-telemetry, suppression, and coverage-floor
+  ratchets all pass; zero leaked temp directories. CI: lint/test, TS client,
+  dashboard build, eval-axis gates (with negative controls), governance
+  dashboard, and dependency scanning green; three evaluation result files
+  (`eval/*.json`, `eval/RESULTS.md`) committed with regeneration commands.
+- `pip-audit --local` and `npm audit` were not runnable in this workspace.
+
+## [Unreleased]
+
 ## [0.35.0] - 2026-09-30
 ### Added
 - Canonical `mem_<uuid>` lifecycle across native and Mem0-compatible routes,
@@ -32,8 +104,6 @@
 - The full Python test suite, Ruff, the dependency-free TypeScript probe, dashboard
   build, and the no-telemetry guard pass locally. GitHub release operations are
   not performed from this workspace.
-
-## [Unreleased]
 
 ## [0.34.2] - 2026-09-24
 ### Changed

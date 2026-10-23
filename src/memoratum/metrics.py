@@ -243,7 +243,7 @@ WEBHOOK_DELIVERIES = REGISTRY.counter(
 DB_WRITE_CONFLICTS = REGISTRY.counter(
     "memoratum_db_write_conflicts_total", "Writes that waited on the SQLite write lock."
 )
-REGISTRY.set_build_info("0.35.0")
+REGISTRY.set_build_info("0.36.0")
 
 # Paths excluded from their own instrumentation, matching the existing /health
 # exemption in the rate-limit middleware: a scrape must not inflate the series it
