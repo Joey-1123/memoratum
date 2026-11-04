@@ -21,6 +21,12 @@ gate metric: (title, sent_id) recall, scored by exact-set
 
 A hop is a document, not a sentence: finding two sentences of one title is one hop.
 
+## What this figure is conditional on
+
+- questions excluded (gold outside the provided context): 0 of 2 (0.0%)
+
+The figures above are **conditional**: they hold for the 2 questions where the dataset's own fullwiki retrieval placed every gold fact inside the provided context. Questions where it did not are excluded and counted above, never scored 0.0 — scoring them would measure the dataset's retriever, not the memory layer under test.
+
 ## By question type
 
 | type | n | evidence_recall |
@@ -36,5 +42,5 @@ A hop is a document, not a sentence: finding two sentences of one title is one h
 ## Regenerate this figure
 
 ```bash
-python -m memoratum.eval_hotpotqa --data eval/fixtures/hotpotqa_evidence_smoke.json --n 2 --seed 42 --k 5 --baseline eval/BASELINES.md --out-json /tmp/opencode/evidence.json --out-md /tmp/opencode/RESULTS-evidence.md
+python -m memoratum.eval_hotpotqa --data eval/fixtures/hotpotqa_evidence_smoke.json --n 2 --seed 42 --k 5 --baseline eval/BASELINES.md --out-json eval/evidence.json --out-md eval/RESULTS-evidence.md
 ```

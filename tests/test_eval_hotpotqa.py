@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import tempfile
 
 import pytest
@@ -781,3 +782,200 @@ def test_the_rollup_marks_evidence_not_run_when_absent() -> None:
     rows = render_rollup([])  # no payloads at all
     assert "**NOT RUN**" in rows
     assert rows.count("**NOT RUN**") == len(REQUIRED_AXES), rows
+
+
+# --- unmeasurable gold in the real fullwiki file (RED) ------------------------------
+# The real hotpot_dev_fullwiki_v1.json has 7,706 gold facts whose title is not in the
+# provided context: the dataset's own fullwiki retriever missed gold for those questions.
+# That is not a dataset error to refuse — it is the retrieval condition being measured.
+# The strict refusal stays the default (the fixture/CI contract); opting in excludes and
+# counts, never scores.
+
+
+def _real_shape_records():
+    """Two records in the exact shape of the real fullwiki file, one unmeasurable."""
+    return [
+        {
+            "_id": "measurable",
+            "question": "who wrote the sequel?",
+            "answer": "B",
+            "type": "bridge",
+            "level": "hard",
+            "supporting_facts": [["Book A", 0], ["Author X", 1]],
+            "context": [
+                ["Book A", ["Book A was written in 1990.", "It won a prize."]],
+                ["Author X", ["Author X was born in 1960.", "They wrote the sequel."]],
+            ],
+        },
+        {
+            "_id": "unmeasurable",
+            "question": "who founded the city?",
+            "answer": "Z",
+            "type": "bridge",
+            "level": "hard",
+            "supporting_facts": [["Missing Title", 0]],
+            "context": [
+                ["Other Page", ["Something unrelated."]],
+            ],
+        },
+    ]
+
+
+def test_partition_classifies_gold_outside_context_with_a_reason() -> None:
+    from memoratum.eval_hotpotqa import partition_unmeasurable
+
+    measurable, exclusions = partition_unmeasurable(_real_shape_records())
+    assert [r["_id"] for r in measurable] == ["measurable"], (
+        "partition returns the raw records; normalization happens once, in the caller"
+    )
+    assert len(exclusions) == 1
+    assert exclusions[0]["id"] == "unmeasurable"
+    assert exclusions[0]["reason"] == "gold_title_outside_context", exclusions[0]
+
+
+def test_partition_classifies_out_of_range_sentence_ids() -> None:
+    from memoratum.eval_hotpotqa import partition_unmeasurable
+
+    records = _real_shape_records()
+    records[1]["supporting_facts"] = [["Other Page", 9]]
+    _, exclusions = partition_unmeasurable(records)
+    assert exclusions[0]["reason"] == "gold_sentence_out_of_range", exclusions[0]
+
+
+def test_partition_preserves_every_measurable_record_in_order() -> None:
+    from memoratum.eval_hotpotqa import partition_unmeasurable
+
+    records = _real_shape_records() + [_real_shape_records()[0]]
+    measurable, exclusions = partition_unmeasurable(records)
+    assert [r["_id"] for r in measurable] == ["measurable", "measurable"]
+    assert len(exclusions) == 1
+
+
+def test_partition_on_a_clean_dataset_excludes_nothing() -> None:
+    from memoratum.eval_hotpotqa import partition_unmeasurable
+
+    measurable, exclusions = partition_unmeasurable(_real_shape_records()[:1])
+    assert len(measurable) == 1 and exclusions == []
+
+
+def test_strict_normalize_still_refuses_unmeasurable_gold() -> None:
+    """The fixture/CI contract is unchanged: the default is still a hard refusal."""
+    from memoratum.eval_hotpotqa import normalize_hotpotqa
+
+    with pytest.raises(ValueError, match="not in the provided context"):
+        normalize_hotpotqa(_real_shape_records())
+
+
+def test_evaluate_with_the_flag_excludes_and_counts_not_scores() -> None:
+    """The excluded question must vanish from the rows and appear in the accounting.
+
+    Scoring it 0.0 would measure the dataset's retriever, not ours; omitting the count
+    would make the figure look unconditional when it is not.
+    """
+    from memoratum.embeddings import HashEmbedder
+    from memoratum.eval_hotpotqa import evaluate_evidence
+
+    result = evaluate_evidence(
+        _real_shape_records(),
+        n=2,
+        seed=42,
+        k=5,
+        embedder=HashEmbedder(dims=64),
+        allow_unmeasurable_gold=True,
+    )
+    config = result["manifest"]["evidence_config"]
+    assert config["dataset_records"] == 2
+    assert config["unmeasurable_gold_excluded"] == 1
+    assert config["unmeasurable_gold_rate"] == pytest.approx(0.5)
+    assert {row["id"] for row in result["questions"]} == {"measurable"}
+    assert result["manifest"]["n"] == 1, "the sample is drawn from measurable questions only"
+
+
+def test_evaluate_without_the_flag_refuses_the_real_shaped_file() -> None:
+    from memoratum.embeddings import HashEmbedder
+    from memoratum.eval_hotpotqa import evaluate_evidence
+
+    with pytest.raises(ValueError, match="not in the provided context"):
+        evaluate_evidence(_real_shape_records(), n=2, seed=42, k=5, embedder=HashEmbedder(dims=64))
+
+
+def test_the_report_states_the_conditioning_of_the_figure() -> None:
+    """A recall figure over a filtered subset is conditional; the report must say so."""
+    from memoratum.embeddings import HashEmbedder
+    from memoratum.eval_hotpotqa import evaluate_evidence, summarize
+
+    result = evaluate_evidence(
+        _real_shape_records(),
+        n=2,
+        seed=42,
+        k=5,
+        embedder=HashEmbedder(dims=64),
+        allow_unmeasurable_gold=True,
+    )
+    report = summarize(result)
+    assert "## What this figure is conditional on" in report, (
+        "the conditioning section must exist under its own heading, not only as prose "
+        "that could survive the heading's deletion"
+    )
+    assert "excluded" in report.lower()
+    assert "conditional" in report.lower(), (
+        "the report must state that the figure holds only where the dataset's own "
+        "retrieval placed gold inside the provided context"
+    )
+    assert "1 of 2" in report
+
+
+def test_the_cli_threads_the_flag(tmp_path) -> None:
+    import json as _json
+
+    data = tmp_path / "real-shape.json"
+    data.write_text(_json.dumps(_real_shape_records()), encoding="utf-8")
+    code, _, err = _run_cli(
+        ["--data", str(data), "--n", "2", "--seed", "42", "--k", "5", "--allow-unmeasurable-gold"]
+    )
+    assert code == 0, err
+    code, _, err = _run_cli(["--data", str(data), "--n", "2", "--seed", "42", "--k", "5"])
+    assert code != 0, "without the flag the real-shaped file must still be refused"
+
+
+def test_the_evaluation_doc_records_the_dataset_fetch_command() -> None:
+    """`data/download.log` is empty and gitignored, so the doc must carry the command.
+
+    The original host did not resolve on 2026-11-04; the documented fallback (the Wayback
+    snapshot of the same URL) and the checksum are part of the record.
+    """
+    doc = pathlib.Path(REPO_ROOT, "docs", "EVALUATION.md").read_text(encoding="utf-8")
+    assert "mkdir -p data" in doc, "the command must create its own target directory"
+    assert "curl -fL" in doc
+    assert "curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_fullwiki_v1.json" in doc
+    assert "d0382d7cca3579b5e60a1b088c2e928915a6913f41fa5149bec191e2fc0b11c8" in doc, (
+        "the recorded checksum is what makes a re-download verifiable"
+    )
+
+
+def test_partition_classifies_an_empty_context_as_unmeasurable() -> None:
+    """The real file has 10 records with an empty context.
+
+    Gold cannot sit inside an empty corpus, so the record is unmeasurable by the same
+    logic as gold-outside-context — not malformed, and not a hard error. A record with
+    no supporting facts at all stays a hard error: that is a broken file, not an empty
+    retrieval condition.
+    """
+    from memoratum.eval_hotpotqa import partition_unmeasurable
+
+    records = _real_shape_records()
+    records[1]["context"] = []
+    measurable, exclusions = partition_unmeasurable(records)
+    assert [r["_id"] for r in measurable] == ["measurable"]
+    assert exclusions[0]["reason"] == "empty_context", exclusions[0]
+
+
+def test_partition_names_the_true_record_index_when_a_record_is_malformed() -> None:
+    """normalize re-indexes every single-record call, so its 'record 0' is a lie in a
+    partition context. The true index must survive into the message."""
+    from memoratum.eval_hotpotqa import partition_unmeasurable
+
+    records = _real_shape_records()
+    records[1]["context"] = [["Title Only", "not a sentence list"]]
+    with pytest.raises(TypeError, match="record 1"):
+        partition_unmeasurable(records)

@@ -1,0 +1,3448 @@
+{
+  "axis": "evidence",
+  "dataset": "hotpotqa-evidence",
+  "schema": "memoratum-eval-axes-v1",
+  "manifest": {
+    "schema": "longmemeval-scoped-v2",
+    "seed": 42,
+    "requested_n": 50,
+    "n": 50,
+    "ks": [
+      10
+    ],
+    "modes": [
+      "documents"
+    ],
+    "embedder": "HashEmbedder:64",
+    "vector_store": "sqlite",
+    "data_sha256": "d0382d7cca3579b5e60a1b088c2e928915a6913f41fa5149bec191e2fc0b11c8",
+    "evidence_config": {
+      "unit": "(title, sent_id)",
+      "scorer": "exact-set",
+      "answer_scored": false,
+      "config": "fullwiki",
+      "is_full_wiki_scale": false,
+      "caveat": "Sentences are indexed from the union of provided contexts (~74K paragraphs), which is NOT true full-wiki scale (~5M articles). This is multi-hop evidence recall under a ~74K-paragraph distractor load.",
+      "paragraphs_indexed": 490,
+      "sentences_indexed": 2052,
+      "retrieval_limit": 10,
+      "corpus": "union of provided contexts",
+      "dataset_records": 7405,
+      "unmeasurable_gold_excluded": 5317,
+      "unmeasurable_gold_rate": 0.7180283592167455,
+      "allow_unmeasurable_gold": true
+    }
+  },
+  "gate": {
+    "status": "pass",
+    "checks": [
+      {
+        "name": "scored_questions",
+        "status": "pass",
+        "value": 50,
+        "bound": 0,
+        "reason": "no question was scored, so the axis measured nothing"
+      },
+      {
+        "name": "ghost_hits",
+        "status": "pass",
+        "value": 0,
+        "bound": 0,
+        "reason": "a hit whose id resolves to no document has not been shown to be evidence"
+      },
+      {
+        "name": "evidence_recall",
+        "status": "pass",
+        "value": 0.6196666666666667,
+        "bound": 0.0,
+        "reason": "recall is null; a skipped metric must never read as a pass"
+      },
+      {
+        "name": "evidence_recall_vs_baseline",
+        "status": "pass",
+        "value": 0.6196666666666667,
+        "bound": 0.554135,
+        "delta": 0.03636666666666666
+      }
+    ]
+  },
+  "evidence_recall": 0.6196666666666667,
+  "evidence_precision": 0.14600000000000002,
+  "evidence_f1": 0.23324542124542127,
+  "joint_evidence_rate": 0.34,
+  "scored_questions": 50,
+  "by_type": {
+    "bridge": {
+      "n": 41,
+      "evidence_recall": 0.5991869918699186
+    },
+    "comparison": {
+      "n": 9,
+      "evidence_recall": 0.7129629629629629
+    }
+  },
+  "questions": [
+    {
+      "id": "5ae32ce75542992f92d8223d",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Nikita Gross",
+          0
+        ],
+        [
+          "Nikita Gross",
+          3
+        ],
+        [
+          "Perfect 10",
+          0
+        ],
+        [
+          "Perfect 10",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Grooby Productions",
+          0
+        ],
+        [
+          "Jonathan Glazer",
+          0
+        ],
+        [
+          "Perfect 10",
+          2
+        ],
+        [
+          "M Magazine",
+          0
+        ],
+        [
+          "Twist (magazine)",
+          0
+        ],
+        [
+          "China Business Review",
+          3
+        ],
+        [
+          "M Magazine",
+          1
+        ],
+        [
+          "Twist (magazine)",
+          1
+        ],
+        [
+          "Animation Magazine",
+          0
+        ],
+        [
+          "Perfect 10",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.28571428571428575,
+      "gold_count": 4.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a8da81e554299068b959d7e",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Impresario",
+          0
+        ],
+        [
+          "Vanessa Bley",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Bastian Schweinsteiger",
+          0
+        ],
+        [
+          "Hillside Home School I",
+          3
+        ],
+        [
+          "Matt McKenzie",
+          4
+        ],
+        [
+          "Impresario",
+          0
+        ],
+        [
+          "Mozarteum Argentino",
+          2
+        ],
+        [
+          "Financial plan",
+          1
+        ],
+        [
+          "Vanessa Bley",
+          0
+        ],
+        [
+          "Audra McDonald",
+          2
+        ],
+        [
+          "Freight forwarder",
+          0
+        ],
+        [
+          "Joseph Anderer",
+          6
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a8e494e5542995a26add4c8",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "MacLellan's Castle",
+          0
+        ],
+        [
+          "MacLellan's Castle",
+          1
+        ],
+        [
+          "Thomas Maclellan of Bombie",
+          0
+        ],
+        [
+          "Thomas Maclellan of Bombie",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Thomas Maclellan, 2nd Lord Kirkcudbright",
+          0
+        ],
+        [
+          "Jinjing, Changsha",
+          3
+        ],
+        [
+          "Jinjing, Changsha",
+          0
+        ],
+        [
+          "Dilsberg Castle",
+          8
+        ],
+        [
+          "Santa Claus Park",
+          4
+        ],
+        [
+          "Colross",
+          0
+        ],
+        [
+          "Jinjing, Changsha",
+          5
+        ],
+        [
+          "Audra McDonald",
+          2
+        ],
+        [
+          "Thomas Maclellan of Bombie",
+          1
+        ],
+        [
+          "Thomas Maclellan of Bombie",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.28571428571428575,
+      "gold_count": 4.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ac02c6b554299294b218f38",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Hey Ya!",
+          0
+        ],
+        [
+          "Hey Ya!",
+          1
+        ],
+        [
+          "The Ed Sullivan Show",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "List of awards and nominations received by Lecrae",
+          0
+        ],
+        [
+          "The Ed Sullivan Show",
+          0
+        ],
+        [
+          "List of awards and nominations received by Lecrae",
+          5
+        ],
+        [
+          "The Way You Move",
+          0
+        ],
+        [
+          "Big Boi discography",
+          2
+        ],
+        [
+          "Santa Claus Is Comin' to Town (film)",
+          3
+        ],
+        [
+          "The Ed Sullivan Show (radio program)",
+          0
+        ],
+        [
+          "Lecrae",
+          0
+        ],
+        [
+          "André 3000 discography",
+          1
+        ],
+        [
+          "CBS Innertube",
+          4
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.3333333333333333,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.15384615384615383,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ab83f9f5542990e739ec891",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Mountain goat",
+          0
+        ],
+        [
+          "Waputik Mountains",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Dangal (film)",
+          6
+        ],
+        [
+          "Waputik Mountains",
+          2
+        ],
+        [
+          "Mountain goat",
+          0
+        ],
+        [
+          "Chaba Peak",
+          2
+        ],
+        [
+          "Titkana Peak",
+          2
+        ],
+        [
+          "Neptuak Mountain",
+          1
+        ],
+        [
+          "Sunwapta Peak",
+          1
+        ],
+        [
+          "Megacerops",
+          0
+        ],
+        [
+          "Stoney Indian Lake",
+          1
+        ],
+        [
+          "Tamaraw",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ae382ee5542992e3233c430",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Carl von Clausewitz",
+          0
+        ],
+        [
+          "Classical realism (international relations)",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Soft butch",
+          0
+        ],
+        [
+          "Classical realism (international relations)",
+          2
+        ],
+        [
+          "August Otto Rühle von Lilienstern",
+          1
+        ],
+        [
+          "On War",
+          0
+        ],
+        [
+          "Battle of Wavre",
+          1
+        ],
+        [
+          "Christopher Bassford",
+          0
+        ],
+        [
+          "Carl von Clausewitz",
+          0
+        ],
+        [
+          "Absolute war",
+          0
+        ],
+        [
+          "Panzer Division Clausewitz",
+          0
+        ],
+        [
+          "Charles Roberts Awards Hall of Fame",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a905d085542995651fb5147",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Lockheed C-130 Hercules",
+          4
+        ],
+        [
+          "Mercedes-Benz Zetros",
+          3
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Winter melon punch",
+          1
+        ],
+        [
+          "Caladium",
+          2
+        ],
+        [
+          "Mercedes-Benz Zetros",
+          0
+        ],
+        [
+          "Mercedes-Benz Zetros",
+          3
+        ],
+        [
+          "Shaanxi Y-8",
+          1
+        ],
+        [
+          "Mercedes-Benz Zetros",
+          2
+        ],
+        [
+          "Airbus A400M Atlas",
+          1
+        ],
+        [
+          "Lockheed C-130 Hercules",
+          0
+        ],
+        [
+          "Military transport aircraft",
+          0
+        ],
+        [
+          "Messerschmitt Me 323",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ae27f22554299495565da8d",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Anneli Cahn Lax",
+          3
+        ],
+        [
+          "Peter Lax",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Vera T. Sós",
+          0
+        ],
+        [
+          "Humphrey Critchley-Salmonson",
+          0
+        ],
+        [
+          "Kirsten Menger-Anderson",
+          5
+        ],
+        [
+          "Anneli Cahn Lax",
+          0
+        ],
+        [
+          "Anneli Cahn Lax",
+          3
+        ],
+        [
+          "Peter Lax",
+          0
+        ],
+        [
+          "Anneli Cahn Lax",
+          1
+        ],
+        [
+          "Ivo Babuška",
+          0
+        ],
+        [
+          "Thaleia Zariphopoulou",
+          0
+        ],
+        [
+          "Angela Steinmüller",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a75d35d5542992d0ec05ffe",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "America's Incredible Pizza Company",
+          0
+        ],
+        [
+          "America's Incredible Pizza Company",
+          2
+        ],
+        [
+          "Toppers Pizza (American restaurant)",
+          0
+        ],
+        [
+          "Toppers Pizza (American restaurant)",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Papa Murphy's",
+          0
+        ],
+        [
+          "Mr. Jim's Pizza",
+          4
+        ],
+        [
+          "Yellow Cab Pizza",
+          1
+        ],
+        [
+          "America's Incredible Pizza Company",
+          1
+        ],
+        [
+          "Toppers Pizza (American restaurant)",
+          4
+        ],
+        [
+          "Toppers Pizza (American restaurant)",
+          2
+        ],
+        [
+          "Pictou County pizza",
+          0
+        ],
+        [
+          "Domino's Pizza Enterprises",
+          3
+        ],
+        [
+          "Mr. Jim's Pizza",
+          1
+        ],
+        [
+          "Papa Murphy's",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.25,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.14285714285714288,
+      "gold_count": 4.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5add311b5542994ed6169cc5",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Raymond Ochoa",
+          1
+        ],
+        [
+          "The Good Dinosaur",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Xtractaurs",
+          4
+        ],
+        [
+          "Raymond Ochoa",
+          0
+        ],
+        [
+          "The Good Dinosaur",
+          0
+        ],
+        [
+          "Harley Jessup",
+          1
+        ],
+        [
+          "Raymond Ochoa",
+          1
+        ],
+        [
+          "Enrico Casarosa",
+          2
+        ],
+        [
+          "Sanjay's Super Team",
+          1
+        ],
+        [
+          "Adrian Molina",
+          3
+        ],
+        [
+          "Richard Kind",
+          1
+        ],
+        [
+          "The Good Dinosaur",
+          3
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ac056385542997d64295a08",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Ambrose Mendy",
+          0
+        ],
+        [
+          "Ambrose Mendy",
+          1
+        ],
+        [
+          "Chris Eubank Jr.",
+          0
+        ],
+        [
+          "Chris Eubank Jr.",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Bastian Schweinsteiger",
+          0
+        ],
+        [
+          "Chris Eubank Jr.",
+          2
+        ],
+        [
+          "Dean Francis",
+          0
+        ],
+        [
+          "Natascha Ragosina",
+          0
+        ],
+        [
+          "Luke Blackledge",
+          0
+        ],
+        [
+          "Henry Wharton (boxer)",
+          0
+        ],
+        [
+          "Scott Dixon (boxer)",
+          0
+        ],
+        [
+          "Andre Thysse",
+          0
+        ],
+        [
+          "Ambrose Mendy",
+          0
+        ],
+        [
+          "Chris Eubank Jr.",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.28571428571428575,
+      "gold_count": 4.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a89ab1355429946c8d6e996",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Carnegie Hall Tower",
+          0
+        ],
+        [
+          "Staten Island",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Staten Island Register",
+          0
+        ],
+        [
+          "Carnegie Hall Tower",
+          0
+        ],
+        [
+          "Staten Island Borough Hall",
+          0
+        ],
+        [
+          "St. George, Staten Island",
+          2
+        ],
+        [
+          "Staten Island Academy",
+          0
+        ],
+        [
+          "Staten Island Technical High School",
+          1
+        ],
+        [
+          "Carnegie Hall Tower",
+          1
+        ],
+        [
+          "Richmond County Courthouse (Staten Island)",
+          1
+        ],
+        [
+          "Staten Island Borough Hall",
+          2
+        ],
+        [
+          "Richmond County Courthouse (Staten Island)",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5aba89d555429901930fa816",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Dru Hill",
+          1
+        ],
+        [
+          "Woody Rock",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Neuhof Substation",
+          8
+        ],
+        [
+          "Dru World Order",
+          3
+        ],
+        [
+          "Woody Rock",
+          2
+        ],
+        [
+          "LovHer",
+          3
+        ],
+        [
+          "Dru Hill (album)",
+          0
+        ],
+        [
+          "I Should Be...",
+          0
+        ],
+        [
+          "Unleash the Dragon",
+          1
+        ],
+        [
+          "Enter the Dru",
+          0
+        ],
+        [
+          "How Deep Is Your Love (Dru Hill song)",
+          0
+        ],
+        [
+          "Dru World Order",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ab56b3a554299637185c585",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Matt McKenzie",
+          3
+        ],
+        [
+          "That '70s Show",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Port Macquarie",
+          3
+        ],
+        [
+          "The Young and the Restless",
+          3
+        ],
+        [
+          "That '70s Show",
+          1
+        ],
+        [
+          "Frenemies (film)",
+          2
+        ],
+        [
+          "That '70s Show",
+          0
+        ],
+        [
+          "Big Time Audition",
+          5
+        ],
+        [
+          "Stacey McKenzie",
+          0
+        ],
+        [
+          "The Young and the Restless",
+          1
+        ],
+        [
+          "Matt McKenzie",
+          0
+        ],
+        [
+          "LovHer",
+          4
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5a75227955429929fddd8508",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Modbury, South Australia",
+          0
+        ],
+        [
+          "Westfield Tea Tree Plaza",
+          3
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "City of Tea Tree Gully",
+          2
+        ],
+        [
+          "Tea Tree Gully, South Australia",
+          0
+        ],
+        [
+          "Modbury, South Australia",
+          0
+        ],
+        [
+          "Tea Tree Gully, South Australia",
+          1
+        ],
+        [
+          "Houghton, South Australia",
+          1
+        ],
+        [
+          "Para Hills, South Australia",
+          2
+        ],
+        [
+          "Vista, South Australia",
+          0
+        ],
+        [
+          "Modbury Heights, South Australia",
+          0
+        ],
+        [
+          "King's Baptist Grammar School",
+          0
+        ],
+        [
+          "City of Tea Tree Gully",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5adbda2755429944faac2385",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "The Ganymede Takeover",
+          0
+        ],
+        [
+          "The Man in the High Castle",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "National San Chung Senior High School",
+          0
+        ],
+        [
+          "The Man in the High Castle",
+          0
+        ],
+        [
+          "The Ganymede Takeover",
+          2
+        ],
+        [
+          "The Ganymede Takeover",
+          0
+        ],
+        [
+          "Tzi Ma",
+          0
+        ],
+        [
+          "Kanakkan",
+          0
+        ],
+        [
+          "The Man in the High Castle",
+          2
+        ],
+        [
+          "Nobuteru Yūki",
+          1
+        ],
+        [
+          "The Man in the High Castle (TV series)",
+          0
+        ],
+        [
+          "Hartbeat!",
+          4
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5addf6135542990dbb2f7f23",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Discwoman",
+          0
+        ],
+        [
+          "Genderqueer",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Femininity",
+          3
+        ],
+        [
+          "Genderqueer",
+          1
+        ],
+        [
+          "Gender identity",
+          3
+        ],
+        [
+          "Discwoman",
+          0
+        ],
+        [
+          "Gender variance",
+          0
+        ],
+        [
+          "Soft butch",
+          2
+        ],
+        [
+          "Gender variance",
+          1
+        ],
+        [
+          "Transgender",
+          0
+        ],
+        [
+          "Soft butch",
+          3
+        ],
+        [
+          "Genderqueer",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ade64b655429939a52fe89a",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Sulley Muniru",
+          1
+        ],
+        [
+          "Sulley Muntari",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Sulley Muniru",
+          1
+        ],
+        [
+          "Sulley Muniru",
+          0
+        ],
+        [
+          "Sulley Muntari",
+          0
+        ],
+        [
+          "Ervin Bulku",
+          1
+        ],
+        [
+          "Khairu Azrin Khazali",
+          1
+        ],
+        [
+          "Matuzalém",
+          2
+        ],
+        [
+          "Muhammad Adil",
+          1
+        ],
+        [
+          "Bastian Schweinsteiger",
+          1
+        ],
+        [
+          "Luka Modrić",
+          1
+        ],
+        [
+          "Josip Skoko",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5adf49935542993a75d26491",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Power Grid",
+          0
+        ],
+        [
+          "Vanished Planet",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Femininity",
+          3
+        ],
+        [
+          "Alvin Goldfarb",
+          4
+        ],
+        [
+          "Vanished Planet",
+          0
+        ],
+        [
+          "Power Grid",
+          1
+        ],
+        [
+          "Pandemic (board game)",
+          3
+        ],
+        [
+          "Pandemic (board game)",
+          0
+        ],
+        [
+          "Power Grid",
+          0
+        ],
+        [
+          "Power Grid Company of Bangladesh",
+          2
+        ],
+        [
+          "Power Grid Corporation of India",
+          2
+        ],
+        [
+          "Power Grid Company of Bangladesh",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ae184185542990adbacf7ac",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Idaho Falls Regional Airport",
+          0
+        ],
+        [
+          "Waco Regional Airport",
+          0
+        ],
+        [
+          "Waco Regional Airport",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Boise Airport",
+          1
+        ],
+        [
+          "Idaho Falls Regional Airport",
+          0
+        ],
+        [
+          "Thief River Falls Regional Airport",
+          1
+        ],
+        [
+          "Boise Airport",
+          2
+        ],
+        [
+          "Lea County Regional Airport",
+          3
+        ],
+        [
+          "Huron Regional Airport",
+          2
+        ],
+        [
+          "Sioux Falls Regional Airport",
+          0
+        ],
+        [
+          "Huron Regional Airport",
+          0
+        ],
+        [
+          "Waco Regional Airport",
+          0
+        ],
+        [
+          "Star Valley Medical Center",
+          7
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.6666666666666666,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.30769230769230765,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a8340fd55429954d2e2ec6b",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Dangal (film)",
+          2
+        ],
+        [
+          "Darby O'Gill and the Little People",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Walt Disney Studios Motion Pictures",
+          0
+        ],
+        [
+          "Albert Sharpe",
+          1
+        ],
+        [
+          "Walt Disney's Treasury of Classic Tales",
+          1
+        ],
+        [
+          "Darby O'Gill and the Little People",
+          0
+        ],
+        [
+          "Darby O'Gill",
+          0
+        ],
+        [
+          "List of Walt Disney Pictures films",
+          2
+        ],
+        [
+          "Dangal (film)",
+          2
+        ],
+        [
+          "The Little Mermaid: Ariel's Beginning",
+          0
+        ],
+        [
+          "Walt Disney Studios Motion Pictures",
+          1
+        ],
+        [
+          "Walt Disney Pictures",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a818387554299260e20a291",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Based on a True Story...",
+          0
+        ],
+        [
+          "My Eyes (Blake Shelton song)",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Dru Hill (album)",
+          1
+        ],
+        [
+          "Grey Gardens (musical)",
+          0
+        ],
+        [
+          "Based on a True Story...",
+          0
+        ],
+        [
+          "My Eyes (Blake Shelton song)",
+          0
+        ],
+        [
+          "My Eyes (Blake Shelton song)",
+          1
+        ],
+        [
+          "Stranger in the House (song)",
+          1
+        ],
+        [
+          "Based on a True Story...",
+          4
+        ],
+        [
+          "Old 8×10",
+          0
+        ],
+        [
+          "Keyed Up",
+          0
+        ],
+        [
+          "This Is Me (Randy Travis album)",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ac370ce5542995ef918c18c",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Henry E. Rohlsen Airport",
+          0
+        ],
+        [
+          "Southwest Florida International Airport",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Tallahassee International Airport",
+          1
+        ],
+        [
+          "Gateway, Florida",
+          0
+        ],
+        [
+          "Boise Airport",
+          0
+        ],
+        [
+          "Andre Thysse",
+          0
+        ],
+        [
+          "Juice",
+          1
+        ],
+        [
+          "Gateway, Florida",
+          3
+        ],
+        [
+          "Florida State Road 876",
+          3
+        ],
+        [
+          "Southwest Florida International Airport",
+          0
+        ],
+        [
+          "Fort Myers, Florida",
+          5
+        ],
+        [
+          "Anguilla, U.S. Virgin Islands",
+          1
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ae3c0245542990afbd1e1c3",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Mortdecai (film)",
+          2
+        ],
+        [
+          "Olivia Munn",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Olivia Munn",
+          0
+        ],
+        [
+          "Mortdecai (film)",
+          1
+        ],
+        [
+          "Freight forwarder",
+          4
+        ],
+        [
+          "List of Grand Rapids Rampage seasons",
+          6
+        ],
+        [
+          "Office Christmas Party",
+          1
+        ],
+        [
+          "Freeloaders (film)",
+          2
+        ],
+        [
+          "On War",
+          2
+        ],
+        [
+          "Audra McDonald",
+          0
+        ],
+        [
+          "Dynamic demand (electric power)",
+          6
+        ],
+        [
+          "Buddy Holly (song)",
+          2
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ae1d32a554299492dc91b9c",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Fifty Shades (novel series)",
+          0
+        ],
+        [
+          "Fifty Shades (novel series)",
+          1
+        ],
+        [
+          "Fifty Shades Freed",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Fifty Shades of Oy Vey: A Parody",
+          2
+        ],
+        [
+          "List of awards and nominations received by Lecrae",
+          6
+        ],
+        [
+          "Weezer discography",
+          9
+        ],
+        [
+          "Fifty Shades (novel series)",
+          1
+        ],
+        [
+          "Fifty Shades Freed (film)",
+          1
+        ],
+        [
+          "Fifty Shades Darker",
+          2
+        ],
+        [
+          "Fifty Shades Darker (film)",
+          1
+        ],
+        [
+          "Fifty Shades of Oy Vey: A Parody",
+          0
+        ],
+        [
+          "E. L. James",
+          1
+        ],
+        [
+          "Fifty Shades of Grey",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.3333333333333333,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.15384615384615383,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5abafb6d5542992ccd8e7e92",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Starship Entertainment",
+          0
+        ],
+        [
+          "White Love (Starship Planet song)",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Starship Entertainment",
+          0
+        ],
+        [
+          "Epitaph Records",
+          0
+        ],
+        [
+          "Waputik Mountains",
+          2
+        ],
+        [
+          "Lecrae",
+          1
+        ],
+        [
+          "US Vision",
+          3
+        ],
+        [
+          "Buddy Holly (song)",
+          2
+        ],
+        [
+          "White Love (Speed song)",
+          0
+        ],
+        [
+          "Jay Park",
+          1
+        ],
+        [
+          "Kirsten Menger-Anderson",
+          1
+        ],
+        [
+          "Epitaph Records",
+          4
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5a82a91155429940e5e1a911",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Prophet's Prey",
+          0
+        ],
+        [
+          "The Last Lions",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Hillside Home School I",
+          6
+        ],
+        [
+          "Prophet's Prey",
+          0
+        ],
+        [
+          "Eye of the Leopard",
+          2
+        ],
+        [
+          "The Last Lions",
+          0
+        ],
+        [
+          "Prophet's Prey",
+          1
+        ],
+        [
+          "Operation Leopard",
+          3
+        ],
+        [
+          "In Jerusalem",
+          0
+        ],
+        [
+          "Malcolm Gets",
+          3
+        ],
+        [
+          "Maestro (2014 film)",
+          1
+        ],
+        [
+          "Muhammad: Legacy of a Prophet",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ae81032554299540e5a572a",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Electoral district of Bass",
+          1
+        ],
+        [
+          "Electoral district of Bass",
+          2
+        ],
+        [
+          "Pakenham, Victoria",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Electoral district of Braidwood",
+          2
+        ],
+        [
+          "Electoral district of Broken Hill",
+          7
+        ],
+        [
+          "Electoral district of Nunawading",
+          0
+        ],
+        [
+          "Electoral district of Braidwood",
+          0
+        ],
+        [
+          "Modbury Heights, South Australia",
+          1
+        ],
+        [
+          "Beaconsfield, Victoria",
+          0
+        ],
+        [
+          "Saskatchewan Highway 2",
+          2
+        ],
+        [
+          "A Miser Brothers' Christmas",
+          5
+        ],
+        [
+          "Electoral district of Tea Tree Gully",
+          0
+        ],
+        [
+          "Electoral district of North Eastern Boroughs",
+          0
+        ]
+      ],
+      "hops_found": 0,
+      "gold_hops": 2,
+      "evidence_recall": 0.0,
+      "evidence_precision": 0.0,
+      "evidence_f1": 0.0,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 0.0
+    },
+    {
+      "id": "5ac06e24554299294b218fd1",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "1891 Cincinnati Kelly's Killers season",
+          1
+        ],
+        [
+          "King Kelly",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Tralee Speedway",
+          2
+        ],
+        [
+          "East End Park (Cincinnati)",
+          1
+        ],
+        [
+          "1891 Cincinnati Kelly's Killers season",
+          0
+        ],
+        [
+          "Charlie Bell (baseball)",
+          1
+        ],
+        [
+          "King Kelly",
+          2
+        ],
+        [
+          "Frank Dwyer",
+          0
+        ],
+        [
+          "Lefty Marr",
+          1
+        ],
+        [
+          "Farmer Vaughn",
+          0
+        ],
+        [
+          "Cincinnati Kelly's Killers all-time roster",
+          0
+        ],
+        [
+          "Yank Robinson",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.0,
+      "evidence_precision": 0.0,
+      "evidence_f1": 0.0,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 0.0
+    },
+    {
+      "id": "5a7560585542992d0ec05f76",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Arbie Orenstein",
+          0
+        ],
+        [
+          "Maurice Ravel",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Buddy Holly (song)",
+          2
+        ],
+        [
+          "Weezer (1994 album)",
+          0
+        ],
+        [
+          "Maurice Ravel",
+          2
+        ],
+        [
+          "Arbie Orenstein",
+          0
+        ],
+        [
+          "Krzysztof Penderecki",
+          1
+        ],
+        [
+          "Stefans Grové",
+          1
+        ],
+        [
+          "Marius Trésor",
+          1
+        ],
+        [
+          "Veljo Tormis",
+          0
+        ],
+        [
+          "Beethoven's musical style",
+          1
+        ],
+        [
+          "Pearl Chertok",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a8a1b7a5542992d82986ec0",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "David Walker (abolitionist)",
+          2
+        ],
+        [
+          "Edward G. Walker",
+          0
+        ],
+        [
+          "Edward G. Walker",
+          1
+        ],
+        [
+          "Edward G. Walker",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Ed Crane (baseball)",
+          0
+        ],
+        [
+          "David Walker (abolitionist)",
+          2
+        ],
+        [
+          "Edward G. Walker",
+          0
+        ],
+        [
+          "Terry Garrison",
+          0
+        ],
+        [
+          "Edward G. Walker",
+          2
+        ],
+        [
+          "Mickey Walker (boxer)",
+          0
+        ],
+        [
+          "On War",
+          2
+        ],
+        [
+          "List of Grand Rapids Rampage seasons",
+          9
+        ],
+        [
+          "Lundy murders",
+          3
+        ],
+        [
+          "Lane Garrison",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.75,
+      "evidence_precision": 0.3,
+      "evidence_f1": 0.4285714285714285,
+      "gold_count": 4.0,
+      "predicted_count": 10.0,
+      "overlap_count": 3.0
+    },
+    {
+      "id": "5a7a650355429941d65f2615",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Gawvi",
+          0
+        ],
+        [
+          "Lecrae",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Lecrae",
+          0
+        ],
+        [
+          "Despoina",
+          3
+        ],
+        [
+          "Transgender",
+          0
+        ],
+        [
+          "List of awards and nominations received by Lecrae",
+          3
+        ],
+        [
+          "Augustine of Canterbury",
+          0
+        ],
+        [
+          "List of Lab Rats characters",
+          3
+        ],
+        [
+          "Sulley Muniru",
+          0
+        ],
+        [
+          "Muhammad Adil",
+          0
+        ],
+        [
+          "FSC Star",
+          2
+        ],
+        [
+          "Luka Modrić",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5a8555ea5542992a431d1b07",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Lujon",
+          2
+        ],
+        [
+          "Sexy Beast",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "List of Lab Rats characters",
+          3
+        ],
+        [
+          "Lujon",
+          0
+        ],
+        [
+          "Sexy Beast",
+          0
+        ],
+        [
+          "Reassuringly Expensive",
+          3
+        ],
+        [
+          "Musical composition",
+          0
+        ],
+        [
+          "Sheet music",
+          0
+        ],
+        [
+          "Under the Skin (novel)",
+          3
+        ],
+        [
+          "Sheet music",
+          1
+        ],
+        [
+          "Grey Gardens (estate)",
+          1
+        ],
+        [
+          "Matt McKenzie",
+          2
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ae23d945542996483e64939",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Darth Vader",
+          0
+        ],
+        [
+          "Princess Leia",
+          4
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Padmé Amidala",
+          3
+        ],
+        [
+          "Darth Vader",
+          1
+        ],
+        [
+          "Princess Leia's bikini",
+          0
+        ],
+        [
+          "Jacen Solo",
+          3
+        ],
+        [
+          "The Courtship of Princess Leia",
+          2
+        ],
+        [
+          "Luke Skywalker",
+          2
+        ],
+        [
+          "Princess Leia",
+          0
+        ],
+        [
+          "The Courtship of Princess Leia",
+          0
+        ],
+        [
+          "Star Wars: Racer Arcade",
+          8
+        ],
+        [
+          "Star Wars: Racer Arcade",
+          4
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.0,
+      "evidence_precision": 0.0,
+      "evidence_f1": 0.0,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 0.0
+    },
+    {
+      "id": "5a7211e655429971e9dc923c",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Joulupukki",
+          0
+        ],
+        [
+          "Joulupukki",
+          2
+        ],
+        [
+          "Yule Goat",
+          0
+        ],
+        [
+          "Yule Goat",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Joulupukki",
+          0
+        ],
+        [
+          "Joulupukki",
+          2
+        ],
+        [
+          "Yule Goat",
+          2
+        ],
+        [
+          "Mikulás",
+          1
+        ],
+        [
+          "Santa Claus",
+          1
+        ],
+        [
+          "Mikulás",
+          0
+        ],
+        [
+          "Christmas stocking",
+          0
+        ],
+        [
+          "Santa Claus",
+          0
+        ],
+        [
+          "Santa Claus Is Comin' to Town (film)",
+          2
+        ],
+        [
+          "Santa Claus in film",
+          3
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.75,
+      "evidence_precision": 0.3,
+      "evidence_f1": 0.4285714285714285,
+      "gold_count": 4.0,
+      "predicted_count": 10.0,
+      "overlap_count": 3.0
+    },
+    {
+      "id": "5a81d1f0554299676cceb0ee",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Messiah Part II",
+          0
+        ],
+        [
+          "Messiah Part II",
+          1
+        ],
+        [
+          "Messiah Part II",
+          2
+        ],
+        [
+          "Nativity of Jesus",
+          0
+        ],
+        [
+          "Nativity of Jesus",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Thomas Crawford of Jordanhill",
+          0
+        ],
+        [
+          "Nativity of Jesus",
+          0
+        ],
+        [
+          "Messiah Part III",
+          2
+        ],
+        [
+          "Manga Bible (series)",
+          4
+        ],
+        [
+          "Augustinian hypothesis",
+          1
+        ],
+        [
+          "Messiah Part II",
+          2
+        ],
+        [
+          "Two-gospel hypothesis",
+          1
+        ],
+        [
+          "Nativity of Jesus",
+          3
+        ],
+        [
+          "Messiah Part I",
+          3
+        ],
+        [
+          "Return of the family of Jesus to Nazareth",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.4,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.26666666666666666,
+      "gold_count": 5.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ae0de1455429924de1b71b4",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "House of Pies",
+          0
+        ],
+        [
+          "Orange Julius",
+          0
+        ],
+        [
+          "Orange Julius",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "John's Incredible Pizza Company",
+          0
+        ],
+        [
+          "List of awards and nominations received by Lecrae",
+          0
+        ],
+        [
+          "Orange Julius",
+          0
+        ],
+        [
+          "House of Pies",
+          0
+        ],
+        [
+          "America's Incredible Pizza Company",
+          0
+        ],
+        [
+          "Big Boy Restaurants",
+          0
+        ],
+        [
+          "Vodka Red Bull",
+          0
+        ],
+        [
+          "Bambolino's",
+          1
+        ],
+        [
+          "Egg cream",
+          0
+        ],
+        [
+          "Big Boy Restaurants",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.6666666666666666,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.30769230769230765,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a7ca74c55429907fabeefe9",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Aram Saroyan",
+          0
+        ],
+        [
+          "Edward Keonjian",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Lane Garrison",
+          0
+        ],
+        [
+          "Marius Trésor",
+          0
+        ],
+        [
+          "Rob Marciano",
+          0
+        ],
+        [
+          "My Name Is Aram",
+          0
+        ],
+        [
+          "Strawberry Saroyan",
+          1
+        ],
+        [
+          "Sal Randolph",
+          3
+        ],
+        [
+          "Aram Saroyan",
+          0
+        ],
+        [
+          "Strawberry Saroyan",
+          0
+        ],
+        [
+          "Edward Keonjian",
+          0
+        ],
+        [
+          "Edward Keonjian",
+          2
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a774e415542994aec3b7280",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Kait Parker",
+          0
+        ],
+        [
+          "Kait Parker",
+          1
+        ],
+        [
+          "Rob Marciano",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Mateo Kovačić",
+          0
+        ],
+        [
+          "FSC Star",
+          7
+        ],
+        [
+          "Kait Parker",
+          1
+        ],
+        [
+          "Atlanta Braves Radio Network",
+          4
+        ],
+        [
+          "Ginger Zee",
+          0
+        ],
+        [
+          "Bob Ryan (meteorologist)",
+          0
+        ],
+        [
+          "Atlanta Braves Radio Network",
+          3
+        ],
+        [
+          "Rob Marciano",
+          1
+        ],
+        [
+          "Rob Marciano",
+          0
+        ],
+        [
+          "Bob Ryan (meteorologist)",
+          3
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.6666666666666666,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.30769230769230765,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ab262e2554299722f9b4cfd",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Oxley Highway",
+          2
+        ],
+        [
+          "Port Macquarie",
+          3
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Officer, Victoria",
+          1
+        ],
+        [
+          "Port Macquarie",
+          3
+        ],
+        [
+          "Saskatchewan Highway 2",
+          10
+        ],
+        [
+          "Port Macquarie",
+          2
+        ],
+        [
+          "Carroll, New South Wales",
+          3
+        ],
+        [
+          "Nevertire, New South Wales",
+          1
+        ],
+        [
+          "Port Macquarie",
+          0
+        ],
+        [
+          "Oxley Highway",
+          0
+        ],
+        [
+          "Cottan-Bimbang National Park",
+          2
+        ],
+        [
+          "Apsley Falls",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ae0d9c555429924de1b719a",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Jay Van Andel",
+          0
+        ],
+        [
+          "Van Andel Institute",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Van Andel Institute",
+          1
+        ],
+        [
+          "Richard DeVos",
+          0
+        ],
+        [
+          "LovHer",
+          4
+        ],
+        [
+          "Worldwide brands",
+          0
+        ],
+        [
+          "Jay Van Andel",
+          0
+        ],
+        [
+          "Amway",
+          1
+        ],
+        [
+          "The Untamed Youth",
+          0
+        ],
+        [
+          "Malcolm Gets",
+          1
+        ],
+        [
+          "Lecrae",
+          1
+        ],
+        [
+          "Ana Mendieta",
+          0
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a771ead55429966f1a36c7c",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Grey Gardens (2009 film)",
+          0
+        ],
+        [
+          "Grey Gardens (2009 film)",
+          1
+        ],
+        [
+          "Phelan Beale",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Lois Wright",
+          2
+        ],
+        [
+          "Satrangi Sasural",
+          1
+        ],
+        [
+          "Arbie Orenstein",
+          0
+        ],
+        [
+          "Grey Gardens",
+          0
+        ],
+        [
+          "Edward G. Walker",
+          0
+        ],
+        [
+          "Phelan Beale",
+          0
+        ],
+        [
+          "Jerry Torre",
+          2
+        ],
+        [
+          "Jeanne Tripplehorn",
+          3
+        ],
+        [
+          "Michael Korie",
+          0
+        ],
+        [
+          "Jerry Torre",
+          6
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.3333333333333333,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.15384615384615383,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ae81b2755429952e35eaa1e",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Fulgencio Batista",
+          0
+        ],
+        [
+          "Mary Tarrero-Serrano",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Thomas Crawford of Jordanhill",
+          1
+        ],
+        [
+          "Quizás, Quizás, Quizás",
+          2
+        ],
+        [
+          "Mary Tarrero-Serrano",
+          0
+        ],
+        [
+          "List of things named after Fidel Castro",
+          1
+        ],
+        [
+          "Ana Mendieta",
+          1
+        ],
+        [
+          "Caribbean Peace Force",
+          1
+        ],
+        [
+          "Mary McCarthy Gomez Cueto",
+          0
+        ],
+        [
+          "Holiday in Havana",
+          2
+        ],
+        [
+          "Buddy Holly (song)",
+          2
+        ],
+        [
+          "The Persian Boy",
+          1
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.0,
+      "evidence_precision": 0.0,
+      "evidence_f1": 0.0,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 0.0
+    },
+    {
+      "id": "5a7faed65542994857a767b6",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Eastern Bloc",
+          0
+        ],
+        [
+          "FSC Star",
+          1
+        ],
+        [
+          "FSC Star",
+          5
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Eastern Bloc",
+          0
+        ],
+        [
+          "List of Grand Rapids Rampage seasons",
+          6
+        ],
+        [
+          "List of Soviet and Eastern Bloc defectors",
+          1
+        ],
+        [
+          "Flight and expulsion of Germans (1944–50)",
+          1
+        ],
+        [
+          "Daimler AG",
+          5
+        ],
+        [
+          "Volvo FH",
+          3
+        ],
+        [
+          "Alamance Crossing",
+          2
+        ],
+        [
+          "Gender polarization",
+          3
+        ],
+        [
+          "Papa Murphy's",
+          2
+        ],
+        [
+          "Eastern Bloc",
+          1
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.3333333333333333,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.15384615384615383,
+      "gold_count": 3.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5abee41a5542993fe9a41d79",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Australian Street Stock Championship",
+          0
+        ],
+        [
+          "Dirt track racing",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Cliffs Shaft Mine Museum",
+          0
+        ],
+        [
+          "Dirt track racing",
+          0
+        ],
+        [
+          "Dirt track racing in Australia",
+          0
+        ],
+        [
+          "Dirt track racing in South Africa",
+          0
+        ],
+        [
+          "List of dirt track ovals in South Africa",
+          0
+        ],
+        [
+          "Dirt track racing in the United Kingdom",
+          0
+        ],
+        [
+          "List of dirt track ovals in the United Kingdom",
+          0
+        ],
+        [
+          "Australian Street Stock Championship",
+          0
+        ],
+        [
+          "List of dirt track ovals in the United Kingdom",
+          1
+        ],
+        [
+          "Tralee Speedway",
+          2
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5ab5ec0a5542997d4ad1f250",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "BJ's Wholesale Club",
+          0
+        ],
+        [
+          "US Vision",
+          3
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Canada's Wonderland",
+          0
+        ],
+        [
+          "Manga Bible (series)",
+          6
+        ],
+        [
+          "US Vision",
+          3
+        ],
+        [
+          "BJ's Wholesale Club",
+          0
+        ],
+        [
+          "Wholesale Club",
+          0
+        ],
+        [
+          "Edward Phelan",
+          5
+        ],
+        [
+          "Alamance Crossing",
+          2
+        ],
+        [
+          "TJX Companies",
+          2
+        ],
+        [
+          "City Club (wholesale club)",
+          0
+        ],
+        [
+          "Wholesale Club",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5a89dbec554299669944a5d6",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Theme Park Inc",
+          1
+        ],
+        [
+          "Theme Park World",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Tomba! 2: The Evil Swine Return",
+          6
+        ],
+        [
+          "Star Wars: Jedi Starfighter",
+          2
+        ],
+        [
+          "Canada's Wonderland",
+          1
+        ],
+        [
+          "Theme Park World",
+          0
+        ],
+        [
+          "Theme Park Inc",
+          0
+        ],
+        [
+          "Theme Park Inc",
+          1
+        ],
+        [
+          "Thrillville: Off the Rails",
+          0
+        ],
+        [
+          "Theme Park Inc",
+          2
+        ],
+        [
+          "Theme Park World",
+          1
+        ],
+        [
+          "South Park (video game)",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 1.0,
+      "evidence_precision": 0.2,
+      "evidence_f1": 0.33333333333333337,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 2.0
+    },
+    {
+      "id": "5adcd4325542994d58a2f6ed",
+      "question_type": "comparison",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Colocasia",
+          0
+        ],
+        [
+          "Coronilla",
+          0
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Xanthosoma",
+          3
+        ],
+        [
+          "Femininity",
+          3
+        ],
+        [
+          "The Babymakers",
+          1
+        ],
+        [
+          "Aye, and Gomorrah, and other stories",
+          4
+        ],
+        [
+          "National Grid Corporation of the Philippines",
+          2
+        ],
+        [
+          "Xanthosoma",
+          0
+        ],
+        [
+          "Theater Erfurt",
+          3
+        ],
+        [
+          "Fort Orange (New Netherland)",
+          2
+        ],
+        [
+          "Caladium",
+          0
+        ],
+        [
+          "Coronilla",
+          0
+        ]
+      ],
+      "hops_found": 1,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ac54ca45542993e66e822d5",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Buddy Holly (song)",
+          1
+        ],
+        [
+          "Weezer discography",
+          1
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "Rave On Buddy Holly",
+          0
+        ],
+        [
+          "Weezer (1994 album)",
+          2
+        ],
+        [
+          "Undone – The Sweater Song",
+          0
+        ],
+        [
+          "Buddy Holly (album)",
+          0
+        ],
+        [
+          "Weezer discography",
+          1
+        ],
+        [
+          "Buddy Holly (song)",
+          0
+        ],
+        [
+          "That'll Be the Day (album)",
+          0
+        ],
+        [
+          "Weezer (1994 album)",
+          0
+        ],
+        [
+          "Buddy Holly (song)",
+          2
+        ],
+        [
+          "Rave On Buddy Holly",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.5,
+      "evidence_precision": 0.1,
+      "evidence_f1": 0.16666666666666669,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 1.0
+    },
+    {
+      "id": "5ab72c7d55429928e1fe3830",
+      "question_type": "bridge",
+      "level": "hard",
+      "gold_evidence": [
+        [
+          "Fort Frederick (Albany)",
+          2
+        ],
+        [
+          "Fort Orange (New Netherland)",
+          2
+        ]
+      ],
+      "predicted_evidence": [
+        [
+          "1891 Cincinnati Kelly's Killers season",
+          1
+        ],
+        [
+          "Fort Sekondi",
+          3
+        ],
+        [
+          "Oops-Leon",
+          2
+        ],
+        [
+          "Johannes De Decker",
+          4
+        ],
+        [
+          "Over-Run",
+          1
+        ],
+        [
+          "National San Chung Senior High School",
+          1
+        ],
+        [
+          "Fort Orange (New Netherland)",
+          4
+        ],
+        [
+          "Fort Sekondi",
+          0
+        ],
+        [
+          "Fort Orange (New Netherland)",
+          0
+        ],
+        [
+          "Fort Frederick (Albany)",
+          1
+        ]
+      ],
+      "hops_found": 2,
+      "gold_hops": 2,
+      "evidence_recall": 0.0,
+      "evidence_precision": 0.0,
+      "evidence_f1": 0.0,
+      "gold_count": 2.0,
+      "predicted_count": 10.0,
+      "overlap_count": 0.0
+    }
+  ],
+  "command": [
+    "python",
+    "-m",
+    "memoratum.eval_hotpotqa",
+    "--data",
+    "data/hotpot_dev_fullwiki_v1.json",
+    "--n",
+    "50",
+    "--seed",
+    "42",
+    "--k",
+    "10",
+    "--allow-unmeasurable-gold",
+    "--baseline",
+    "eval/BASELINES.md",
+    "--out-md",
+    "eval/RESULTS-evidence-real.md",
+    "--out-json",
+    "eval/evidence-real.json"
+  ]
+}

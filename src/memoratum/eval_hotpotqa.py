@@ -90,6 +90,59 @@ ID_SEPARATOR = "::"
 # --------------------------------------------------------------------------- #
 
 
+class UnmeasurableGoldError(ValueError):
+    """A record's gold evidence cannot be retrieved from the corpus it ships with.
+
+    A subclass of :class:`ValueError` so every existing refusal path keeps working. The
+    ``reason`` attribute is what the manifest records, so an exclusion is auditable
+    rather than a silent skip (M3).
+    """
+
+    def __init__(self, message: str, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def partition_unmeasurable(
+    records: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split raw records into measurable ones and gold-outside-context exclusions.
+
+    In the real ``hotpot_dev_fullwiki_v1.json`` the ``context`` field holds the
+    dataset's own fullwiki retriever's output, and that retriever misses gold for a
+    large fraction of questions (7,706 gold facts across 7,405 questions sit outside
+    the provided context). Those questions are **not dataset errors** — they are the
+    retrieval condition itself: no memory layer can retrieve evidence that the corpus
+    does not contain. They are excluded and counted, never scored 0.0 (which would
+    measure the dataset's retriever, not ours) and never refused wholesale (which
+    would make the real corpus unrunnable).
+
+    Malformed records are still hard errors: a missing question or a malformed fact is
+    a broken file, not an unmeasurable question.
+    """
+    measurable: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
+    for index, record in enumerate(records):
+        try:
+            # Validate via normalize, but keep the RAW record: the caller normalizes the
+            # measurable subset itself, and feeding a normalized dict back through
+            # normalize would fail on its own output shape (no `supporting_facts` key).
+            normalize_hotpotqa([record])
+            measurable.append(record)
+        except UnmeasurableGoldError as exc:
+            exclusions.append(
+                {
+                    "id": str(record.get("_id", record.get("question_id", index))),
+                    "reason": exc.reason,
+                }
+            )
+        except (ValueError, TypeError) as exc:
+            # normalize re-indexes every single-record call, so its "record 0" is a lie
+            # here. Re-raise with the true position in the file.
+            raise type(exc)(f"record {index}: {exc}") from exc
+    return measurable, exclusions
+
+
 def _split_id(custom_id: str) -> tuple[str, int]:
     """Inverse of ``f"{title}{ID_SEPARATOR}{sent_id}"``."""
     title, separator, sent = custom_id.rpartition(ID_SEPARATOR)
@@ -111,7 +164,10 @@ def normalize_hotpotqa(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]
       examined as a success.
     * **A supporting fact outside the provided context is refused.** Such gold is
       unretrievable by construction, so it would score 0.0 forever and quietly depress the
-      figure — a dataset bug wearing the costume of a retrieval regression.
+      figure — a dataset bug wearing the costume of a retrieval regression. In the real
+      ``fullwiki`` file this condition is the dataset's own retriever missing gold, which
+      is common rather than exceptional; :func:`partition_unmeasurable` is the opt-in
+      path that excludes and counts instead of refusing.
     """
     normalized: list[dict[str, Any]] = []
     for index, record in enumerate(records):
@@ -130,8 +186,18 @@ def normalize_hotpotqa(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]
             )
 
         raw_context = record.get("context", record.get("paragraphs"))
-        if not isinstance(raw_context, list) or not raw_context:
-            raise ValueError(f"record {index} has no context")
+        # By this point `supporting_facts` is known non-empty, so an absent or empty
+        # context means the gold cannot be in the corpus — the same unmeasurable
+        # condition as gold-outside-context, and common in the real fullwiki file
+        # (10 records). A context that is present but the wrong shape stays malformed.
+        if raw_context is None or (isinstance(raw_context, list) and not raw_context):
+            raise UnmeasurableGoldError(
+                f"record {index} has no context, so its gold evidence cannot be "
+                "retrieved from this corpus",
+                reason="empty_context",
+            )
+        if not isinstance(raw_context, list):
+            raise TypeError(f"record {index} has no context")
 
         titles: dict[str, list[str]] = {}
         for entry in raw_context:
@@ -154,15 +220,16 @@ def normalize_hotpotqa(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]
             if not isinstance(title, str) or not isinstance(sent_id, int):
                 raise TypeError(f"record {index} has a malformed supporting fact")
             if title not in titles:
-                raise ValueError(
+                raise UnmeasurableGoldError(
                     f"record {index}: supporting fact {title!r} is not in the provided "
-                    "context, so it cannot be retrieved; this is a dataset error"
+                    "context, so it cannot be retrieved from this corpus",
+                    reason="gold_title_outside_context",
                 )
             if not 0 <= sent_id < len(titles[title]):
-                raise ValueError(
+                raise UnmeasurableGoldError(
                     f"record {index}: supporting fact {title!r} sentence {sent_id} is not "
-                    f"in the provided context (it has {len(titles[title])}); this is a "
-                    "dataset error"
+                    f"in the provided context (it has {len(titles[title])})",
+                    reason="gold_sentence_out_of_range",
                 )
             gold.add((title, sent_id))
 
@@ -318,14 +385,26 @@ def evaluate_evidence(
     dataset_hash: str = "",
     dataset_name: str = "hotpotqa-evidence",
     baseline: dict[str, Any] | None = None,
+    allow_unmeasurable_gold: bool = False,
 ) -> dict[str, Any]:
-    """Score sentence-level evidence retrieval over the union of provided contexts."""
+    """Score sentence-level evidence retrieval over the union of provided contexts.
+
+    With ``allow_unmeasurable_gold`` the questions whose gold evidence the provided
+    context does not contain are excluded and counted (see
+    :func:`partition_unmeasurable`); without it the run refuses, which is the right
+    behaviour for a corpus that promises gold-in-context.
+    """
     if k <= 0:
         raise ValueError(f"k must be positive, got {k}")
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
 
-    normalized = normalize_hotpotqa(records)
+    if allow_unmeasurable_gold:
+        measurable, exclusions = partition_unmeasurable(records)
+        normalized = normalize_hotpotqa(measurable)
+    else:
+        normalized = normalize_hotpotqa(records)
+        exclusions = []
     picked = sample_records(normalized, n=n, seed=seed)
     embedder = embedder or HashEmbedder(dims=64)
     factory = vector_store_factory or (lambda conn: SQLiteVectorStore(conn))
@@ -423,6 +502,8 @@ def evaluate_evidence(
         vector_store=store_label,
         data_sha256=dataset_hash or records_sha256([raw_by_id[item["id"]] for item in picked]),
     )
+    dataset_total = len(records)
+    excluded = len(exclusions)
     manifest["evidence_config"] = {
         "unit": EVIDENCE_UNIT,
         "scorer": EVIDENCE_SCORER,
@@ -434,6 +515,10 @@ def evaluate_evidence(
         "sentences_indexed": len(corpus),
         "retrieval_limit": k,
         "corpus": "union of provided contexts",
+        "dataset_records": dataset_total,
+        "unmeasurable_gold_excluded": excluded,
+        "unmeasurable_gold_rate": (excluded / dataset_total) if dataset_total else None,
+        "allow_unmeasurable_gold": allow_unmeasurable_gold,
     }
 
     return {
@@ -550,6 +635,28 @@ def summarize(result: dict[str, Any]) -> str:
         "",
         "A hop is a document, not a sentence: finding two sentences of one title is one hop.",
         "",
+        "## What this figure is conditional on",
+        "",
+    ]
+    excluded = config.get("unmeasurable_gold_excluded", 0)
+    total = config.get("dataset_records", 0)
+    rate = config.get("unmeasurable_gold_rate")
+    rate_shown = "n/a" if rate is None else f"{rate:.1%}"
+    lines += [
+        (
+            f"- questions excluded (gold outside the provided context): {excluded} of "
+            f"{total} ({rate_shown})"
+        ),
+        "",
+        (
+            f"The figures above are **conditional**: they hold for the "
+            f"{result['scored_questions']} questions where the dataset's own fullwiki "
+            "retrieval placed every gold fact inside the provided context. Questions "
+            "where it did not are excluded and counted above, never scored 0.0 — "
+            "scoring them would measure the dataset's retriever, not the memory layer "
+            "under test."
+        ),
+        "",
         "## By question type",
         "",
     ]
@@ -603,6 +710,15 @@ def main(argv: list[str] | None = None) -> int:
         default="fullwiki",
         help=f"HotPotQA split; only {', '.join(ALLOWED_CONFIGS)} is admitted",
     )
+    parser.add_argument(
+        "--allow-unmeasurable-gold",
+        action="store_true",
+        help=(
+            "exclude and count questions whose gold evidence the provided context does "
+            "not contain, instead of refusing the file (the real fullwiki corpus needs "
+            "this: its own retriever misses gold often)"
+        ),
+    )
     parser.add_argument("--baseline", default="", help="BASELINES.md to gate against")
     parser.add_argument("--out-md", default="")
     parser.add_argument("--out-json", default="")
@@ -645,6 +761,7 @@ def main(argv: list[str] | None = None) -> int:
             k=args.k,
             dataset_hash=file_sha256(args.data) if os.path.exists(args.data) else "",
             baseline=baseline_row,
+            allow_unmeasurable_gold=args.allow_unmeasurable_gold,
         )
     except (ValueError, TypeError, OSError) as exc:
         print(str(exc), file=sys.stderr)

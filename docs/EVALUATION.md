@@ -170,9 +170,41 @@ uv run python -m memoratum.eval_hotpotqa \
 ```
 
 The dataset is **not vendored** — CC BY-SA 4.0, and ShareAlike attaches to a normalised
-extract. Fetch it yourself, as `data/download.log` records. The committed
+extract. Fetch it yourself. The committed
 `eval/fixtures/hotpotqa_evidence_smoke.json` is synthetic, so the axis is testable and
 CI-gateable without it.
+
+**The fetch command, recorded** (source: [hotpotqa.github.io](https://hotpotqa.github.io/),
+"Dev set (fullwiki) (45MB)"; licence CC BY-SA 4.0):
+
+```bash
+mkdir -p data
+curl -fL -o data/hotpot_dev_fullwiki_v1.json \
+  http://curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_fullwiki_v1.json
+sha256sum data/hotpot_dev_fullwiki_v1.json
+# expect: d0382d7cca3579b5e60a1b088c2e928915a6913f41fa5149bec191e2fc0b11c8
+```
+
+`mkdir -p data` is part of the command, not a courtesy: `curl -fL -o` does not create the
+target directory, so on a fresh clone the bare `curl` fails with "could not resolve" — no,
+with "Failed to create the file", and the failure looks like a network error. The
+checksum is what makes a re-download verifiable. On 2026-11-04 the original host did not
+resolve (DNS failure, not a network outage — other hosts resolved); the same file is in
+the Wayback Machine, and that snapshot is what the recorded figure below was measured on:
+
+```bash
+curl -fL -o data/hotpot_dev_fullwiki_v1.json \
+  https://web.archive.org/web/20260411202319/http://curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_fullwiki_v1.json
+```
+
+**Unmeasurable gold is excluded and counted, never scored.** In the real fullwiki file
+the `context` field holds the dataset's own retrieval system's output, and that system
+misses gold for a large fraction of questions (7,706 gold facts across 7,405 questions
+sit outside the provided context). No memory layer can retrieve evidence the corpus does
+not contain, so `--allow-unmeasurable-gold` excludes those questions and records the
+count and rate in the manifest; the report states that the figure is conditional on
+them. Without the flag the run refuses, which stays the right behaviour for a corpus
+that promises gold-in-context.
 
 | figure | meaning |
 |---|---|
@@ -208,6 +240,18 @@ recall each fail. With `--baseline eval/BASELINES.md` it additionally enforces a
 ceiling. The committed `eval/evidence.json` is the fixture run with that baseline applied;
 `eval/BASELINES.md` records it as a cross-machine tripwire on the retrieval config, not as a
 claim about the real corpus.
+
+**The real-corpus figure.** `eval/evidence-real.json` is the first run against the real
+`hotpot_dev_fullwiki_v1.json` (fetched per the command above; sha256 `d0382d7c…`):
+`evidence_recall` 0.620, `evidence_precision` 0.146, `evidence_f1` 0.233,
+`joint_evidence_rate` 0.340, over 50 questions sampled (seed 42) from the 2,088 of 7,405
+that are measurable — 5,317 (71.8%) excluded because the dataset's own retrieval did not
+place every gold fact in the provided context. The figure is **conditional** on that
+subset, and the report says so under its own heading. It is deterministic (two runs
+produce identical per-question rows) and the k-sensitivity has the right shape: recall
+0.062 → 0.930 as k goes 1 → 40 while precision falls 0.140 → 0.057. The rollup
+(`eval/RESULTS.md`) carries this row as the evidence axis's headline figure; the fixture
+run stays the CI gate.
 
 ## Comparing two runs
 

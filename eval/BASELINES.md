@@ -79,6 +79,25 @@ travels. The gate direction is a **floor**: recall must not fall below
 |---|---|---|---|---|---|---|---|
 | evidence_recall | 0.5833 | 0.05 | hotpotqa_evidence_smoke.json (n=2, k=5) | 42 | documents | n/a (ratio) | `python -m memoratum.eval_hotpotqa --data eval/fixtures/hotpotqa_evidence_smoke.json --n 2 --seed 42 --k 5` |
 
+**Real-corpus measurement — 2026-11-04, report-only.** The first run against the real
+`hotpot_dev_fullwiki_v1.json` (sha256 `d0382d7c…`, fetched per the command in
+`docs/EVALUATION.md` after the original host stopped resolving; Wayback snapshot
+20260411202319). This row is deliberately **not** the gate row: CI does not have the
+unvendored dataset, so a gate row keyed on it could never be enforced — it would be a
+baseline that only passes because nobody can run it. The fixture row above remains the
+CI tripwire.
+
+| axis | figure | tolerance | corpus | seed | mode | hardware | command |
+|---|---|---|---|---|---|---|---|
+| evidence_recall_real | 0.6197 | 0.10 | hotpot_dev_fullwiki_v1.json (n=50 of 2,088 measurable, k=10) | 42 | documents | n/a (ratio) | `python -m memoratum.eval_hotpotqa --data data/hotpot_dev_fullwiki_v1.json --n 50 --seed 42 --k 10 --allow-unmeasurable-gold` |
+
+Measured: `evidence_recall` 0.620, `evidence_precision` 0.146, `evidence_f1` 0.233,
+`joint_evidence_rate` 0.340. **Conditional figure**: 5,317 of 7,405 questions (71.8%) are
+excluded because the dataset's own fullwiki retrieval did not place every gold fact in
+the provided context — no memory layer can retrieve evidence the corpus does not contain.
+k-sensitivity on the same sample: recall 0.062 → 0.930 as k goes 1 → 40 while precision
+falls 0.140 → 0.057, and two identical runs produce identical per-question rows.
+
 ## Status
 
 | Phase | Axis | Baseline state |

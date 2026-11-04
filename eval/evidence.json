@@ -26,7 +26,11 @@
       "paragraphs_indexed": 5,
       "sentences_indexed": 14,
       "retrieval_limit": 5,
-      "corpus": "union of provided contexts"
+      "corpus": "union of provided contexts",
+      "dataset_records": 2,
+      "unmeasurable_gold_excluded": 0,
+      "unmeasurable_gold_rate": 0.0,
+      "allow_unmeasurable_gold": false
     }
   },
   "gate": {
@@ -188,8 +192,8 @@
     "--baseline",
     "eval/BASELINES.md",
     "--out-json",
-    "/tmp/opencode/evidence.json",
+    "eval/evidence.json",
     "--out-md",
-    "/tmp/opencode/RESULTS-evidence.md"
+    "eval/RESULTS-evidence.md"
   ]
 }
