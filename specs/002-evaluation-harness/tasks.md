@@ -290,7 +290,9 @@ The phase recorded as NOT STARTED on 2026-10-05 is now built. Its resume conditi
   `is_full_wiki_scale: false`, and the report states it in prose.
 - **Fixture only.** `eval/fixtures/hotpotqa_evidence_smoke.json` is synthetic. The real
   dataset is CC BY-SA 4.0 and is **not vendored**, matching the `data/download.log`
-  precedent.
+  precedent. *(Updated 2026-11-04: the real dataset was fetched — not vendored, sha256
+  recorded in `docs/EVALUATION.md` — and the first real-corpus run is committed as
+  `eval/evidence-real.json`; see the real-corpus block below.)*
 - **Still rejected, recorded so it is not relitigated:** BEAM (100% LLM judge), MemoryBench
   (conflicts with Principle V), and answer-level scoring on any dataset (the basis for
   rejecting HotPotQA itself).
@@ -299,6 +301,32 @@ Measured on the fixture at k=5: `evidence_recall` 0.583, `evidence_precision` 0.
 `joint_evidence_rate` 0.000. k-sensitivity confirms the metric measures retrieval rather than
 a constant — recall rises 0.167 → 1.000 as k goes 1 → 10 while precision falls
 0.500 → 0.250, and an oracle scores exactly 1.000. 25 mutations injected, all caught.
+
+### Real-corpus run — 2026-11-04
+
+The real `hotpot_dev_fullwiki_v1.json` (7,405 questions, sha256 `d0382d7c…`, fetched per
+the command recorded in `docs/EVALUATION.md` after the original host stopped resolving —
+the Wayback snapshot of the same URL was used) changed one semantic decision and produced
+the first real figures:
+
+- **Unmeasurable gold is excluded and counted, never scored.** The dataset's own fullwiki
+  retrieval misses gold for 5,317 of 7,405 questions (71.8%): 5,306 with a gold title
+  outside the provided context, 1 with an out-of-range sentence id, 10 with an empty
+  context. Scoring them 0.0 would measure the dataset's retriever, not the memory layer
+  under test; refusing the file wholesale would make the real corpus unrunnable. The
+  strict refusal stays the default; `--allow-unmeasurable-gold` opts into exclusion with
+  full accounting (`dataset_records`, `unmeasurable_gold_excluded`, `unmeasurable_gold_rate`
+  in the manifest, the conditioning under its own heading in the report). 10 new mutations
+  injected against this logic, all caught.
+- **Measured (n=50, seed 42, k=10, HashEmbedder:64, 2,052 sentences indexed):**
+  `evidence_recall` 0.620, `evidence_precision` 0.146, `evidence_f1` 0.233,
+  `joint_evidence_rate` 0.340. Deterministic across runs; k-sensitivity recall
+  0.062 → 0.930 as k goes 1 → 40 while precision falls 0.140 → 0.057.
+- **Recorded as report-only**: `eval/evidence-real.json` + `eval/RESULTS-evidence-real.md`
+  committed; the rollup (`eval/RESULTS.md`) carries the real row as the evidence headline;
+  `eval/BASELINES.md` records it as `evidence_recall_real` with the explicit note that it
+  is **not** the CI gate row, because CI does not have the unvendored dataset and a gate
+  nobody can run would only ever pass vacuously. The fixture row remains the CI tripwire.
 
 ---
 

@@ -238,6 +238,20 @@ No answerer exists, and a test asserts that perturbing a record's `answer` field
 no reported figure — so the rejection of this dataset for *answering* is enforced by
 measurement rather than by a docstring. 25 mutations injected, all caught.
 
+**Amended 2026-11-04 — the real corpus forced a semantic decision.** The refusal rule
+above assumed gold-in-context is the norm. In the real `hotpot_dev_fullwiki_v1.json` it
+is the exception: the `context` field holds the dataset's own fullwiki retriever's
+output, and that retriever misses gold for 5,317 of 7,405 questions (71.8%). Those
+questions are not dataset errors — they are the retrieval condition itself: no memory
+layer can retrieve evidence the corpus does not contain. The runner therefore gains
+`partition_unmeasurable` and `--allow-unmeasurable-gold`: the strict refusal stays the
+default (the fixture/CI contract is unchanged), and opting in **excludes and counts**
+the unmeasurable questions — never scores them 0.0, which would measure the dataset's
+retriever rather than the memory layer under test — with the count, rate and the
+conditioning of the figure recorded in the manifest and stated in the report under its
+own heading. The first real-corpus run is recorded in `eval/evidence-real.json` and
+`eval/BASELINES.md` (report-only; the fixture row remains the CI gate).
+
 ### Key Entities
 
 - **Scoped corpus**: synthetic or dataset-derived documents attributed to a
