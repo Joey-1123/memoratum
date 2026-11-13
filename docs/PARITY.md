@@ -48,7 +48,8 @@ an old external index.
    supersede test + LongMemEval-style spot checks.
 3. **Profiles/filters/extras** — profile endpoint, metadata filters, rerank/rewrite flags,
    customId upserts, scoped keys. Gate: per-feature tests.
-4. **Clients** — OpenCode V2 plugin (reference port exists), MCP server, Python/TS SDKs.
+4. **Clients** — OpenCode plugin (dual export: `server()` for released OpenCode,
+   `setup()` for V2 builds), MCP server, Python/TS SDKs.
 5. **Release** — README quickstart, CI (ruff + pytest), versioning, changelog.
 
 ## Non-goals

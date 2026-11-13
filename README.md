@@ -79,7 +79,7 @@ Point `MEMORATUM_LLM_ENDPOINT` / `MEMORATUM_LLM_MODEL` at any OpenAI-compatible 
 
 ## Clients
 
-Python SDK (`memoratum.client`), TypeScript SDK (`clients/ts`, `npm test`), OpenCode V2 plugin (`clients/opencode/memoratum.js`; `MEMORATUM_URL`/`MEMORATUM_API_KEY`/`MEMORATUM_TAG`), MCP server (`python -m memoratum.mcp`, stdio `remember`/`recall`). See [`clients/`](clients/).
+Python SDK (`memoratum.client`), TypeScript SDK (`clients/ts`, `npm test`), OpenCode plugin (`clients/opencode/memoratum.js`; `MEMORATUM_URL`/`MEMORATUM_API_KEY`/`MEMORATUM_TAG` — recall into the model's context, capture at session compaction), MCP server (`python -m memoratum.mcp`, stdio `remember`/`recall`). See [`clients/`](clients/).
 
 ## Dashboard
 
