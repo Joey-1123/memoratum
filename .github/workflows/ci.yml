@@ -39,6 +39,7 @@ jobs:
         with:
           node-version: 22
       - run: node --check clients/opencode/memoratum.js
+      - run: node --experimental-strip-types clients/opencode/test.ts
   dashboard:
     runs-on: ubuntu-latest
     steps:
