@@ -142,10 +142,19 @@ and loads nothing.
 ## Observed score range
 
 `similarity` from `/v4/search` is an RRF fusion score, not a cosine, so its
-absolute value is small and not comparable to a cosine threshold. The
-observed range for this deployment:
+absolute value is small and not comparable to a cosine threshold.
 
-_Recorded during the Phase 6 dogfood._
+Observed during the Phase 6 dogfood, with the default `hash` embeddings
+provider and one stored fact:
+
+| Query | Hit | `similarity` |
+|---|---|---|
+| "why did we choose RRF?" | the team decided to use RRF fusion instead of weighted cosine because FTS5 has no vector index | 0.009836 |
+
+A matching fact scores in the low thousandths. A cosine-style threshold
+would reject it, which is why recall is bounded by hit count and character
+budget rather than by a score. A real embeddings provider will move the
+number; the *shape* — a small RRF value — will not.
 
 ## Troubleshooting
 

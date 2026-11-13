@@ -40,9 +40,9 @@ writing logic against them.
 **Independent Test**: a probe plugin run against a live OpenCode session
 prints the names of the hooks it received.
 
-- [ ] T008 Create a throwaway probe plugin outside the repository that logs every hook it is given
-- [ ] T009 Run `opencode run` with the probe installed and record which hooks fired
-- [ ] T010 Record the census result in `specs/003-opencode-memory-layer/quickstart.md` § Hook census
+- [x] T008 Create a throwaway probe plugin outside the repository that logs every hook it is given
+- [x] T009 Run `opencode run` with the probe installed and record which hooks fired
+- [x] T010 Record the census result in `specs/003-opencode-memory-layer/quickstart.md` § Hook census
 
 **Checkpoint**: the hook set is observed, not assumed.
 
@@ -57,19 +57,19 @@ in a live session without an error.
 
 ### Tests for this phase
 
-- [ ] T011 [P] [US1] Assert the default export carries `id`, `server` and `setup` in `clients/opencode/test.ts`
-- [ ] T012 [P] [US2] Assert recall injects a bounded block into the system array in `clients/opencode/test.ts`
-- [ ] T013 [P] [US2] Assert the user prompt is never modified in `clients/opencode/test.ts`
-- [ ] T014 [P] [US2] Assert a non-2xx response injects nothing and does not throw in `clients/opencode/test.ts`
-- [ ] T015 [P] [US4] Assert the container tag is derived from the project id in `clients/opencode/test.ts`
+- [x] T011 [P] [US1] Assert the default export carries `id`, `server` and `setup` in `clients/opencode/test.ts`
+- [x] T012 [P] [US2] Assert recall injects a bounded block into the system array in `clients/opencode/test.ts`
+- [x] T013 [P] [US2] Assert the user prompt is never modified in `clients/opencode/test.ts`
+- [x] T014 [P] [US2] Assert a non-2xx response injects nothing and does not throw in `clients/opencode/test.ts`
+- [x] T015 [P] [US4] Assert the container tag is derived from the project id in `clients/opencode/test.ts`
 
 ### Implementation for this phase
 
-- [ ] T016 [US1] Implement the shared core in `clients/opencode/memoratum.js`: `api`, `recall`, `store`, `toText`, `projectTag`
-- [ ] T017 [US1] Implement the V1 `server(input)` adapter in `clients/opencode/memoratum.js`
-- [ ] T018 [US1] Implement the V2 `setup(ctx)` adapter in `clients/opencode/memoratum.js`
-- [ ] T019 [US2] Bound the injected block by hit count and character budget
-- [ ] T020 [US4] Derive the container tag from the OpenCode project id, with `MEMORATUM_TAG` as the override
+- [x] T016 [US1] Implement the shared core in `clients/opencode/memoratum.js`: `api`, `recall`, `store`, `toText`, `projectTag`
+- [x] T017 [US1] Implement the V1 `server(input)` adapter in `clients/opencode/memoratum.js`
+- [x] T018 [US1] Implement the V2 `setup(ctx)` adapter in `clients/opencode/memoratum.js`
+- [x] T019 [US2] Bound the injected block by hit count and character budget
+- [x] T020 [US4] Derive the container tag from the OpenCode project id, with `MEMORATUM_TAG` as the override
 
 **Checkpoint**: the plugin loads and recalls. Capture is not implemented yet.
 
@@ -84,15 +84,15 @@ uncaptured segment and that a repeated compaction does not duplicate it.
 
 ### Tests for this phase
 
-- [ ] T021 [P] [US3] Assert a compaction stores the transcript under the project tag in `clients/opencode/test.ts`
-- [ ] T022 [P] [US3] Assert a repeated compaction is idempotent in `clients/opencode/test.ts`
-- [ ] T023 [P] [US3] Assert a second compaction does not re-store the first capture's segment in `clients/opencode/test.ts`
+- [x] T021 [P] [US3] Assert a compaction stores the transcript under the project tag in `clients/opencode/test.ts`
+- [x] T022 [P] [US3] Assert a repeated compaction is idempotent in `clients/opencode/test.ts`
+- [x] T023 [P] [US3] Assert a second compaction does not re-store the first capture's segment in `clients/opencode/test.ts`
 
 ### Implementation for this phase
 
-- [ ] T024 [US3] Implement the V1 `experimental.session.compacting` capture in `clients/opencode/memoratum.js`
-- [ ] T025 [US3] Implement the V2 `compaction` hook capture in `clients/opencode/memoratum.js`
-- [ ] T026 [US3] Track the last captured message id per session so consecutive captures do not overlap
+- [x] T024 [US3] Implement the V1 `experimental.session.compacting` capture in `clients/opencode/memoratum.js`
+- [x] T025 [US3] Implement the V2 `compaction` hook capture in `clients/opencode/memoratum.js`
+- [x] T026 [US3] Track the last captured message id per session so consecutive captures do not overlap
 
 **Checkpoint**: capture works and is idempotent.
 
@@ -102,9 +102,9 @@ uncaptured segment and that a repeated compaction does not duplicate it.
 
 **Goal**: an incompatible runtime fails loudly instead of silently.
 
-- [ ] T027 [US1] Add `clients/opencode/package.json` with `name`, `main`, `exports` and `engines.opencode`
-- [ ] T028 [US1] Run the plugin test in the `opencode-plugin` CI job in `.github/workflows/ci.yml`
-- [ ] T029 [US1] Add the plugin test command to the gate list in `.specify/memory/constitution.md` with a rationale and a version bump
+- [x] T027 [US1] Add `clients/opencode/package.json` with `name`, `main`, `exports` and `engines.opencode`
+- [x] T028 [US1] Run the plugin test in the `opencode-plugin` CI job in `.github/workflows/ci.yml`
+- [x] T029 [US1] Add the plugin test command to the gate list in `.specify/memory/constitution.md` with a rationale and a version bump
 
 **Checkpoint**: CI runs the behaviour suite, and the constitution names it.
 
@@ -115,11 +115,11 @@ uncaptured segment and that a repeated compaction does not duplicate it.
 **Purpose**: the constitution treats a doc/behaviour mismatch as a defect in
 both directions.
 
-- [ ] T030 [US1] Update `clients/README.md` to describe the dual export, the hooks and the environment variables
-- [ ] T031 [US1] Update the client list in `README.md`
-- [ ] T032 [US1] Update the OpenCode line in `docs/PARITY.md`
-- [ ] T033 [US1] Update the client list in `docs/ARCHITECTURE.md`
-- [ ] T034 [US1] Add an `Unreleased` entry to `CHANGELOG.md`
+- [x] T030 [US1] Update `clients/README.md` to describe the dual export, the hooks and the environment variables
+- [x] T031 [US1] Update the client list in `README.md`
+- [x] T032 [US1] Update the OpenCode line in `docs/PARITY.md`
+- [x] T033 [US1] Update the client list in `docs/ARCHITECTURE.md`
+- [x] T034 [US1] Add an `Unreleased` entry to `CHANGELOG.md`
 
 **Checkpoint**: every document that describes the plugin matches the plugin.
 
@@ -129,11 +129,11 @@ both directions.
 
 **Goal**: the whole loop proven against a running server, not a stub.
 
-- [ ] T035 Start a local Memoratum with embeddings configured
-- [ ] T036 Run a real OpenCode session to compaction and confirm the transcript is stored
-- [ ] T037 Confirm the dreaming pipeline produced facts from the stored transcript
-- [ ] T038 Start a second session and confirm the facts are recalled into the model context
-- [ ] T039 Record the observed `similarity` range in `specs/003-opencode-memory-layer/quickstart.md`
+- [x] T035 Start a local Memoratum with embeddings configured
+- [x] T036 Run a real OpenCode session to compaction and confirm the transcript is stored
+- [x] T037 Confirm the dreaming pipeline produced facts from the stored transcript
+- [x] T038 Start a second session and confirm the facts are recalled into the model context
+- [x] T039 Record the observed `similarity` range in `specs/003-opencode-memory-layer/quickstart.md`
 
 **Checkpoint**: the loop works end to end against a real server.
 
@@ -161,3 +161,29 @@ both directions.
   one file should hold, split it then, not before.
 - Every task is committed on its own branch commit, in order, so the history
   reads as the plan.
+
+## Local completion evidence (2026-11-13)
+
+All tasks above are complete on eature/opencode-memory-layer.
+
+**Hooks, observed.** A probe plugin logged every hook OpenCode 1.19.3
+invoked during a live session and a headless opencode serve driven
+through POST /session/:id/summarize. server(), chat.message,
+experimental.chat.system.transform, experimental.chat.messages.transform,
+experimental.session.compacting, chat.params, chat.headers, config,
+event and 	ool.definition all fired. The census is recorded in
+`quickstart.md`.
+
+**The loop, observed.** A real OpenCode session, a real Memoratum server and
+worker, and a deterministic local chat stub: the plugin captured the
+transcript at compaction, the worker ingested it, the dreaming step extracted
+a fact from it, and a second session's recall injected that fact into the
+model's context. The evidence is in `docs/DOGFOOD.md`.
+
+**The gates.** `node --experimental-strip-types clients/opencode/test.ts`
+passes; `pytest tests/test_docs_conformance.py` passes, including the two
+new plugin tests; `ruff check` and `ruff format --check` pass.
+
+Verified negatively: renaming `setup()` in the plugin fails both the
+javascript suite and the python conformance test, so the gate is not
+vacuous.
