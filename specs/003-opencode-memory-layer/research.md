@@ -175,6 +175,71 @@ feature bounds recall by **hit count and character budget** rather than by a
 score threshold, and the quickstart records the observed score range so a
 future threshold can be chosen from evidence.
 
+## Finding 8 — the configuration key differs between generations
+
+The V2 documentation configures plugins under `plugins`. OpenCode 1.19.x
+uses `plugin`:
+
+```ts
+// @opencode-ai/plugin@1.18.32
+export type Config = Omit<SDKConfig, "plugin"> & {
+  plugin?: Array<string | [string, PluginOptions]>
+}
+```
+
+Passing the V2 spelling to 1.19.x produces this, and the setting is
+dropped:
+
+```
+message="configuration compatibility diagnostic"
+path="[\"plugins\"]" kind=unsupported
+action="Omitted native setting that cannot be represented in V1"
+```
+
+The diagnostics are silent about the consequence: no plugin loads, and
+nothing else says so.
+
+## Finding 9 — plugins are also auto-discovered
+
+`packages/opencode/src/config/plugin.ts`:
+
+```ts
+export async function load(dir: string) {
+  const plugins: ConfigPluginV1.Spec[] = []
+  for (const item of await Glob.scan("{plugin,plugins}/*.{ts,js}", {
+    cwd: dir, absolute: true, dot: true, symlink: true,
+  })) {
+    plugins.push(pathToFileURL(item).href)
+  }
+  return plugins
+}
+```
+
+So a plain `.js` file placed in `plugin/` or `plugins/` beside a config file
+is loaded without any config entry at all. Path specs in the config are
+resolved relative to the config file that declares them
+(`resolvePluginSpec`), and a directory plugin must contain a `package.json`
+or an `index.{ts,tsx,js,mjs,cjs}` file.
+
+## Finding 10 — a plugin that fails to load is nearly invisible
+
+The loader reports failures as session error events, not as log lines:
+
+```ts
+error(candidate, _retry, stage, error, resolved) {
+  ...
+  publishPluginError(`Failed to load plugin ${spec}: ${message}`)
+  return
+}
+```
+
+A session error event is easy to miss, and when the session also has an
+unrelated failure — a model error, a permission prompt — the plugin error is
+buried. The original plugin's failure was invisible for exactly this
+reason. The fix is not only to make the plugin load but to make its absence
+noticeable: a `package.json` with `engines.opencode` turns a version
+mismatch into an explicit compatibility error.
+
 ## Decision record
 
 | Decision | Choice | Why |

@@ -72,19 +72,72 @@ dreaming pipeline extracted the decision, and the fact is retrievable.
 
 ## Hook census
 
-Recorded from a live OpenCode 1.19.3 session on 2026-11-12, using a probe
-plugin that logged every hook it was handed.
+Recorded from live OpenCode 1.19.3 on 2026-11-12/13, using a probe plugin
+that appended every hook it was handed to a file. The probe was driven both
+through `opencode run` and through a headless `opencode serve` instance
+whose `POST /session/:id/summarize` route was called to force a compaction.
 
-| Hook | Fired? | Notes |
+| Hook | Fired | Notes |
 |---|---|---|
-| `chat.message` | _pending census_ | |
-| `experimental.chat.system.transform` | _pending census_ | |
-| `experimental.session.compacting` | _pending census_ | |
-| `tool.execute.after` | _pending census_ | |
+| `server(input)` | yes | `input.project.id`, `input.directory` and `input.client` are all populated |
+| `chat.message` | yes | `output.parts` carries the user message |
+| `experimental.chat.system.transform` | yes | `output.system` is a **one-element** array on entry; pushing a second element is what sends memory as its own system message |
+| `experimental.chat.messages.transform` | yes | `output.messages` carries the transcript |
+| `experimental.session.compacting` | yes | Fires on the summarize route, which is the compaction path |
+| `chat.params` | yes | |
+| `chat.headers` | yes | |
+| `config` | yes | |
+| `event` | yes | |
+| `tool.definition` | yes | |
+| `experimental.provider.small_model` | yes | During the title-generation call |
+| `tool.execute.before` / `tool.execute.after` | not observed | The probe runs used no tools |
+| `experimental.text.complete` | not observed | Not needed: capture reads the transcript instead |
+| `permission.ask` | not observed | The probe ran with `--auto` |
+| `command.execute.before`, `shell.env` | not observed | Not needed by this plugin |
+
+Two observations that shape the implementation:
+
+1. `experimental.chat.system.transform` fires **twice** per new session —
+   once for the title-generation call and once for the agent call. The hook
+   cannot tell them apart, so the injected block is sent in both. The block
+   is character-bounded, so the cost is bounded too.
+2. The plugin's own capture path (`experimental.session.compacting`) fires
+   **before** the summarising model call, so the transcript it reads is the
+   pre-compaction one.
 
 The census is the reason Phase 0 of the plan exists: the plugin was written
 against the V1 type declarations, and the census confirms the runtime
 actually invokes them.
+
+## Installing the plugin
+
+OpenCode 1.19.x reads plugins from two places.
+
+**Auto-discovery** — drop the file into a `plugin/` or `plugins/` directory
+next to a config file:
+
+```sh
+# per project
+mkdir -p .opencode/plugin
+cp clients/opencode/memoratum.js .opencode/plugin/memoratum.js
+
+# or for every project
+mkdir -p ~/.config/opencode/plugin
+cp clients/opencode/memoratum.js ~/.config/opencode/plugin/memoratum.js
+```
+
+**Config entry** — the key differs between API generations. OpenCode 1.19.x
+uses `plugin` (singular); V2 uses `plugins`:
+
+```jsonc
+// OpenCode 1.19.x
+{ "plugin": ["../clients/opencode"] }
+```
+
+A path is resolved relative to the config file that declares it, so the
+entry above points at the repository checkout. OpenCode 1.19.x reports the
+V2 spelling as `Omitted native setting that cannot be represented in V1`
+and loads nothing.
 
 ## Observed score range
 
