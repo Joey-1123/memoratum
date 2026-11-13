@@ -109,6 +109,7 @@ commands MUST be run locally first:
 - `uv run pytest -q`
 - `npm test --prefix clients/ts`
 - `node --check clients/opencode/memoratum.js`
+- `node --experimental-strip-types clients/opencode/test.ts`
 - `npm ci --prefix dashboard` and `npm run build --prefix dashboard`
 
 Dependency risk MUST be checked on change: `pip-audit --local` for the Python
@@ -145,4 +146,23 @@ Runtime development guidance is distributed across `docs/ARCHITECTURE.md`,
 `docs/SECURITY.md`, and `docs/OPERATIONS.md`; those documents MUST NOT contradict
 this constitution.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-03 | **Last Amended**: 2026-10-03
+**Version**: 1.1.0 | **Ratified**: 2026-10-03 | **Last Amended**: 2026-11-13
+
+## Amendment history
+
+### 1.1.0 — 2026-11-13 — the OpenCode plugin gains a behaviour gate
+
+**Rationale.** The plugin's only gate was `node --check`, which proves the
+file parses and nothing else. The plugin shipped in a shape that no released
+OpenCode can load — it default-exported the V2 shape while the released
+loader requires a `server()` export — and the syntax check passed anyway.
+A gate that cannot fail on the defect it was meant to catch is not a gate.
+The plugin now has a behaviour suite that drives the real code against a
+stubbed transport, and that suite is named in the gate list.
+
+This is a MINOR amendment because it adds an obligation that contributors
+must satisfy, not merely a clarification of one they already did.
+
+**What changed.** One line was added to the gate list:
+`node --experimental-strip-types clients/opencode/test.ts`. No principle was
+added, removed or redefined, and no existing obligation was relaxed.
