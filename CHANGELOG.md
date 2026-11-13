@@ -1,5 +1,36 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- The OpenCode plugin now loads. It default-exported the V2 shape
+  (`{id, setup}`), which the released loader rejects — it requires a
+  `server()` export — so the plugin was silently inert on every released
+  OpenCode while `node --check` passed. It now ships a dual export:
+  `server(input)` for OpenCode 1.19.x and `setup(ctx)` for V2 builds.
+- OpenCode recall no longer rewrites the user's prompt. OpenCode persists
+  prompt edits, so the previous injection was written into the stored
+  transcript and re-injected on every later recall.
+- OpenCode memories are scoped per project. The container tag is derived
+  from the OpenCode project id instead of a single global tag, so one
+  project no longer sees another project's memories.
+- OpenCode capture stores the session transcript at compaction instead of
+  posting `Edited <file>: <snippet>` diff echoes, which extracted no facts.
+
+### Added
+- A behaviour suite for the OpenCode plugin that drives the real plugin
+  against a stubbed transport, and a gate that runs it in CI, in the Python
+  conformance suite, and by name in the constitution.
+- `clients/opencode/package.json`, so the OpenCode loader finds the entry
+  point and can declare the supported OpenCode version range.
+- `specs/003-opencode-memory-layer/` — the design, the source-verified
+  OpenCode API findings, and a hook census taken from a live OpenCode
+  1.19.3 session.
+
+### Security
+- Every OpenCode network call is bounded by a timeout and a response size
+  limit, and every hook fails soft: an unreachable Memoratum can no longer
+  break an OpenCode session.
+
 ## [0.36.0] - 2026-10-23
 
 The evaluation-harness release: the server finally measures itself, on four offline

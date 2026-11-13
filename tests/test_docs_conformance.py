@@ -245,3 +245,47 @@ def test_dashboard_build_and_plugin_syntax_still_hold():
         )
         assert result.returncode == 0, result.stderr
     assert (ROOT / "dashboard" / "package.json").exists()
+
+
+def test_opencode_plugin_behaviour_suite_passes():
+    """The plugin's only gate used to be a syntax check.
+
+    That is how a plugin which no released OpenCode can load shipped: the
+    file parsed, so the check passed. The behaviour suite drives the real
+    plugin against a stubbed transport and fails on the export shape, on a
+    server outage breaking a session, and on an unbounded injection.
+    """
+    plugin = ROOT / "clients" / "opencode" / "memoratum.js"
+    if not plugin.exists():
+        return
+    result = subprocess.run(
+        ["node", "--experimental-strip-types", str(plugin.parent / "test.ts")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OPENCODE_PLUGIN_ASSERTS_OK" in result.stdout
+
+
+def test_opencode_plugin_exports_both_generations():
+    """Released OpenCode calls server(); V2 builds call setup().
+
+    A default export carrying only one of them loads in one generation and
+    silently does nothing in the other, which is exactly how the previous
+    version of this plugin failed.
+    """
+    plugin = ROOT / "clients" / "opencode" / "memoratum.js"
+    if not plugin.exists():
+        return
+    source = plugin.read_text(encoding="utf-8")
+    assert 'id: "memoratum"' in source
+    assert re.search(r"\basync\s+server\s*\(", source), "the plugin must export server()"
+    assert re.search(r"\basync\s+setup\s*\(", source), "the plugin must export setup()"
+
+    server_part, _, setup_part = source.partition("async setup(")
+    assert "ctx.session.hook(" not in server_part, "the V1 adapter must not call the V2 hook API"
+    assert "experimental.chat.system.transform" in server_part, (
+        "the V1 adapter must register the V1 system hook"
+    )
+    assert "ctx.session.hook(" in setup_part, "the V2 adapter must register the V2 hooks"

@@ -79,6 +79,7 @@ native bulk work are durable SQLite jobs processed by `memoratum.worker`.
 ## Clients
 
 `client.py` (Python), `clients/ts` (TS), `clients/opencode/memoratum.js`
-(recall-on-prompt + store-on-write), `mcp.py` (stdio JSON-RPC
-`remember`/`recall`, local-trust only). SDK/client code is MIT (`LICENSE-MIT`);
-everything else AGPL-3.0.
+(OpenCode plugin: `server(input)` for released OpenCode, `setup(ctx)` for V2
+builds; recall is injected at the system layer and capture happens at session
+compaction), `mcp.py` (stdio JSON-RPC `remember`/`recall`, local-trust only).
+SDK/client code is MIT (`LICENSE-MIT`); everything else AGPL-3.0.
